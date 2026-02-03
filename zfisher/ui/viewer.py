@@ -1,13 +1,27 @@
 import napari
-from magicgui import magicgui
+from magicgui import magicgui, widgets
+import webbrowser
 from pathlib import Path
 from zfisher.core.io import load_nd2
-from zfisher.core.registration import segment_nuclei_3d
+from zfisher.core.registration import (
+    segment_nuclei_classical, 
+    align_centroids_ransac, 
+    align_and_pad_images,
+    calculate_deformable_transform,
+    apply_deformable_transform
+)
 import numpy as np
+import tifffile
+from qtpy.QtWidgets import QApplication
+from qtpy.QtGui import QIcon
+import os
 
 # Define your paths as constants at the top for easy editing later
 DEFAULT_R1 = Path("/Users/sstaller/Desktop/ND2_FILE_INPUTS/1-19-24Fdecon.nd2")
 DEFAULT_R2 = Path("/Users/sstaller/Desktop/ND2_FILE_INPUTS/1-17-24Adecon.nd2")
+
+# Global variable to store the calculated shift
+CALCULATED_SHIFT = None
 
 # Helper to map metadata names to colors
 CHANNEL_COLORS = {
@@ -42,6 +56,9 @@ def file_selector_widget(
         # We move axis 1 (Channels) to the front so it becomes (C, Z, Y, X)
         data_swapped = np.moveaxis(session.data, 1, 0)
         
+        # Print dimensions for the user
+        print(f"Loaded {prefix}: {data_swapped.shape[0]} channels, {data_swapped.shape[1]} Z-slices. Full shape: {data_swapped.shape}")
+        
         # Now shape is (3, 71, 2044, 2048)
         # Axis 0 = 3 channels
         # Axis 1 = 71 Z-slices
@@ -66,30 +83,256 @@ def file_selector_widget(
     # Force the Z-slider to appear for the 71 slices
     viewer.dims.axis_labels = ("z", "y", "x")
     viewer.reset_view()
-    print(f"Success! Found {data_swapped.shape[0]} channels and {data_swapped.shape[1]} Z-slices.")
 
-@magicgui(call_button="1. Run AI Segmentation")
-def dapi_segmentation_widget(viewer: 'napari.viewer.Viewer', layer: 'napari.layers.Image'):
-    if layer is None: return
+@magicgui(
+    call_button="Run DAPI Mapping",
+    r1_layer={"label": "Round 1 (DAPI)"},
+    r2_layer={"label": "Round 2 (DAPI)"}
+)
+def dapi_segmentation_widget(
+    viewer: "napari.viewer.Viewer",
+    r1_layer: "napari.layers.Image",
+    r2_layer: "napari.layers.Image"
+):
+    """Runs AI segmentation on selected DAPI channels."""
+    layers_to_process = [l for l in [r1_layer, r2_layer] if l is not None]
     
-    # Show the user we are working
-    viewer.status = "AI Segmenting... please wait."
+    if not layers_to_process:
+        viewer.status = "No channels selected."
+        return
+
+    viewer.status = f"Segmenting {len(layers_to_process)} layer(s)..."
+
+    for layer in layers_to_process:
+        masks, centroids = segment_nuclei_classical(layer.data)
+        if centroids is not None:
+            viewer.add_points(
+                centroids,
+                name=f"{layer.name}_centroids",
+                size=5,
+                face_color='orange',
+                scale=layer.scale
+            )
+    viewer.status = "Segmentation complete."
+
+@magicgui(
+    call_button="Calculate Shift (RANSAC)",
+    r1_points={"label": "R1 Centroids"},
+    r2_points={"label": "R2 Centroids"}
+)
+def registration_widget(
+    viewer: "napari.viewer.Viewer",
+    r1_points: "napari.layers.Points",
+    r2_points: "napari.layers.Points"
+):
+    """Calculates the XYZ shift between two point clouds."""
+    if r1_points is None or r2_points is None:
+        viewer.status = "Please select both centroid layers."
+        return
+
+    p1 = r1_points.data # (N, 3) -> Z, Y, X
+    p2 = r2_points.data # (M, 3) -> Z, Y, X
     
-    # Call the logic from our other script
-    masks, centroids = segment_nuclei_3d(layer.data)
+    viewer.status = "Running RANSAC..."
+    shift = align_centroids_ransac(p1, p2)
     
-    # Add to viewer
-    if centroids is not None:
-        viewer.add_points(
-            centroids, 
-            name=f"{layer.name}_centroids", 
-            size=5, 
-            face_color='orange'
+    # Store shift in global variable for the next step
+    global CALCULATED_SHIFT
+    CALCULATED_SHIFT = shift
+    
+    # Output results
+    msg = f"Calculated Shift: Z={shift[0]:.2f}, Y={shift[1]:.2f}, X={shift[2]:.2f}"
+    print(msg)
+    viewer.status = msg
+    
+    # Show a message box (optional, but helpful)
+    from qtpy.QtWidgets import QMessageBox
+    msg_box = QMessageBox()
+    msg_box.setText(f"Registration Complete.\n\n{msg}\n\nNext Step: Generate Global Canvas.")
+    msg_box.exec_()
+
+@magicgui(
+    call_button="Generate Global Canvas",
+    save_output={"label": "Save Aligned Images?"},
+    output_dir={"label": "Output Directory", "mode": "d"},
+    apply_warp={"label": "Apply Deformable Warping?"}
+)
+def canvas_widget(
+    viewer: "napari.viewer.Viewer",
+    save_output: bool = False,
+    output_dir: Path = Path.home(),
+    apply_warp: bool = True
+):
+    """Applies the calculated shift to all layers and creates a global canvas."""
+    global CALCULATED_SHIFT
+    shift = CALCULATED_SHIFT
+    
+    if shift is None:
+        viewer.status = "No shift calculated. Run Registration first."
+        print("Error: No shift found in metadata.")
+        return
+
+    viewer.status = f"Generating Canvas with Shift: {shift}"
+    
+    # 1. Rigid Align All Channels
+    # We store the results to process DAPI first for warping
+    aligned_data = {} # channel: (r1_aligned, r2_aligned, r1_layer_ref, r2_layer_ref)
+    
+    r1_layers = [l for l in viewer.layers if "R1" in l.name and isinstance(l, napari.layers.Image)]
+    r2_layers = [l for l in viewer.layers if "R2" in l.name and isinstance(l, napari.layers.Image)]
+
+    for r1 in r1_layers:
+        channel_name = r1.name.split("-")[-1].strip()
+        r2 = next((l for l in r2_layers if channel_name in l.name), None)
+        
+        if r2:
+            print(f"Rigid aligning {channel_name}...")
+            aligned_r1, aligned_r2 = align_and_pad_images(r1.data, r2.data, shift)
+            aligned_data[channel_name] = (aligned_r1, aligned_r2, r1, r2)
+
+    # 2. Calculate Deformable Transform (on DAPI)
+    transform = None
+    if apply_warp:
+        if "DAPI" in aligned_data:
+            print("Calculating deformable registration on DAPI...")
+            viewer.status = "Calculating AI Warp (this may take a moment)..."
+            dapi_r1, dapi_r2, _, _ = aligned_data["DAPI"]
+            transform = calculate_deformable_transform(dapi_r1, dapi_r2)
+        else:
+            print("Warning: No DAPI channel found. Skipping deformable registration.")
+
+    # 3. Apply Transform and Add to Viewer
+    for channel_name, (r1_data, r2_data, r1_layer, r2_layer) in aligned_data.items():
+        final_r2 = r2_data
+        r2_name_prefix = "Aligned"
+        
+        if transform:
+            print(f"Applying warp to {channel_name}...")
+            final_r2 = apply_deformable_transform(r2_data, transform, r1_data)
+            r2_name_prefix = "Warped"
+            
+        # Add to viewer
+        viewer.add_image(
+            r1_data, 
+            name=f"Aligned R1 - {channel_name}", 
+            colormap=r1_layer.colormap, 
+            scale=r1_layer.scale, 
+            blending='additive'
         )
+        viewer.add_image(
+            final_r2, 
+            name=f"{r2_name_prefix} R2 - {channel_name}", 
+            colormap=r2_layer.colormap, 
+            scale=r2_layer.scale, 
+            blending='additive'
+        )
+        
+        # Save if requested
+        if save_output:
+            out_name_r1 = output_dir / f"Aligned_R1_{channel_name}.tif"
+            out_name_r2 = output_dir / f"{r2_name_prefix}_R2_{channel_name}.tif"
+            tifffile.imwrite(out_name_r1, r1_data)
+            tifffile.imwrite(out_name_r2, final_r2)
+            print(f"Saved {out_name_r1}")
+
+    viewer.status = "Global Canvas Generation Complete."
+
+def create_welcome_widget(viewer):
+    """Creates a welcome widget with instructions and a help button."""
+    container = widgets.Container(labels=False)
+    
+    # HTML-subset styling is supported in Qt labels
+    container.append(widgets.Label(value="<h1 style='color: #00FFFF;'>zFISHer</h1>"))
+    container.append(widgets.Label(value="<em>Multiplexed Sequential FISH Analysis</em>"))
+    
+    container.append(widgets.Label(value="<h3>Workflow:</h3>"))
+    container.append(widgets.Label(value="1. <b>Load Data</b> (.nd2 files)"))
+    container.append(widgets.Label(value="2. <b>Segment Nuclei</b> (DAPI)"))
+    container.append(widgets.Label(value="3. <b>Register Rounds</b> (RANSAC)"))
+    container.append(widgets.Label(value="4. <b>Generate Canvas</b> (Warp)"))
+    
+    # Buttons Row
+    btn_row = widgets.Container(layout="horizontal", labels=False)
+    help_btn = widgets.PushButton(text="Open README / Help")
+    reset_btn = widgets.PushButton(text="Reset")
+    btn_row.extend([help_btn, reset_btn])
+    container.append(btn_row)
+    
+    @help_btn.changed.connect
+    def open_help():
+        # Look for README in project root
+        readme_path = Path(__file__).parent.parent.parent / "README.md"
+        if readme_path.exists():
+            webbrowser.open(readme_path.as_uri())
+        else:
+            print(f"README not found at {readme_path}")
+            
+    @reset_btn.changed.connect
+    def reset_viewer():
+        viewer.layers.clear()
+        global CALCULATED_SHIFT
+        CALCULATED_SHIFT = None
+        viewer.status = "Viewer cleared."
+            
+    return container
     
 def launch_zfisher():
-    viewer = napari.Viewer(title="zFISHer - 3D Colocalization", ndisplay=2) # Force 2D slice mode
-    viewer.window.add_dock_widget(file_selector_widget, area="right", name="1. File Selection")
-    viewer.window.add_dock_widget(dapi_segmentation_widget, area="right", name="2. AI Nuclei Finder")
+    # Suppress Napari splash screen
+    os.environ["NAPARI_SILENT_SPLASH"] = "1"
     
+    # Customize Application Name and Icon
+    icon_path = None
+    try:
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+        
+        app.setApplicationName("zFISHer")
+        app.setApplicationDisplayName("zFISHer")
+        
+        # Set Custom Icon: Check package folder and root folder
+        current_dir = Path(__file__).parent
+        possible_icons = [
+            current_dir.parent / "icon.png",       # zfisher/icon.png
+            current_dir.parent.parent / "icon.png" # zFISHer/icon.png
+        ]
+        
+        for path in possible_icons:
+            if path.exists():
+                icon_path = path
+                app.setWindowIcon(QIcon(str(icon_path)))
+                break
+            
+    except Exception as e:
+        print(f"Could not set application metadata: {e}")
+
+    viewer = napari.Viewer(title="zFISHer - 3D Colocalization", ndisplay=2) # Force 2D slice mode
+    
+    if icon_path:
+        viewer.window._qt_window.setWindowIcon(QIcon(str(icon_path)))
+
+    viewer.window.add_dock_widget(create_welcome_widget(viewer), area="right", name="Welcome")
+    viewer.window.add_dock_widget(file_selector_widget, area="right", name="1. File Selection")
+    viewer.window.add_dock_widget(dapi_segmentation_widget, area="right", name="2. DAPI Centroid Mapping")
+    viewer.window.add_dock_widget(registration_widget, area="right", name="3. Registration")
+    viewer.window.add_dock_widget(canvas_widget, area="right", name="4. Global Canvas")
+    
+    # Auto-select DAPI channels when layers are added
+    def on_layer_inserted(event):
+        layer = event.value
+        if isinstance(layer, napari.layers.Image):
+            if "R1" in layer.name and "DAPI" in layer.name:
+                dapi_segmentation_widget.r1_layer.value = layer
+            elif "R2" in layer.name and "DAPI" in layer.name:
+                dapi_segmentation_widget.r2_layer.value = layer
+        
+        # Auto-select Points layers for registration
+        if isinstance(layer, napari.layers.Points):
+            if "R1" in layer.name:
+                registration_widget.r1_points.value = layer
+            elif "R2" in layer.name:
+                registration_widget.r2_points.value = layer
+
+    viewer.layers.events.inserted.connect(on_layer_inserted)
+
     napari.run()
