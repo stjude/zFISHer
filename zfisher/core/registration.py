@@ -10,6 +10,7 @@ from skimage.feature import peak_local_max
 from scipy import ndimage as ndi
 from skimage.morphology import remove_small_objects
 import SimpleITK as sitk
+import warnings
 
 # Set logging to see the progress bar in terminal
 logging.basicConfig(level=logging.INFO)
@@ -164,13 +165,15 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None):
     print(f"Refining with {len(src)} putative matches...")
 
     # 3. Run RANSAC to refine the fit
-    model, inliers = ransac(
-        (src, dst), 
-        AffineTransform, 
-        min_samples=4, 
-        residual_threshold=30, # Relaxed threshold to account for segmentation noise
-        max_trials=2000
-    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="No inliers found")
+        model, inliers = ransac(
+            (src, dst), 
+            AffineTransform, 
+            min_samples=4, 
+            residual_threshold=50, # Relaxed threshold to account for segmentation noise
+            max_trials=2000
+        )
     
     if model is None:
         print("RANSAC refinement failed. Returning rough shift.")
@@ -244,7 +247,7 @@ def align_and_pad_images(fixed_data, moving_data, shift_vector):
     
     return padded_fixed, padded_moving
 
-def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=8):
+def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=16):
     """
     Calculates B-Spline deformable transform using SimpleITK.
     Returns the transform object, does not return the image.
@@ -279,12 +282,12 @@ def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=8)
     R = sitk.ImageRegistrationMethod()
     R.SetMetricAsCorrelation() 
     R.SetMetricSamplingStrategy(R.RANDOM)
-    R.SetMetricSamplingPercentage(0.1)
-    R.SetOptimizerAsLBFGSB(gradientConvergenceTolerance=1e-5, numberOfIterations=30)
+    R.SetMetricSamplingPercentage(0.01)
+    R.SetOptimizerAsLBFGSB(gradientConvergenceTolerance=1e-5, numberOfIterations=10)
     R.SetInitialTransform(tx, True)
     R.SetInterpolator(sitk.sitkLinear)
     
-    print(f"Starting B-Spline optimization on {fixed_img.GetSize()} volume (Sampling 10%, 30 iters)...")
+    print(f"Starting B-Spline optimization on {fixed_img.GetSize()} volume (Sampling 1%, 10 iters)...")
     # Execute Registration
     outTx = R.Execute(fixed_img, moving_img)
     print("Registration finished.")

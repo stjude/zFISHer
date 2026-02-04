@@ -10,11 +10,13 @@ from zfisher.core.registration import (
     calculate_deformable_transform,
     apply_deformable_transform
 )
+from zfisher.core.segmentation import detect_spots_3d
 import numpy as np
 import tifffile
 from qtpy.QtWidgets import QApplication
 from qtpy.QtGui import QIcon
 import os
+import concurrent.futures
 
 # Define your paths as constants at the top for easy editing later
 DEFAULT_R1 = Path("/Users/sstaller/Desktop/ND2_FILE_INPUTS/1-19-24Fdecon.nd2")
@@ -105,6 +107,11 @@ def dapi_segmentation_widget(
 
     for layer in layers_to_process:
         masks, centroids = segment_nuclei_classical(layer.data)
+        
+        # Add Masks Layer (Required for assigning puncta to cells)
+        if masks is not None:
+            viewer.add_labels(masks, name=f"{layer.name}_masks", opacity=0.3, visible=False)
+            
         if centroids is not None:
             viewer.add_points(
                 centroids,
@@ -201,8 +208,9 @@ def canvas_widget(
         else:
             print("Warning: No DAPI channel found. Skipping deformable registration.")
 
-    # 3. Apply Transform and Add to Viewer
-    for channel_name, (r1_data, r2_data, r1_layer, r2_layer) in aligned_data.items():
+    # 3. Apply Transform (Parallelized)
+    def warp_worker(item):
+        channel_name, (r1_data, r2_data, r1_layer, r2_layer) = item
         final_r2 = r2_data
         r2_name_prefix = "Aligned"
         
@@ -210,6 +218,17 @@ def canvas_widget(
             print(f"Applying warp to {channel_name}...")
             final_r2 = apply_deformable_transform(r2_data, transform, r1_data)
             r2_name_prefix = "Warped"
+        return channel_name, r1_data, final_r2, r1_layer, r2_layer, r2_name_prefix
+
+    results = []
+    if transform:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            results = list(executor.map(warp_worker, aligned_data.items()))
+    else:
+        results = [warp_worker(item) for item in aligned_data.items()]
+
+    # 4. Add to Viewer
+    for channel_name, r1_data, final_r2, r1_layer, r2_layer, r2_name_prefix in results:
             
         # Add to viewer
         viewer.add_image(
@@ -237,6 +256,51 @@ def canvas_widget(
 
     viewer.status = "Global Canvas Generation Complete."
 
+@magicgui(
+    call_button="Detect Puncta",
+    image_layer={"label": "Target Channel"},
+    nuclei_layer={"label": "Nuclei Masks (Optional)"},
+    threshold={"label": "Sensitivity (0-1)", "min": 0.01, "max": 1.0, "step": 0.01}
+)
+def puncta_widget(
+    viewer: "napari.viewer.Viewer",
+    image_layer: "napari.layers.Image",
+    nuclei_layer: "napari.layers.Labels",
+    threshold: float = 0.05
+):
+    """Detects spots in the selected image layer."""
+    if image_layer is None:
+        return
+        
+    viewer.status = f"Detecting spots in {image_layer.name}..."
+    
+    # Run detection
+    coords = detect_spots_3d(image_layer.data, threshold_rel=threshold)
+    
+    # Add points to viewer
+    pts_layer = viewer.add_points(
+        coords,
+        name=f"{image_layer.name}_puncta",
+        size=3,
+        face_color="yellow",
+        scale=image_layer.scale
+    )
+    
+    # Count per nucleus (if masks provided)
+    msg = f"Found {len(coords)} spots."
+    if nuclei_layer is not None:
+        # Simple lookup: check mask value at spot coordinate
+        # Note: coords are (Z, Y, X), mask is (Z, Y, X)
+        # We need to be careful with float coords vs int indices
+        # For peak_local_max, coords are integers.
+        
+        # Filter out spots not in a nucleus (optional logic)
+        # For now, just print total count
+        pass
+        
+    print(msg)
+    viewer.status = msg
+
 def create_welcome_widget(viewer):
     """Creates a welcome widget with instructions and a help button."""
     container = widgets.Container(labels=False)
@@ -250,6 +314,7 @@ def create_welcome_widget(viewer):
     container.append(widgets.Label(value="2. <b>Segment Nuclei</b> (DAPI)"))
     container.append(widgets.Label(value="3. <b>Register Rounds</b> (RANSAC)"))
     container.append(widgets.Label(value="4. <b>Generate Canvas</b> (Warp)"))
+    container.append(widgets.Label(value="5. <b>Detect Puncta</b> (Spots)"))
     
     # Buttons Row
     btn_row = widgets.Container(layout="horizontal", labels=False)
@@ -316,6 +381,7 @@ def launch_zfisher():
     viewer.window.add_dock_widget(dapi_segmentation_widget, area="right", name="2. DAPI Centroid Mapping")
     viewer.window.add_dock_widget(registration_widget, area="right", name="3. Registration")
     viewer.window.add_dock_widget(canvas_widget, area="right", name="4. Global Canvas")
+    viewer.window.add_dock_widget(puncta_widget, area="right", name="5. Puncta Detection")
     
     # Auto-select DAPI channels when layers are added
     def on_layer_inserted(event):
