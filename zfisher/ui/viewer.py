@@ -15,8 +15,10 @@ import numpy as np
 import tifffile
 from qtpy.QtWidgets import QApplication
 from qtpy.QtGui import QIcon
+from qtpy.QtCore import QTimer
 import os
 import concurrent.futures
+from qtpy.QtWidgets import QToolBox, QVBoxLayout, QWidget
 
 # Define your paths as constants at the top for easy editing later
 DEFAULT_R1 = Path("/Users/sstaller/Desktop/ND2_FILE_INPUTS/1-19-24Fdecon.nd2")
@@ -38,6 +40,7 @@ CHANNEL_COLORS = {
     call_button="Load Data",
     round1_path={"label": "Round 1 (.nd2)", "filter": "*.nd2"},
     round2_path={"label": "Round 2 (.nd2)", "filter": "*.nd2"},
+    auto_call=False,
 )
 def file_selector_widget(
     viewer: "napari.viewer.Viewer",
@@ -89,14 +92,15 @@ def file_selector_widget(
 @magicgui(
     call_button="Run DAPI Mapping",
     r1_layer={"label": "Round 1 (DAPI)"},
-    r2_layer={"label": "Round 2 (DAPI)"}
+    r2_layer={"label": "Round 2 (DAPI)"},
+    auto_call=False,
 )
 def dapi_segmentation_widget(
     viewer: "napari.viewer.Viewer",
     r1_layer: "napari.layers.Image",
     r2_layer: "napari.layers.Image"
 ):
-    """Runs AI segmentation on selected DAPI channels."""
+    """Runs segmentation on selected DAPI channels."""
     layers_to_process = [l for l in [r1_layer, r2_layer] if l is not None]
     
     if not layers_to_process:
@@ -342,63 +346,59 @@ def create_welcome_widget(viewer):
     return container
     
 def launch_zfisher():
-    # Suppress Napari splash screen
-    os.environ["NAPARI_SILENT_SPLASH"] = "1"
+    # Set App Icon
+    app = QApplication.instance() or QApplication([])
+    icon_path = Path(__file__).parent.parent.parent / "icon.png"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
+
+    viewer = napari.Viewer(title="zFISHer - 3D Colocalization", ndisplay=2)
     
-    # Customize Application Name and Icon
-    icon_path = None
-    try:
-        app = QApplication.instance()
-        if not app:
-            app = QApplication([])
-        
-        app.setApplicationName("zFISHer")
-        app.setApplicationDisplayName("zFISHer")
-        
-        # Set Custom Icon: Check package folder and root folder
-        current_dir = Path(__file__).parent
-        possible_icons = [
-            current_dir.parent / "icon.png",       # zfisher/icon.png
-            current_dir.parent.parent / "icon.png" # zFISHer/icon.png
-        ]
-        
-        for path in possible_icons:
-            if path.exists():
-                icon_path = path
-                app.setWindowIcon(QIcon(str(icon_path)))
-                break
-            
-    except Exception as e:
-        print(f"Could not set application metadata: {e}")
+    # Create local references
+    widgets_to_add = [
+        (create_welcome_widget(viewer), "Home"),
+        (file_selector_widget, "1. File Selection"),
+        (dapi_segmentation_widget, "2. DAPI Mapping"),
+        (registration_widget, "3. Registration"),
+        (canvas_widget, "4. Global Canvas"),
+        (puncta_widget, "5. Puncta Detection")
+    ]
 
-    viewer = napari.Viewer(title="zFISHer - 3D Colocalization", ndisplay=2) # Force 2D slice mode
+    toolbox = QToolBox()
+    toolbox.setMinimumWidth(350)
     
-    if icon_path:
-        viewer.window._qt_window.setWindowIcon(QIcon(str(icon_path)))
+    for widget, name in widgets_to_add:
+        # This is the secret sauce: 
+        # Manually trigger a refresh so the 'choices' list isn't ()
+        if hasattr(widget, "reset_choices"):
+            widget.reset_choices()
+        
+        toolbox.addItem(widget.native, name)
 
-    viewer.window.add_dock_widget(create_welcome_widget(viewer), area="right", name="Welcome")
-    viewer.window.add_dock_widget(file_selector_widget, area="right", name="1. File Selection")
-    viewer.window.add_dock_widget(dapi_segmentation_widget, area="right", name="2. DAPI Centroid Mapping")
-    viewer.window.add_dock_widget(registration_widget, area="right", name="3. Registration")
-    viewer.window.add_dock_widget(canvas_widget, area="right", name="4. Global Canvas")
-    viewer.window.add_dock_widget(puncta_widget, area="right", name="5. Puncta Detection")
+    viewer.window.add_dock_widget(toolbox, area="right", name="zFISHer Workflow")
 
-    # Auto-select DAPI channels when layers are added
     def on_layer_inserted(event):
         layer = event.value
-        if isinstance(layer, napari.layers.Image):
-            if "R1" in layer.name and "DAPI" in layer.name:
-                dapi_segmentation_widget.r1_layer.value = layer
-            elif "R2" in layer.name and "DAPI" in layer.name:
-                dapi_segmentation_widget.r2_layer.value = layer
+
+        def update_widgets():
+            # Refresh the choices again so the layer is 'valid' before we select it
+            dapi_segmentation_widget.reset_choices()
+            registration_widget.reset_choices()
+
+            if isinstance(layer, napari.layers.Image):
+                if "DAPI" in layer.name.upper():
+                    if "R1" in layer.name.upper():
+                        dapi_segmentation_widget.r1_layer.value = layer
+                    elif "R2" in layer.name.upper():
+                        dapi_segmentation_widget.r2_layer.value = layer
+            
+            if isinstance(layer, napari.layers.Points):
+                if "R1" in layer.name.upper():
+                    registration_widget.r1_points.value = layer
+                elif "R2" in layer.name.upper():
+                    registration_widget.r2_points.value = layer
         
-        # Auto-select Points layers for registration
-        if isinstance(layer, napari.layers.Points):
-            if "R1" in layer.name:
-                registration_widget.r1_points.value = layer
-            elif "R2" in layer.name:
-                registration_widget.r2_points.value = layer
+        QTimer.singleShot(100, update_widgets) # Increased delay to 100ms for safety
 
     viewer.layers.events.inserted.connect(on_layer_inserted)
-
     napari.run()
