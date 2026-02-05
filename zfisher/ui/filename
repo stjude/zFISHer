@@ -16,6 +16,7 @@ import tifffile
 from qtpy.QtWidgets import QApplication
 from qtpy.QtGui import QIcon
 import os
+import pandas as pd
 import concurrent.futures
 
 # Define your paths as constants at the top for easy editing later
@@ -289,17 +290,84 @@ def puncta_widget(
     # Count per nucleus (if masks provided)
     msg = f"Found {len(coords)} spots."
     if nuclei_layer is not None:
-        # Simple lookup: check mask value at spot coordinate
-        # Note: coords are (Z, Y, X), mask is (Z, Y, X)
-        # We need to be careful with float coords vs int indices
-        # For peak_local_max, coords are integers.
+        # Convert puncta coordinates from physical space to integer voxel indices
+        # This accounts for the layer's scale and any translation from padding
+        puncta_indices = np.round((coords - nuclei_layer.translate) / nuclei_layer.scale).astype(int)
+
+        mask_data = nuclei_layer.data
         
-        # Filter out spots not in a nucleus (optional logic)
-        # For now, just print total count
-        pass
+        # Ensure indices are within the bounds of the mask array
+        valid_mask = (
+            (puncta_indices[:, 0] >= 0) & (puncta_indices[:, 0] < mask_data.shape[0]) &
+            (puncta_indices[:, 1] >= 0) & (puncta_indices[:, 1] < mask_data.shape[1]) &
+            (puncta_indices[:, 2] >= 0) & (puncta_indices[:, 2] < mask_data.shape[2])
+        )
+        valid_indices = puncta_indices[valid_mask]
+
+        # Get the nucleus ID for each valid spot by looking up the value in the mask
+        nucleus_ids = mask_data[valid_indices[:, 0], valid_indices[:, 1], valid_indices[:, 2]]
+        
+        # Count spots per nucleus ID, excluding spots in the background (ID 0)
+        from collections import Counter
+        counts = Counter(nucleus_ids[nucleus_ids > 0])
+        
+        if counts:
+            df = pd.DataFrame(counts.items(), columns=['Nucleus ID', 'Puncta Count'])
+            df = df.sort_values(by='Nucleus ID').reset_index(drop=True)
+            print(f"\n--- Puncta Count for '{image_layer.name}' ---")
+            print(df)
+            print("-------------------------------------------\n")
+            msg += f" Counted across {len(df)} nuclei."
+        else:
+            msg += " No spots found within any nuclei."
         
     print(msg)
     viewer.status = msg
+
+@magicgui(call_button="Match Nuclei & Analyze")
+def analysis_widget(
+    viewer: "napari.viewer.Viewer",
+    r1_masks: "napari.layers.Labels",
+    r2_masks: "napari.layers.Labels",
+):
+    """Matches nuclei from Round 2 to Round 1 based on centroid distance."""
+    if r1_masks is None or r2_masks is None:
+        viewer.status = "Please select both R1 and R2 mask layers."
+        return
+
+    print("Matching nuclei based on centroid distance in aligned space...")
+    
+    props1 = regionprops(r1_masks.data)
+    props2 = regionprops(r2_masks.data)
+
+    if not props1 or not props2:
+        print("One or both mask layers are empty.")
+        return
+
+    p1_coords = np.array([p.centroid for p in props1])
+    p1_labels = np.array([p.label for p in props1])
+    
+    p2_coords = np.array([p.centroid for p in props2])
+    p2_labels = np.array([p.label for p in props2])
+
+    tree = cKDTree(p1_coords)
+    distances, indices = tree.query(p2_coords, distance_upper_bound=50) # 50 pixel tolerance
+    
+    mapping = {}
+    for i, idx in enumerate(indices):
+        if distances[i] < float('inf'):
+            mapping[p2_labels[i]] = p1_labels[idx]
+
+    if mapping:
+        df = pd.DataFrame(mapping.items(), columns=['R2_Nucleus_ID', 'Matched_R1_Nucleus_ID'])
+        df = df.sort_values(by='R2_Nucleus_ID').reset_index(drop=True)
+        print("\n--- Nucleus Matching Results (R2 -> R1) ---")
+        print(df)
+        print("-------------------------------------------\n")
+        viewer.status = f"Matched {len(df)} nuclei pairs."
+    else:
+        print("No matching nuclei found within the distance threshold.")
+        viewer.status = "No matching nuclei found."
 
 def create_welcome_widget(viewer):
     """Creates a welcome widget with instructions and a help button."""
@@ -315,6 +383,7 @@ def create_welcome_widget(viewer):
     container.append(widgets.Label(value="3. <b>Register Rounds</b> (RANSAC)"))
     container.append(widgets.Label(value="4. <b>Generate Canvas</b> (Warp)"))
     container.append(widgets.Label(value="5. <b>Detect Puncta</b> (Spots)"))
+    container.append(widgets.Label(value="6. <b>Analyze & Export</b>"))
     
     # Buttons Row
     btn_row = widgets.Container(layout="horizontal", labels=False)
@@ -382,7 +451,8 @@ def launch_zfisher():
     viewer.window.add_dock_widget(registration_widget, area="right", name="3. Registration")
     viewer.window.add_dock_widget(canvas_widget, area="right", name="4. Global Canvas")
     viewer.window.add_dock_widget(puncta_widget, area="right", name="5. Puncta Detection")
-
+    viewer.window.add_dock_widget(analysis_widget, area="right", name="6. Analysis & Export")
+    
     # Auto-select DAPI channels when layers are added
     def on_layer_inserted(event):
         layer = event.value

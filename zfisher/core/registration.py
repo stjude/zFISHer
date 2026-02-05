@@ -2,7 +2,7 @@ import numpy as np
 import logging
 from cellpose import models, core
 from skimage.measure import regionprops, ransac
-from skimage.transform import rescale, AffineTransform
+from skimage.transform import rescale, AffineTransform, resize
 from scipy.spatial import cKDTree
 from skimage.filters import threshold_otsu, gaussian
 from skimage.segmentation import watershed
@@ -56,7 +56,16 @@ def segment_nuclei_3d(image_data, gpu=True):
         for p in props
     ])
     
-    return None, centroids
+    # Resize masks back to original shape
+    masks = resize(
+        masks_small, 
+        image_data.shape, 
+        order=0, 
+        preserve_range=True, 
+        anti_aliasing=False
+    ).astype(np.uint32)
+    
+    return masks, centroids
 
 def segment_nuclei_classical(image_data):
     """
@@ -98,8 +107,24 @@ def segment_nuclei_classical(image_data):
         [c[0] * z_step, c[1] / scale_factor, c[2] / scale_factor] 
         for c in coords
     ])
+
+    # Generate markers for watershed
+    markers = np.zeros(distance.shape, dtype=int)
+    markers[tuple(coords.T)] = np.arange(len(coords)) + 1
     
-    return None, centroids
+    # Watershed to get labeled regions
+    labels_small = watershed(-distance, markers, mask=binary)
+    
+    # Resize labels back to original shape
+    labels = resize(
+        labels_small, 
+        image_data.shape, 
+        order=0, 
+        preserve_range=True, 
+        anti_aliasing=False
+    ).astype(np.uint32)
+    
+    return labels, centroids
 
 def align_centroids_ransac(fixed_points, moving_points, max_distance=None):
     """
