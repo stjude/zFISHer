@@ -206,6 +206,13 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None):
 
     shift = model.translation
     
+    # SANITY CHECK: If RANSAC deviates wildly from the voting consensus, it likely failed.
+    # This prevents catastrophic shifts (like -16000 pixels) from crashing the viewer.
+    deviation = np.linalg.norm(shift - rough_shift)
+    if deviation > 500.0: # 500 pixel deviation is huge for nuclei registration
+        print(f"RANSAC returned unrealistic shift {shift} (Deviation: {deviation:.2f}). Reverting to rough shift.")
+        return rough_shift
+    
     if np.any(np.isnan(shift)):
         print("RANSAC returned NaN. Returning rough shift.")
         return rough_shift
