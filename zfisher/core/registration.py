@@ -1,16 +1,16 @@
 import numpy as np
 import logging
-from cellpose import models, core
-from skimage.measure import regionprops, ransac
-from skimage.transform import rescale, AffineTransform, resize
+from skimage.measure import ransac, regionprops
+from skimage.transform import AffineTransform, rescale, resize
 from scipy.spatial import cKDTree
-from skimage.filters import threshold_otsu, gaussian
-from skimage.segmentation import watershed
-from skimage.feature import peak_local_max
 from scipy import ndimage as ndi
-from skimage.morphology import remove_small_objects
 import SimpleITK as sitk
 import warnings
+from skimage.filters import gaussian, threshold_otsu
+from skimage.segmentation import watershed
+from skimage.feature import peak_local_max
+from skimage.morphology import remove_small_objects
+from cellpose import models, core
 
 # Set logging to see the progress bar in terminal
 logging.basicConfig(level=logging.INFO)
@@ -220,7 +220,7 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None):
     print(f"Refined shift: {shift}")
     return shift
 
-def align_and_pad_images(fixed_data, moving_data, shift_vector):
+def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
     """
     Aligns two 3D volumes based on a shift vector by zero-padding.
     Returns two volumes of the same shape (Union Bounding Box).
@@ -266,7 +266,8 @@ def align_and_pad_images(fixed_data, moving_data, shift_vector):
     # We use linear interpolation (order=1) to avoid ringing artifacts on puncta
     if np.any(np.abs(shift_frac) > 0.01):
         print(f"Applying sub-pixel shift: {shift_frac}")
-        moving_data_subpixel = ndi.shift(moving_data.astype(np.float32), shift_frac, order=1)
+        order = 0 if is_label else 1
+        moving_data_subpixel = ndi.shift(moving_data.astype(np.float32), shift_frac, order=order)
         # Cast back to original dtype
         if np.issubdtype(fixed_data.dtype, np.integer):
              moving_data_subpixel = np.clip(moving_data_subpixel, 0, np.iinfo(fixed_data.dtype).max).astype(fixed_data.dtype)
@@ -326,22 +327,33 @@ def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=16
     
     return outTx
 
-def apply_deformable_transform(moving_data, transform, fixed_reference_data):
+def apply_deformable_transform(moving_data, transform, fixed_reference_data, is_label=False):
     """
     Applies a calculated SimpleITK transform to an image array.
     """
     # Convert inputs to SimpleITK
     moving_img = sitk.GetImageFromArray(moving_data.astype(np.float32))
-    fixed_ref = sitk.GetImageFromArray(fixed_reference_data.astype(np.float32))
+    
+    # Optimization: We only need the grid (size/spacing), not the pixel data.
+    # Using uint8 zeros saves massive memory compared to casting input to float32.
+    fixed_ref = sitk.GetImageFromArray(np.zeros(fixed_reference_data.shape, dtype=np.uint8))
     
     # Setup Resampler
     resampler = sitk.ResampleImageFilter()
     resampler.SetReferenceImage(fixed_ref)
-    resampler.SetInterpolator(sitk.sitkBSpline)
+    resampler.SetInterpolator(sitk.sitkNearestNeighbor if is_label else sitk.sitkBSpline)
     resampler.SetDefaultPixelValue(0)
     resampler.SetTransform(transform)
     
     # Execute
     out_img = resampler.Execute(moving_img)
     
-    return sitk.GetArrayFromImage(out_img)
+    result = sitk.GetArrayFromImage(out_img)
+    
+    if is_label:
+        if np.issubdtype(moving_data.dtype, np.integer):
+            return result.astype(moving_data.dtype)
+        else:
+            return result.astype(np.uint32)
+        
+    return result
