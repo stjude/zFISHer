@@ -1,17 +1,15 @@
 import napari
-import json
+import pandas as pd
+from scipy.spatial import cKDTree
 from magicgui import magicgui, widgets
 import webbrowser
 from pathlib import Path
 from zfisher.core.io import load_nd2
-from zfisher.core.registration import (
-    segment_nuclei_classical, 
-    align_centroids_ransac, 
-    align_and_pad_images,
-    calculate_deformable_transform,
-    apply_deformable_transform
-)
+from zfisher.core.registration import segment_nuclei_classical, align_centroids_ransac
 from zfisher.core.segmentation import detect_spots_3d
+from zfisher.core.report import calculate_distances, export_report
+import zfisher.core.session as session
+from zfisher.core.pipeline import generate_global_canvas
 import numpy as np
 import tifffile
 from qtpy.QtWidgets import QApplication
@@ -19,35 +17,11 @@ from qtpy.QtGui import QIcon
 from qtpy.QtCore import QTimer
 import os
 import concurrent.futures
-from qtpy.QtWidgets import QToolBox, QVBoxLayout, QWidget
+from qtpy.QtWidgets import QToolBox, QVBoxLayout, QWidget, QMessageBox
 
 # Define your paths as constants at the top for easy editing later
 DEFAULT_R1 = Path("/Users/sstaller/Desktop/ND2_FILE_INPUTS/1-19-24Fdecon.nd2")
 DEFAULT_R2 = Path("/Users/sstaller/Desktop/ND2_FILE_INPUTS/1-17-24Adecon.nd2")
-
-# Global variable to store the calculated shift
-CALCULATED_SHIFT = None
-
-# Global Session State
-SESSION_DATA = {
-    "output_dir": None,
-    "r1_path": None,
-    "r2_path": None,
-    "shift": None,
-    "processed_files": {} # key: layer_name, value: relative_path
-}
-
-def save_session():
-    """Saves the current session state to a JSON file."""
-    if not SESSION_DATA.get("output_dir"): return
-    try:
-        out_path = Path(SESSION_DATA["output_dir"]) / "zfisher_session.json"
-        with open(out_path, 'w') as f:
-            # Use default=str to handle Path objects and numpy arrays if needed
-            json.dump(SESSION_DATA, f, indent=4, default=str)
-        print(f"Session saved: {out_path}")
-    except Exception as e:
-        print(f"Failed to save session: {e}")
 
 # Helper to map metadata names to colors
 CHANNEL_COLORS = {
@@ -57,6 +31,20 @@ CHANNEL_COLORS = {
     "CY5": "red",
     "TXRED": "magenta"
 }
+
+def attach_puncta_listener(layer, name):
+    """Attaches a listener to a points layer to auto-save changes to session."""
+    def sync_data(event=None):
+        out_dir = session.get_data("output_dir")
+        if out_dir:
+            seg_dir = Path(out_dir) / "segmentation"
+            seg_dir.mkdir(exist_ok=True, parents=True)
+            puncta_path = seg_dir / f"{name}.npy"
+            np.save(puncta_path, layer.data)
+            session.set_processed_file(name, str(puncta_path))
+            session.save_session()
+            
+    layer.events.data.connect(sync_data)
 
 @magicgui(
     call_button="Load Data",
@@ -85,26 +73,23 @@ def file_selector_widget( # No viewer argument
     # If loading, this is skipped to avoid overwriting the loaded session.
     if _save_session:
         viewer.layers.clear()
-        global CALCULATED_SHIFT
-        CALCULATED_SHIFT = None
-        SESSION_DATA["output_dir"] = str(output_dir)
-        SESSION_DATA["r1_path"] = str(round1_path)
-        SESSION_DATA["r2_path"] = str(round2_path)
-        SESSION_DATA["shift"] = None
-        SESSION_DATA["processed_files"] = {}
-        save_session()
+        session.clear_session()
+        session.update_data("output_dir", str(output_dir))
+        session.update_data("r1_path", str(round1_path))
+        session.update_data("r2_path", str(round2_path))
+        session.save_session()
     
     for path, prefix in [(round1_path, "R1"), (round2_path, "R2")]:
         if not path.exists():
             print(f"Error: {path} not found.")
             continue
             
-        session = load_nd2(str(path))
+        nd2_session = load_nd2(str(path))
         
         # YOUR DATA SHAPE: (71, 3, 2044, 2048) -> (Z, C, Y, X)
         # NAPARI EXPECTS CHANNELS AT INDEX 1 IF WE WANT TO SPLIT THEM
         # We move axis 1 (Channels) to the front so it becomes (C, Z, Y, X)
-        data_swapped = np.moveaxis(session.data, 1, 0)
+        data_swapped = np.moveaxis(nd2_session.data, 1, 0)
         
         # Print dimensions for the user
         print(f"Loaded {prefix}: {data_swapped.shape[0]} channels, {data_swapped.shape[1]} Z-slices. Full shape: {data_swapped.shape}")
@@ -115,9 +100,9 @@ def file_selector_widget( # No viewer argument
         
         new_layers = viewer.add_image(
             data_swapped,
-            name=[f"{prefix} - {ch}" for ch in session.channels],
+            name=[f"{prefix} - {ch}" for ch in nd2_session.channels],
             channel_axis=0,        # Now correctly sees 3 channels
-            scale=session.voxels,   # Matches the (71, 2044, 2048) ZYX stack
+            scale=nd2_session.voxels,   # Matches the (71, 2044, 2048) ZYX stack
             blending="additive"
         )
 
@@ -157,17 +142,18 @@ def dapi_segmentation_widget(
     for layer in layers_to_process:
         masks, centroids = segment_nuclei_classical(layer.data)
         
+        out_dir = session.get_data("output_dir")
         # Save outputs if session is active
-        if SESSION_DATA.get("output_dir"):
-            seg_dir = Path(SESSION_DATA["output_dir"]) / "segmentation"
+        if out_dir:
+            seg_dir = Path(out_dir) / "segmentation"
             
         # Add Masks Layer (Required for assigning puncta to cells)
         if masks is not None:
             viewer.add_labels(masks, name=f"{layer.name}_masks", opacity=0.3, visible=False, scale=layer.scale)
-            if SESSION_DATA.get("output_dir"):
+            if out_dir:
                 mask_path = seg_dir / f"{layer.name}_masks.tif"
                 tifffile.imwrite(mask_path, masks)
-                SESSION_DATA["processed_files"][f"{layer.name}_masks"] = str(mask_path)
+                session.set_processed_file(f"{layer.name}_masks", mask_path)
             
         if centroids is not None:
             viewer.add_points(
@@ -177,12 +163,12 @@ def dapi_segmentation_widget(
                 face_color='orange',
                 scale=layer.scale
             )
-            if SESSION_DATA.get("output_dir"):
+            if out_dir:
                 cent_path = seg_dir / f"{layer.name}_centroids.npy"
                 np.save(cent_path, centroids)
-                SESSION_DATA["processed_files"][f"{layer.name}_centroids"] = str(cent_path)
+                session.set_processed_file(f"{layer.name}_centroids", cent_path)
     
-    save_session()
+    session.save_session()
     viewer.status = "Segmentation complete."
 
 @magicgui(
@@ -206,11 +192,8 @@ def registration_widget(
     viewer.status = "Running RANSAC..."
     shift = align_centroids_ransac(p1, p2)
     
-    # Store shift in global variable for the next step
-    global CALCULATED_SHIFT
-    CALCULATED_SHIFT = shift
-    SESSION_DATA["shift"] = shift.tolist()
-    save_session()
+    session.update_data("shift", shift.tolist())
+    session.save_session()
     
     # Output results
     msg = f"Calculated Shift: Z={shift[0]:.2f}, Y={shift[1]:.2f}, X={shift[2]:.2f}"
@@ -232,13 +215,13 @@ def canvas_widget(
 ):
     """Applies the calculated shift to all layers and creates a global canvas."""
     viewer = napari.current_viewer()
-    global CALCULATED_SHIFT
-    shift = CALCULATED_SHIFT
+    shift_list = session.get_data("shift")
+    shift = np.array(shift_list) if shift_list else None
     
     # Retrieve output directory from session
     output_dir = None
-    if SESSION_DATA.get("output_dir"):
-        output_dir = Path(SESSION_DATA["output_dir"]) / "aligned"
+    if session.get_data("output_dir"):
+        output_dir = Path(session.get_data("output_dir")) / "aligned"
         output_dir.mkdir(exist_ok=True, parents=True)
     
     if shift is None:
@@ -259,82 +242,39 @@ def canvas_widget(
 
     viewer.status = f"Generating Canvas with Shift: {shift}"
     
-    # 1. Rigid Align All Channels
-    # We store the results to process DAPI first for warping
-    aligned_data = {} # channel: (r1_aligned, r2_aligned, r1_layer_ref, r2_layer_ref)
+    # Extract layer data to pass to pipeline
+    r1_layers_data = []
+    r2_layers_data = []
     
-    r1_layers = [l for l in viewer.layers if "R1" in l.name and isinstance(l, napari.layers.Image)]
-    r2_layers = [l for l in viewer.layers if "R2" in l.name and isinstance(l, napari.layers.Image)]
+    for l in viewer.layers:
+        if isinstance(l, napari.layers.Image):
+            layer_info = {'name': l.name, 'data': l.data, 'colormap': l.colormap.name, 'scale': l.scale}
+            if "R1" in l.name:
+                r1_layers_data.append(layer_info)
+            elif "R2" in l.name:
+                r2_layers_data.append(layer_info)
 
-    for r1 in r1_layers:
-        channel_name = r1.name.split("-")[-1].strip()
-        r2 = next((l for l in r2_layers if channel_name in l.name), None)
-        
-        if r2:
-            print(f"Rigid aligning {channel_name}...")
-            aligned_r1, aligned_r2 = align_and_pad_images(r1.data, r2.data, shift)
-            aligned_data[channel_name] = (aligned_r1, aligned_r2, r1, r2)
+    # Run Pipeline
+    results = generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, apply_warp)
 
-    # 2. Calculate Deformable Transform (on DAPI)
-    transform = None
-    if apply_warp:
-        if "DAPI" in aligned_data:
-            print("Calculating deformable registration on DAPI...")
-            viewer.status = "Calculating AI Warp (this may take a moment)..."
-            dapi_r1, dapi_r2, _, _ = aligned_data["DAPI"]
-            transform = calculate_deformable_transform(dapi_r1, dapi_r2)
-        else:
-            print("Warning: No DAPI channel found. Skipping deformable registration.")
-
-    # 3. Apply Transform (Parallelized)
-    def warp_worker(item):
-        channel_name, (r1_data, r2_data, r1_layer, r2_layer) = item
-        final_r2 = r2_data
-        r2_name_prefix = "Aligned"
-        
-        if transform:
-            print(f"Applying warp to {channel_name}...")
-            final_r2 = apply_deformable_transform(r2_data, transform, r1_data)
-            r2_name_prefix = "Warped"
-        return channel_name, r1_data, final_r2, r1_layer, r2_layer, r2_name_prefix
-
-    results = []
-    if transform:
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            results = list(executor.map(warp_worker, aligned_data.items()))
-    else:
-        results = [warp_worker(item) for item in aligned_data.items()]
-
-    # 4. Add to Viewer
-    for channel_name, r1_data, final_r2, r1_layer, r2_layer, r2_name_prefix in results:
-            
-        # Add to viewer
+    # Add results to viewer
+    for res in results:
+        r1 = res['r1']
+        r2 = res['r2']
         viewer.add_image(
-            r1_data, 
-            name=f"Aligned R1 - {channel_name}", 
-            colormap=r1_layer.colormap, 
-            scale=r1_layer.scale, 
+            r1['data'], 
+            name=r1['name'], 
+            colormap=r1['colormap'], 
+            scale=r1['scale'], 
             blending='additive'
         )
         viewer.add_image(
-            final_r2, 
-            name=f"{r2_name_prefix} R2 - {channel_name}", 
-            colormap=r2_layer.colormap, 
-            scale=r2_layer.scale, 
+            r2['data'], 
+            name=r2['name'], 
+            colormap=r2['colormap'], 
+            scale=r2['scale'], 
             blending='additive'
         )
-        
-        # Save automatically
-        if output_dir:
-            out_name_r1 = output_dir / f"Aligned_R1_{channel_name}.tif"
-            out_name_r2 = output_dir / f"{r2_name_prefix}_R2_{channel_name}.tif"
-            tifffile.imwrite(out_name_r1, r1_data)
-            tifffile.imwrite(out_name_r2, final_r2)
-            SESSION_DATA["processed_files"][f"Aligned R1 - {channel_name}"] = str(out_name_r1)
-            SESSION_DATA["processed_files"][f"{r2_name_prefix} R2 - {channel_name}"] = str(out_name_r2)
-            print(f"Saved {out_name_r1}")
-
-    save_session()
 
     viewer.status = "Global Canvas Generation Complete."
 
@@ -361,22 +301,27 @@ def puncta_widget(
     
     layer_name = f"{image_layer.name}_puncta"
     
-    # Add points to viewer
-    pts_layer = viewer.add_points(
-        coords,
-        name=layer_name,
-        size=3,
-        face_color="yellow",
-        scale=image_layer.scale
-    )
-    
-    # Save puncta if session is active
-    if SESSION_DATA.get("output_dir"):
-        seg_dir = Path(SESSION_DATA["output_dir"]) / "segmentation"
-        puncta_path = seg_dir / f"{layer_name}.npy"
-        np.save(puncta_path, coords)
-        SESSION_DATA["processed_files"][layer_name] = str(puncta_path)
-        save_session()
+    if layer_name in viewer.layers:
+        pts_layer = viewer.layers[layer_name]
+        if len(coords) > 0:
+            if len(pts_layer.data) > 0:
+                combined = np.vstack((pts_layer.data, coords))
+                pts_layer.data = np.unique(combined, axis=0)
+            else:
+                pts_layer.data = coords
+        coords = pts_layer.data
+    else:
+        # Add points to viewer
+        pts_layer = viewer.add_points(
+            coords,
+            name=layer_name,
+            size=3,
+            face_color="yellow",
+            scale=image_layer.scale
+        )
+        # Attach auto-save listener and trigger initial save
+        attach_puncta_listener(pts_layer, layer_name)
+        pts_layer.events.data(value=pts_layer.data) # Trigger initial save
 
     # Count per nucleus (if masks provided)
     msg = f"Found {len(coords)} spots."
@@ -393,6 +338,36 @@ def puncta_widget(
     print(msg)
     viewer.status = msg
 
+# Add editing tools to the Puncta Widget
+edit_btn = widgets.PushButton(text="Enable Edit Mode (Select)")
+clear_btn = widgets.PushButton(text="Clear All Puncta")
+puncta_widget.append(widgets.Label(value="<b>Editing Tools:</b>"))
+puncta_widget.append(edit_btn)
+puncta_widget.append(clear_btn)
+
+@edit_btn.clicked.connect
+def _on_edit_puncta():
+    viewer = napari.current_viewer()
+    img_layer = puncta_widget.image_layer.value
+    if img_layer:
+        p_name = f"{img_layer.name}_puncta"
+        if p_name in viewer.layers:
+            viewer.layers.selection.active = viewer.layers[p_name]
+            viewer.layers[p_name].mode = 'select'
+            viewer.status = f"Editing {p_name}. Select points and press Backspace/Delete to remove."
+        else:
+            viewer.status = f"Layer {p_name} not found. Run detection first."
+
+@clear_btn.clicked.connect
+def _on_clear_puncta():
+    viewer = napari.current_viewer()
+    img_layer = puncta_widget.image_layer.value
+    if img_layer:
+        p_name = f"{img_layer.name}_puncta"
+        if p_name in viewer.layers:
+            viewer.layers[p_name].data = np.empty((0, 3))
+            viewer.status = f"Cleared all points in {p_name}."
+
 @magicgui(
     call_button="Load Session",
     session_file={"label": "Session File (.json)", "filter": "*.json"}
@@ -405,24 +380,22 @@ def load_session_widget(session_file: Path):
         
     viewer.layers.clear()
         
-    with open(session_file, 'r') as f:
-        data = json.load(f)
-        
     # Restore Global State
-    global SESSION_DATA, CALCULATED_SHIFT
-    SESSION_DATA.update(data)
+    session.load_session_file(session_file)
     
-    if SESSION_DATA.get("shift"):
-        CALCULATED_SHIFT = np.array(SESSION_DATA["shift"])
-        print(f"Restored Shift: {CALCULATED_SHIFT}")
+    shift = session.get_data("shift")
+    if shift:
+        print(f"Restored Shift: {shift}")
 
     # Load Raw Data
-    if SESSION_DATA.get("r1_path") and SESSION_DATA.get("r2_path"):
+    r1_path = session.get_data("r1_path")
+    r2_path = session.get_data("r2_path")
+    if r1_path and r2_path:
         # Call file selector but prevent it from overwriting the session file
         file_selector_widget(
-            round1_path=Path(SESSION_DATA["r1_path"]), 
-            round2_path=Path(SESSION_DATA["r2_path"]),
-            output_dir=Path(SESSION_DATA["output_dir"]),
+            round1_path=Path(r1_path), 
+            round2_path=Path(r2_path),
+            output_dir=Path(session.get_data("output_dir")),
             _save_session=False
         )
 
@@ -434,7 +407,7 @@ def load_session_widget(session_file: Path):
             break
 
     # Load Processed Files (Masks/Centroids/Puncta/Aligned)
-    for name, path_str in SESSION_DATA.get("processed_files", {}).items():
+    for name, path_str in session.get_data("processed_files").items():
         path = Path(path_str)
         if path.exists():
             if path.suffix == '.npy':
@@ -442,7 +415,8 @@ def load_session_widget(session_file: Path):
                 if "centroids" in name.lower():
                     viewer.add_points(data, name=name, size=5, face_color='orange', scale=scale)
                 else: # Assume it's puncta
-                    viewer.add_points(data, name=name, size=3, face_color='yellow', scale=scale)
+                    l = viewer.add_points(data, name=name, size=3, face_color='yellow', scale=scale)
+                    attach_puncta_listener(l, name)
             elif path.suffix in ['.tif', '.tiff']:
                 data = tifffile.imread(path)
                 if "masks" in name.lower():
@@ -458,6 +432,73 @@ def load_session_widget(session_file: Path):
             print(f"Restored layer: {name}")
             
     viewer.status = "Session Restored."
+
+@magicgui(
+    call_button="Calculate & Export Distances",
+    output_filename={"label": "Filename (.xlsx)", "value": "puncta_distances.xlsx"}
+)
+def distance_widget(output_filename: str = "puncta_distances.xlsx"):
+    """Calculates nearest neighbor distances between all puncta layers."""
+    viewer = napari.current_viewer()
+    
+    # Find all points layers
+    points_layers = [l for l in viewer.layers if isinstance(l, napari.layers.Points)]
+    
+    if len(points_layers) < 2:
+        viewer.status = "Need at least 2 points layers."
+        print("Error: Not enough points layers found.")
+        return
+
+    viewer.status = "Calculating distances..."
+    
+    # Prepare data for core function
+    points_data = []
+    for l in points_layers:
+        points_data.append({
+            'name': l.name,
+            'data': l.data,
+            'scale': l.scale
+        })
+        
+    df = calculate_distances(points_data)
+                
+    if df.empty:
+        viewer.status = "No distances calculated."
+        return
+        
+    # Export
+    try:
+        # Determine output path
+        if session.get_data("output_dir"):
+            save_path = Path(session.get_data("output_dir")) / output_filename
+        else:
+            save_path = Path.home() / output_filename
+            
+        final_path = export_report(
+            df, 
+            save_path, 
+            r1_path=session.get_data("r1_path"),
+            r2_path=session.get_data("r2_path"),
+            output_dir=session.get_data("output_dir")
+        )
+        
+        print(f"Saved distances to {final_path}")
+        viewer.status = f"Exported: {final_path.name}"
+        
+        # Track file
+        if session.get_data("output_dir"):
+             session.set_processed_file("Distance_Report", final_path)
+             session.save_session()
+        
+        # Show success popup
+        msg = QMessageBox()
+        msg.setWindowTitle("Export Complete")
+        msg.setText(f"Analysis exported successfully.\n\nFile: {final_path.name}\nPath: {final_path}")
+        msg.exec_()
+             
+    except Exception as e:
+        print(f"Export failed: {e}")
+        viewer.status = "Export failed (check console)."
 
 def create_welcome_widget(viewer):
     """Creates a welcome widget with instructions and a help button."""
@@ -493,8 +534,7 @@ def create_welcome_widget(viewer):
     @reset_btn.changed.connect
     def reset_viewer():
         viewer.layers.clear()
-        global CALCULATED_SHIFT
-        CALCULATED_SHIFT = None
+        session.clear_session()
         viewer.status = "Viewer cleared."
             
     return container
@@ -518,7 +558,8 @@ def launch_zfisher():
         (dapi_segmentation_widget, "2. DAPI Mapping"),
         (registration_widget, "3. Registration"),
         (canvas_widget, "4. Global Canvas"),
-        (puncta_widget, "5. Puncta Detection")
+        (puncta_widget, "5. Puncta Detection"),
+        (distance_widget, "6. Analysis Export")
     ]
 
     toolbox = QToolBox()
@@ -542,6 +583,7 @@ def launch_zfisher():
             dapi_segmentation_widget.reset_choices()
             registration_widget.reset_choices()
             puncta_widget.reset_choices()
+            distance_widget.reset_choices()
 
             if isinstance(layer, napari.layers.Image):
                 if "DAPI" in layer.name.upper():
@@ -559,5 +601,5 @@ def launch_zfisher():
         QTimer.singleShot(100, update_widgets) # Increased delay to 100ms for safety
 
     viewer.layers.events.inserted.connect(on_layer_inserted)
-    viewer.layers.events.removed.connect(lambda e: [w.reset_choices() for w in [dapi_segmentation_widget, registration_widget, puncta_widget]])
+    viewer.layers.events.removed.connect(lambda e: [w.reset_choices() for w in [dapi_segmentation_widget, registration_widget, puncta_widget, distance_widget]])
     napari.run()

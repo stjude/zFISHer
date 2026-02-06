@@ -13,3 +13,4 @@ dependencies:
     - magicgui
     - pandas
     - scipy
+    - openpyxl
