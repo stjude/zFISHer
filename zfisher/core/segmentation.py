@@ -1,6 +1,8 @@
 import numpy as np
 from skimage.feature import peak_local_max, blob_log
 from skimage.filters import gaussian
+from skimage.measure import regionprops
+from scipy.spatial import cKDTree
 
 def detect_spots_3d(image_data, min_distance=2, threshold_rel=0.05, sigma=0.0, method="Local Maxima"):
     """
@@ -52,3 +54,80 @@ def detect_spots_3d(image_data, min_distance=2, threshold_rel=0.05, sigma=0.0, m
             coords = blobs[:, :3].astype(int)
             
     return coords
+
+def match_nuclei_labels(mask1, mask2, threshold=20):
+    """
+    Matches nuclei in mask2 to mask1 based on centroid distance.
+    Relabels mask2 to match mask1 IDs where possible.
+    
+    Args:
+        mask1: Reference labels (Z, Y, X)
+        mask2: Moving labels (Z, Y, X)
+        threshold: Max distance in pixels to consider a match
+        
+    Returns:
+        new_mask2: Relabeled mask2
+        points1: List of dicts {'coord', 'label'} for mask1
+        points2: List of dicts {'coord', 'label'} for new_mask2
+    """
+    props1 = regionprops(mask1)
+    props2 = regionprops(mask2)
+    
+    if not props1 or not props2:
+        return mask2, [], []
+
+    c1 = np.array([p.centroid for p in props1])
+    l1 = np.array([p.label for p in props1])
+    
+    c2 = np.array([p.centroid for p in props2])
+    l2 = np.array([p.label for p in props2])
+    
+    # Build Tree for fast lookup
+    tree = cKDTree(c1)
+    dists, idxs = tree.query(c2)
+    
+    # Create mapping: old_label_2 -> new_label_2
+    mapping = {}
+    next_id = np.max(l1) + 1
+    
+    for i, (d, idx) in enumerate(zip(dists, idxs)):
+        old_label = l2[i]
+        if d < threshold:
+            target_label = l1[idx]
+            mapping[old_label] = target_label
+        else:
+            mapping[old_label] = next_id
+            next_id += 1
+            
+    # Apply mapping
+    max_val = np.max(mask2)
+    lookup = np.zeros(max_val + 1, dtype=mask2.dtype)
+    for old, new in mapping.items():
+        lookup[old] = new
+        
+    new_mask2 = lookup[mask2]
+    
+    # Generate point data for visualization
+    points1_data = [{'coord': p.centroid, 'label': p.label} for p in props1]
+    
+    # For mask2, we need to recalculate centroids or just use old ones with new labels
+    # Using old centroids is faster and correct since we didn't move the pixels
+    points2_data = [{'coord': c2[i], 'label': mapping[l2[i]]} for i in range(len(c2))]
+        
+    return new_mask2, points1_data, points2_data
+
+def merge_labeled_masks(mask1, mask2):
+    """
+    Merges two labeled masks. Assumes IDs are already matched/synchronized.
+    Prioritizes mask1, fills gaps with mask2.
+    """
+    merged = mask1.copy()
+    # Where mask1 is 0 (background) and mask2 has a label, use mask2
+    fill_indices = (merged == 0) & (mask2 > 0)
+    merged[fill_indices] = mask2[fill_indices]
+    return merged
+
+def get_mask_centroids(mask):
+    """Returns list of dicts {'coord': (z,y,x), 'label': id} for a mask."""
+    props = regionprops(mask)
+    return [{'coord': p.centroid, 'label': p.label} for p in props]

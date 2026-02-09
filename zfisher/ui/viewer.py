@@ -6,7 +6,7 @@ import webbrowser
 from pathlib import Path
 from zfisher.core.io import load_nd2
 from zfisher.core.registration import align_centroids_ransac, segment_nuclei_classical
-from zfisher.core.segmentation import detect_spots_3d
+from zfisher.core.segmentation import detect_spots_3d, match_nuclei_labels, merge_labeled_masks, get_mask_centroids
 from zfisher.core.report import calculate_distances, export_report
 import zfisher.core.session as session
 from zfisher.core.pipeline import generate_global_canvas
@@ -163,12 +163,15 @@ def dapi_segmentation_widget(
                 session.set_processed_file(f"{layer.name}_masks", mask_path)
             
         if centroids is not None:
+            ids = np.arange(len(centroids)) + 1
             viewer.add_points(
                 centroids,
                 name=f"{layer.name}_centroids",
                 size=5,
                 face_color='orange',
-                scale=layer.scale
+                scale=layer.scale,
+                properties={'id': ids},
+                text={'string': '{id}', 'size': 8, 'color': 'white', 'translation': np.array([-5, 0, 0])}
             )
             if out_dir:
                 cent_path = seg_dir / f"{layer.name}_centroids.npy"
@@ -215,10 +218,12 @@ def registration_widget(
 
 @magicgui(
     call_button="Generate Global Canvas",
-    apply_warp={"label": "Apply Deformable Warping?"}
+    apply_warp={"label": "Apply Deformable Warping?"},
+    hide_raw={"label": "Hide Raw Layers?"}
 )
 def canvas_widget(
-    apply_warp: bool = True
+    apply_warp: bool = True,
+    hide_raw: bool = True
 ):
     """Applies the calculated shift to all layers and creates a global canvas."""
     viewer = napari.current_viewer()
@@ -294,7 +299,74 @@ def canvas_widget(
                     blending='additive'
                 )
 
+    if hide_raw:
+        for layer in viewer.layers:
+            # Keep Aligned, Warped, and Consensus layers visible
+            # Hide everything else (Raw R1/R2, initial masks/centroids)
+            if "Aligned" in layer.name or "Warped" in layer.name or "Consensus" in layer.name:
+                layer.visible = True
+            else:
+                layer.visible = False
+
     viewer.status = "Global Canvas Generation Complete."
+
+@magicgui(
+    call_button="Match & Merge Nuclei",
+    r1_mask_layer={"label": "R1 Mask (Aligned)"},
+    r2_mask_layer={"label": "R2 Mask (Warped)"},
+    threshold={"label": "Max Distance (px)", "min": 0, "max": 100, "step": 1}
+)
+def nuclei_matching_widget(
+    r1_mask_layer: "napari.layers.Labels",
+    r2_mask_layer: "napari.layers.Labels",
+    threshold: float = 20.0
+):
+    """Matches nuclei between two aligned mask layers and syncs their IDs."""
+    viewer = napari.current_viewer()
+    if not r1_mask_layer or not r2_mask_layer:
+        viewer.status = "Please select both mask layers."
+        return
+    
+    if r1_mask_layer == r2_mask_layer:
+        viewer.status = "Error: Same layer selected for both. Please select R1 for the first and R2 for the second."
+        return
+        
+    viewer.status = "Matching nuclei..."
+    
+    # Run matching
+    new_mask2, pts1, pts2 = match_nuclei_labels(r1_mask_layer.data, r2_mask_layer.data, threshold=threshold)
+    
+    # Merge into a single consensus mask
+    merged_mask = merge_labeled_masks(r1_mask_layer.data, new_mask2)
+    
+    # Add merged layer
+    viewer.add_labels(
+        merged_mask,
+        name="Consensus_Nuclei",
+        scale=r1_mask_layer.scale,
+        opacity=0.5
+    )
+    
+    # Helper to add ID labels
+    def add_id_points(pts_data, name, scale):
+        if not pts_data: return
+        coords = np.array([p['coord'] for p in pts_data])
+        labels = np.array([p['label'] for p in pts_data])
+        
+        viewer.add_points(
+            coords,
+            name=name,
+            size=0, # Invisible points, just text
+            scale=scale,
+            properties={'label': labels},
+            text={'string': '{label}', 'size': 10, 'color': 'cyan', 'translation': np.array([-5, 0, 0])}
+        )
+
+    # Add IDs for the consensus layer
+    consensus_pts = get_mask_centroids(merged_mask)
+    add_id_points(consensus_pts, "Consensus_IDs", r1_mask_layer.scale)
+    
+    viewer.status = "Nuclei matched and merged into 'Consensus_Nuclei'."
 
 @magicgui(
     call_button="Detect Puncta",
@@ -576,7 +648,9 @@ def create_welcome_widget(viewer):
     container.append(widgets.Label(value="2. <b>Segment Nuclei</b> (DAPI)"))
     container.append(widgets.Label(value="3. <b>Register Rounds</b> (RANSAC)"))
     container.append(widgets.Label(value="4. <b>Generate Canvas</b> (Warp)"))
-    container.append(widgets.Label(value="5. <b>Detect Puncta</b> (Spots)"))
+    container.append(widgets.Label(value="5. <b>Match Nuclei</b>"))
+    container.append(widgets.Label(value="6. <b>Detect Puncta</b> (Spots)"))
+    container.append(widgets.Label(value="7. <b>Analysis Export</b>"))
     
     # Buttons Row
     btn_row = widgets.Container(layout="horizontal", labels=False)
@@ -621,8 +695,9 @@ def launch_zfisher():
         (dapi_segmentation_widget, "2. DAPI Mapping"),
         (registration_widget, "3. Registration"),
         (canvas_widget, "4. Global Canvas"),
-        (puncta_widget, "5. Puncta Detection"),
-        (distance_widget, "6. Analysis Export")
+        (nuclei_matching_widget, "5. Match Nuclei"),
+        (puncta_widget, "6. Puncta Detection"),
+        (distance_widget, "7. Analysis Export")
     ]
 
     toolbox = QToolBox()
@@ -647,6 +722,7 @@ def launch_zfisher():
             registration_widget.reset_choices()
             puncta_widget.reset_choices()
             distance_widget.reset_choices()
+            nuclei_matching_widget.reset_choices()
 
             if isinstance(layer, napari.layers.Image):
                 if "DAPI" in layer.name.upper():
@@ -664,5 +740,5 @@ def launch_zfisher():
         QTimer.singleShot(100, update_widgets) # Increased delay to 100ms for safety
 
     viewer.layers.events.inserted.connect(on_layer_inserted)
-    viewer.layers.events.removed.connect(lambda e: [w.reset_choices() for w in [dapi_segmentation_widget, registration_widget, puncta_widget, distance_widget]])
+    viewer.layers.events.removed.connect(lambda e: [w.reset_choices() for w in [dapi_segmentation_widget, registration_widget, puncta_widget, distance_widget, nuclei_matching_widget]])
     napari.run()
