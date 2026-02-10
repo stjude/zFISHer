@@ -171,7 +171,8 @@ def dapi_segmentation_widget(
                 face_color='orange',
                 scale=layer.scale,
                 properties={'id': ids},
-                text={'string': '{id}', 'size': 8, 'color': 'white', 'translation': np.array([-5, 0, 0])}
+                text={'string': '{id}', 'size': 8, 'color': 'white', 'translation': np.array([0, -5, 0])},
+                blending='translucent_no_depth'
             )
             if out_dir:
                 cent_path = seg_dir / f"{layer.name}_centroids.npy"
@@ -359,7 +360,8 @@ def nuclei_matching_widget(
             size=0, # Invisible points, just text
             scale=scale,
             properties={'label': labels},
-            text={'string': '{label}', 'size': 10, 'color': 'cyan', 'translation': np.array([-5, 0, 0])}
+            text={'string': '{label}', 'size': 10, 'color': 'cyan', 'translation': np.array([0, -5, 0])},
+            blending='translucent_no_depth'
         )
 
     # Add IDs for the consensus layer
@@ -367,6 +369,172 @@ def nuclei_matching_widget(
     add_id_points(consensus_pts, "Consensus_IDs", r1_mask_layer.scale)
     
     viewer.status = "Nuclei matched and merged into 'Consensus_Nuclei'."
+
+@magicgui(
+    call_button="Merge IDs",
+    mask_layer={"label": "Layer to Edit"},
+    source_id={"label": "Source ID"},
+    target_id={"label": "Target ID"}
+)
+def mask_editor_widget(
+    mask_layer: "napari.layers.Labels",
+    source_id: int = 0,
+    target_id: int = 0
+):
+    """Merges two labels in the selected mask layer."""
+    viewer = napari.current_viewer()
+    if mask_layer is None:
+        viewer.status = "No mask layer selected."
+        return
+
+    if source_id == target_id:
+        viewer.status = "Source and Target IDs must be different."
+        return
+        
+    # Perform Merge
+    data = mask_layer.data
+    count = np.sum(data == source_id)
+    
+    if count == 0:
+        viewer.status = f"ID {source_id} not found."
+        return
+        
+    # Update data
+    new_data = data.copy()
+    new_data[new_data == source_id] = target_id
+    mask_layer.data = new_data
+    
+    viewer.status = f"Merged ID {source_id} into {target_id} ({count} pixels)."
+
+# Add Tools to Mask Editor
+editor_label = widgets.Label(value="<b>Editing Tools:</b>")
+btn_container = widgets.Container(layout="horizontal", labels=False)
+paint_chk = widgets.CheckBox(text="Paint (New ID)")
+erase_chk = widgets.CheckBox(text="Erase")
+pick_btn = widgets.PushButton(text="Pick ID")
+extrude_btn = widgets.PushButton(text="Extrude ID (Fill Z)")
+delete_btn = widgets.PushButton(text="Delete Source ID")
+refresh_ids_btn = widgets.PushButton(text="Show/Refresh IDs")
+
+btn_container.extend([paint_chk, erase_chk, pick_btn])
+
+mask_editor_widget.append(editor_label)
+mask_editor_widget.append(btn_container)
+mask_editor_widget.append(extrude_btn)
+mask_editor_widget.append(delete_btn)
+mask_editor_widget.append(refresh_ids_btn)
+
+@paint_chk.changed.connect
+def _on_paint(value: bool):
+    viewer = napari.current_viewer()
+    layer = mask_editor_widget.mask_layer.value
+    if layer:
+        if value:
+            erase_chk.value = False
+            viewer.layers.selection.active = layer
+            layer.mode = 'paint'
+            layer.n_edit_dimensions = 2
+            new_id = int(layer.data.max()) + 1
+            layer.selected_label = new_id
+            viewer.status = f"Painting Mode. New ID: {new_id}"
+        elif layer.mode == 'paint':
+            layer.mode = 'pan_zoom'
+            viewer.status = "Painting Mode Off."
+
+@erase_chk.changed.connect
+def _on_erase(value: bool):
+    viewer = napari.current_viewer()
+    layer = mask_editor_widget.mask_layer.value
+    if layer:
+        if value:
+            paint_chk.value = False
+            viewer.layers.selection.active = layer
+            layer.mode = 'erase'
+            viewer.status = "Erase Mode."
+        elif layer.mode == 'erase':
+            layer.mode = 'pan_zoom'
+            viewer.status = "Erase Mode Off."
+
+@pick_btn.clicked.connect
+def _on_pick():
+    viewer = napari.current_viewer()
+    layer = mask_editor_widget.mask_layer.value
+    if layer:
+        viewer.layers.selection.active = layer
+        layer.mode = 'pick'
+        paint_chk.value = False
+        erase_chk.value = False
+        viewer.status = "Pick Mode. Click a label to select its ID."
+
+@extrude_btn.clicked.connect
+def _on_extrude():
+    viewer = napari.current_viewer()
+    layer = mask_editor_widget.mask_layer.value
+    if not layer: return
+    
+    label_id = layer.selected_label
+    if label_id == 0:
+        viewer.status = "Select a label to extrude (cannot extrude 0)."
+        return
+        
+    if layer.ndim != 3:
+        viewer.status = "Extrusion only works on 3D layers."
+        return
+
+    z_idx = int(viewer.dims.current_step[0])
+    current_slice = layer.data[z_idx]
+    mask = (current_slice == label_id)
+    
+    if not np.any(mask):
+        viewer.status = f"Label {label_id} not found on current slice {z_idx}."
+        return
+        
+    layer.data[:, mask] = label_id
+    layer.refresh()
+    viewer.status = f"Extruded ID {label_id} through all Z slices."
+
+@delete_btn.clicked.connect
+def _on_delete():
+    viewer = napari.current_viewer()
+    layer = mask_editor_widget.mask_layer.value
+    src = mask_editor_widget.source_id.value
+    if layer and src > 0:
+        data = layer.data
+        if np.sum(data == src) > 0:
+            new_data = data.copy()
+            new_data[new_data == src] = 0
+            layer.data = new_data
+            viewer.status = f"Deleted ID {src}."
+        else:
+            viewer.status = f"ID {src} not found."
+
+@refresh_ids_btn.clicked.connect
+def _on_refresh_ids():
+    viewer = napari.current_viewer()
+    layer = mask_editor_widget.mask_layer.value
+    if not layer: return
+    
+    # Calculate centroids
+    pts_data = get_mask_centroids(layer.data)
+    
+    name = f"{layer.name}_IDs"
+    coords = np.array([p['coord'] for p in pts_data])
+    labels = np.array([p['label'] for p in pts_data])
+    
+    if name in viewer.layers:
+        viewer.layers.remove(name)
+        
+    if len(coords) > 0:
+        viewer.add_points(
+            coords,
+            name=name,
+            size=0,
+            scale=layer.scale,
+            properties={'label': labels},
+            text={'string': '{label}', 'size': 10, 'color': 'cyan', 'translation': np.array([0, -5, 0])},
+            blending='translucent_no_depth'
+        )
+    viewer.status = f"Refreshed IDs for {layer.name}"
 
 @magicgui(
     call_button="Detect Puncta",
@@ -696,6 +864,7 @@ def launch_zfisher():
         (registration_widget, "3. Registration"),
         (canvas_widget, "4. Global Canvas"),
         (nuclei_matching_widget, "5. Match Nuclei"),
+        (mask_editor_widget, "Mask Editor"),
         (puncta_widget, "6. Puncta Detection"),
         (distance_widget, "7. Analysis Export")
     ]
@@ -723,6 +892,7 @@ def launch_zfisher():
             puncta_widget.reset_choices()
             distance_widget.reset_choices()
             nuclei_matching_widget.reset_choices()
+            mask_editor_widget.reset_choices()
 
             if isinstance(layer, napari.layers.Image):
                 if "DAPI" in layer.name.upper():
@@ -736,9 +906,17 @@ def launch_zfisher():
                     registration_widget.r1_points.value = layer
                 elif "R2" in layer.name.upper():
                     registration_widget.r2_points.value = layer
+            
+            if isinstance(layer, napari.layers.Labels):
+                name = layer.name.upper()
+                if "DAPI" in name:
+                    if "ALIGNED" in name and "R1" in name:
+                        nuclei_matching_widget.r1_mask_layer.value = layer
+                    elif ("WARPED" in name or "ALIGNED" in name) and "R2" in name:
+                        nuclei_matching_widget.r2_mask_layer.value = layer
         
         QTimer.singleShot(100, update_widgets) # Increased delay to 100ms for safety
 
     viewer.layers.events.inserted.connect(on_layer_inserted)
-    viewer.layers.events.removed.connect(lambda e: [w.reset_choices() for w in [dapi_segmentation_widget, registration_widget, puncta_widget, distance_widget, nuclei_matching_widget]])
+    viewer.layers.events.removed.connect(lambda e: [w.reset_choices() for w in [dapi_segmentation_widget, registration_widget, puncta_widget, distance_widget, nuclei_matching_widget, mask_editor_widget]])
     napari.run()
