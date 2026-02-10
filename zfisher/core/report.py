@@ -54,7 +54,7 @@ def calculate_distances(points_layers_data):
     
     return pd.DataFrame(results)
 
-def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None):
+def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None, coloc_rules=None):
     """Exports the dataframe to Excel with metadata."""
     save_path = Path(save_path)
     
@@ -75,10 +75,37 @@ def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None):
             {"Key": "Output Folder", "Value": str(output_dir) if output_dir else "Not Set"},
             {"Key": "Session JSON Name", "Value": "zfisher_session.json"}
         ]
+        
+        # Handle Colocalization Rules
+        df_coloc = pd.DataFrame()
+        if coloc_rules:
+            coloc_rows = []
+            for rule in coloc_rules:
+                src = rule['source']
+                tgt = rule['target']
+                thresh = rule['threshold']
+                
+                # Add to metadata
+                meta_list.append({"Key": f"Coloc Rule: {src} -> {tgt}", "Value": f"<= {thresh} um"})
+                
+                # Filter Data
+                mask = (df['Source_Layer'] == src) & \
+                       (df['Target_Layer'] == tgt) & \
+                       (df['Distance_um'] <= thresh)
+                
+                subset = df[mask].copy()
+                subset['Coloc_Threshold_um'] = thresh
+                coloc_rows.append(subset)
+            
+            if coloc_rows:
+                df_coloc = pd.concat(coloc_rows)
+
         df_meta = pd.DataFrame(meta_list)
         
         with pd.ExcelWriter(save_path, engine='openpyxl') as writer:
             df.to_excel(writer, sheet_name='Distances', index=False)
+            if not df_coloc.empty:
+                df_coloc.to_excel(writer, sheet_name='Colocalization', index=False)
             df_meta.to_excel(writer, sheet_name='Metadata', index=False)
             
         return save_path

@@ -537,6 +537,72 @@ def _on_refresh_ids():
     viewer.status = f"Refreshed IDs for {layer.name}"
 
 @magicgui(
+    call_button="Delete Selected Points",
+    points_layer={"label": "Layer to Edit"}
+)
+def puncta_editor_widget(points_layer: "napari.layers.Points"):
+    """Editor for manually adding/removing puncta."""
+    viewer = napari.current_viewer()
+    if points_layer:
+        if points_layer.mode == 'select':
+            if len(points_layer.selected_data) > 0:
+                points_layer.remove_selected()
+                viewer.status = f"Deleted selected points in {points_layer.name}."
+            else:
+                viewer.status = "No points selected."
+        else:
+            viewer.status = "Switch to Select Mode to delete points."
+
+# Tools for Puncta Editor
+pe_lbl = widgets.Label(value="<b>Editing Tools:</b>")
+pe_container = widgets.Container(layout="horizontal", labels=False)
+pe_add_chk = widgets.CheckBox(text="Add Mode")
+pe_select_chk = widgets.CheckBox(text="Select Mode")
+pe_pan_btn = widgets.PushButton(text="Pan/Zoom")
+
+pe_container.extend([pe_add_chk, pe_select_chk, pe_pan_btn])
+puncta_editor_widget.insert(0, pe_lbl)
+puncta_editor_widget.insert(1, pe_container)
+
+@pe_add_chk.changed.connect
+def _on_pe_add(value: bool):
+    viewer = napari.current_viewer()
+    layer = puncta_editor_widget.points_layer.value
+    if layer:
+        if value:
+            pe_select_chk.value = False
+            viewer.layers.selection.active = layer
+            layer.mode = 'add'
+            viewer.status = "Add Points Mode."
+        elif layer.mode == 'add':
+            layer.mode = 'pan_zoom'
+            viewer.status = "Pan/Zoom Mode."
+
+@pe_select_chk.changed.connect
+def _on_pe_select(value: bool):
+    viewer = napari.current_viewer()
+    layer = puncta_editor_widget.points_layer.value
+    if layer:
+        if value:
+            pe_add_chk.value = False
+            viewer.layers.selection.active = layer
+            layer.mode = 'select'
+            viewer.status = "Select Mode. Click/Drag to select, then click 'Delete Selected'."
+        elif layer.mode == 'select':
+            layer.mode = 'pan_zoom'
+            viewer.status = "Pan/Zoom Mode."
+
+@pe_pan_btn.clicked.connect
+def _on_pe_pan():
+    viewer = napari.current_viewer()
+    layer = puncta_editor_widget.points_layer.value
+    if layer:
+        pe_add_chk.value = False
+        pe_select_chk.value = False
+        layer.mode = 'pan_zoom'
+        viewer.status = "Pan/Zoom Mode."
+
+@magicgui(
     call_button="Detect Puncta",
     image_layer={"label": "Target Channel"},
     nuclei_layer={"label": "Nuclei Masks (Optional)"},
@@ -655,6 +721,110 @@ def _on_clear_puncta():
         if p_name in viewer.layers:
             viewer.layers[p_name].data = np.empty((0, 3))
             viewer.status = f"Cleared all points in {p_name}."
+
+@magicgui(
+    call_button="Add Rule",
+    source_layer={"label": "Source Layer"},
+    target_layer={"label": "Target Layer"},
+    cutoff={"label": "Cutoff (um)", "min": 0.1, "step": 0.1}
+)
+def colocalization_widget(
+    source_layer: "napari.layers.Points", 
+    target_layer: "napari.layers.Points", 
+    cutoff: float = 1.0
+):
+    """Defines colocalization rules and exports report."""
+    if not source_layer or not target_layer:
+        return
+        
+    rule = {
+        'source': source_layer.name,
+        'target': target_layer.name,
+        'threshold': cutoff
+    }
+    
+    # Store rules in the widget function object to persist them
+    if not hasattr(colocalization_widget, 'rules'):
+        colocalization_widget.rules = []
+        
+    colocalization_widget.rules.append(rule)
+    
+    # Update display
+    rule_str = f"{rule['source']} -> {rule['target']} (<= {rule['threshold']} um)"
+    current_text = colocalization_widget.rules_display.value
+    colocalization_widget.rules_display.value = current_text + rule_str + "<br>"
+    
+    napari.current_viewer().status = f"Added rule: {rule_str}"
+
+# Add extra UI elements to Colocalization Widget
+colocalization_widget.rules_display = widgets.Label(value="")
+colocalization_widget.clear_btn = widgets.PushButton(text="Clear Rules")
+colocalization_widget.export_btn = widgets.PushButton(text="Run Analysis & Export")
+colocalization_widget.filename = widgets.LineEdit(label="Filename", value="coloc_analysis.xlsx")
+
+colocalization_widget.append(widgets.Label(value="<b>Current Rules:</b>"))
+colocalization_widget.append(colocalization_widget.rules_display)
+colocalization_widget.append(colocalization_widget.clear_btn)
+colocalization_widget.append(widgets.Label(value="<b>Export:</b>"))
+colocalization_widget.append(colocalization_widget.filename)
+colocalization_widget.append(colocalization_widget.export_btn)
+
+@colocalization_widget.clear_btn.clicked.connect
+def _on_clear_rules():
+    colocalization_widget.rules = []
+    colocalization_widget.rules_display.value = ""
+    napari.current_viewer().status = "Rules cleared."
+
+@colocalization_widget.export_btn.clicked.connect
+def _on_coloc_export():
+    viewer = napari.current_viewer()
+    rules = getattr(colocalization_widget, 'rules', [])
+    
+    # 1. Calculate Distances (All Pairs)
+    points_layers = [l for l in viewer.layers if isinstance(l, napari.layers.Points)]
+    if len(points_layers) < 2:
+        viewer.status = "Need at least 2 points layers."
+        return
+
+    viewer.status = "Calculating distances..."
+    points_data = [{'name': l.name, 'data': l.data, 'scale': l.scale} for l in points_layers]
+    df = calculate_distances(points_data)
+    
+    if df.empty:
+        viewer.status = "No distances calculated."
+        return
+
+    # 2. Export with Rules
+    try:
+        fname = colocalization_widget.filename.value
+        if not fname.endswith(".xlsx"): fname += ".xlsx"
+        
+        if session.get_data("output_dir"):
+            save_path = Path(session.get_data("output_dir")) / fname
+        else:
+            save_path = Path.home() / fname
+            
+        final_path = export_report(
+            df, 
+            save_path, 
+            r1_path=session.get_data("r1_path"),
+            r2_path=session.get_data("r2_path"),
+            output_dir=session.get_data("output_dir"),
+            coloc_rules=rules
+        )
+        
+        print(f"Saved analysis to {final_path}")
+        viewer.status = f"Exported: {final_path.name}"
+        
+        # Show success
+        msg = QMessageBox()
+        msg.setWindowTitle("Export Complete")
+        msg.setText(f"Analysis exported successfully.\n\nFile: {final_path.name}\nPath: {final_path}")
+        msg.exec_()
+        
+    except Exception as e:
+        print(f"Export failed: {e}")
+        viewer.status = "Export failed (check console)."
 
 @magicgui(
     call_button="Load Session",
@@ -866,7 +1036,9 @@ def launch_zfisher():
         (nuclei_matching_widget, "5. Match Nuclei"),
         (mask_editor_widget, "Mask Editor"),
         (puncta_widget, "6. Puncta Detection"),
-        (distance_widget, "7. Analysis Export")
+        (puncta_editor_widget, "Puncta Editor"),
+        (distance_widget, "7. Simple Export"),
+        (colocalization_widget, "8. Colocalization & Export")
     ]
 
     toolbox = QToolBox()
@@ -893,6 +1065,8 @@ def launch_zfisher():
             distance_widget.reset_choices()
             nuclei_matching_widget.reset_choices()
             mask_editor_widget.reset_choices()
+            puncta_editor_widget.reset_choices()
+            colocalization_widget.reset_choices()
 
             if isinstance(layer, napari.layers.Image):
                 if "DAPI" in layer.name.upper():
@@ -906,6 +1080,8 @@ def launch_zfisher():
                     registration_widget.r1_points.value = layer
                 elif "R2" in layer.name.upper():
                     registration_widget.r2_points.value = layer
+                puncta_editor_widget.points_layer.value = layer
+                colocalization_widget.source_layer.value = layer
             
             if isinstance(layer, napari.layers.Labels):
                 name = layer.name.upper()
@@ -918,5 +1094,5 @@ def launch_zfisher():
         QTimer.singleShot(100, update_widgets) # Increased delay to 100ms for safety
 
     viewer.layers.events.inserted.connect(on_layer_inserted)
-    viewer.layers.events.removed.connect(lambda e: [w.reset_choices() for w in [dapi_segmentation_widget, registration_widget, puncta_widget, distance_widget, nuclei_matching_widget, mask_editor_widget]])
+    viewer.layers.events.removed.connect(lambda e: [w.reset_choices() for w in [dapi_segmentation_widget, registration_widget, puncta_widget, distance_widget, nuclei_matching_widget, mask_editor_widget, puncta_editor_widget, colocalization_widget]])
     napari.run()
