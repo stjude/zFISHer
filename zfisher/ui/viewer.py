@@ -750,11 +750,10 @@ def colocalization_widget(
     colocalization_widget.rules.append(rule)
     
     # Update display
-    rule_str = f"{rule['source']} -> {rule['target']} (<= {rule['threshold']} um)"
-    current_text = colocalization_widget.rules_display.value
-    colocalization_widget.rules_display.value = current_text + rule_str + "<br>"
+    lines = [f"{r['source']} -> {r['target']} (<= {r['threshold']} um)" for r in colocalization_widget.rules]
+    colocalization_widget.rules_display.value = "\n".join(lines)
     
-    napari.current_viewer().status = f"Added rule: {rule_str}"
+    napari.current_viewer().status = f"Added rule: {lines[-1]}"
 
 # Add extra UI elements to Colocalization Widget
 colocalization_widget.rules_display = widgets.Label(value="")
