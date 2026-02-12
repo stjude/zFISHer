@@ -2,6 +2,7 @@ import napari
 import numpy as np
 from magicgui import magicgui, widgets
 
+import zfisher.core.session as session
 from zfisher.core.segmentation import detect_spots_3d
 from .. import popups
 
@@ -24,6 +25,17 @@ def puncta_widget(
 ):
     """Detects spots in the selected image layer."""
     viewer = napari.current_viewer()
+    
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before detecting puncta."
+        )
+        return
+
     if image_layer is None:
         return
         
@@ -79,6 +91,18 @@ puncta_widget.append(clear_btn)
 @edit_chk.changed.connect
 def _on_edit_puncta(state: bool):
     viewer = napari.current_viewer()
+    
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before editing puncta."
+        )
+        edit_chk.value = False
+        return
+
     img_layer = puncta_widget.image_layer.value
     if img_layer:
         p_name = f"{img_layer.name}_puncta"
@@ -98,6 +122,17 @@ def _on_edit_puncta(state: bool):
 @clear_btn.clicked.connect
 def _on_clear_puncta():
     viewer = napari.current_viewer()
+    
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before clearing puncta."
+        )
+        return
+
     img_layer = puncta_widget.image_layer.value
     if img_layer:
         p_name = f"{img_layer.name}_puncta"

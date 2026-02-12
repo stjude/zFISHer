@@ -14,6 +14,16 @@ def distance_widget(output_filename: str = "puncta_distances.xlsx"):
     """Calculates nearest neighbor distances between all puncta layers."""
     viewer = napari.current_viewer()
     
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before calculating distances."
+        )
+        return
+
     points_layers = [l for l in viewer.layers if isinstance(l, napari.layers.Points)]
     
     if len(points_layers) < 2:

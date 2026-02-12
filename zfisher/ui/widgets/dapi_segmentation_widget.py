@@ -20,6 +20,17 @@ def dapi_segmentation_widget(
 ):
     """Runs segmentation on selected DAPI channels."""
     viewer = napari.current_viewer()
+
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before running segmentation."
+        )
+        return
+
     layers_to_process = [l for l in [r1_layer, r2_layer] if l is not None]
     
     if not layers_to_process:

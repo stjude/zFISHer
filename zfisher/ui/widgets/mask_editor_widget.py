@@ -2,6 +2,8 @@ import napari
 import numpy as np
 from magicgui import magicgui, widgets
 
+import zfisher.core.session as session
+from .. import popups
 from zfisher.core.segmentation import get_mask_centroids
 
 @magicgui(
@@ -17,6 +19,17 @@ def mask_editor_widget(
 ):
     """Merges two labels in the selected mask layer."""
     viewer = napari.current_viewer()
+
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before editing masks."
+        )
+        return
+
     if mask_layer is None:
         viewer.status = "No mask layer selected."
         return
@@ -59,6 +72,18 @@ mask_editor_widget.append(refresh_ids_btn)
 @paint_chk.changed.connect
 def _on_paint(value: bool):
     viewer = napari.current_viewer()
+    
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before editing masks."
+        )
+        paint_chk.value = False
+        return
+
     layer = mask_editor_widget.mask_layer.value
     if layer:
         if value:
@@ -76,6 +101,18 @@ def _on_paint(value: bool):
 @erase_chk.changed.connect
 def _on_erase(value: bool):
     viewer = napari.current_viewer()
+    
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before editing masks."
+        )
+        erase_chk.value = False
+        return
+
     layer = mask_editor_widget.mask_layer.value
     if layer:
         if value:
@@ -90,6 +127,17 @@ def _on_erase(value: bool):
 @pick_btn.clicked.connect
 def _on_pick():
     viewer = napari.current_viewer()
+    
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before editing masks."
+        )
+        return
+
     layer = mask_editor_widget.mask_layer.value
     if layer:
         viewer.layers.selection.active = layer
@@ -101,6 +149,17 @@ def _on_pick():
 @extrude_btn.clicked.connect
 def _on_extrude():
     viewer = napari.current_viewer()
+    
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before editing masks."
+        )
+        return
+
     layer = mask_editor_widget.mask_layer.value
     if not layer: return
     
@@ -128,6 +187,17 @@ def _on_extrude():
 @delete_btn.clicked.connect
 def _on_delete():
     viewer = napari.current_viewer()
+    
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before editing masks."
+        )
+        return
+
     layer = mask_editor_widget.mask_layer.value
     src = mask_editor_widget.source_id.value
     if layer and src > 0:
@@ -143,6 +213,17 @@ def _on_delete():
 @refresh_ids_btn.clicked.connect
 def _on_refresh_ids():
     viewer = napari.current_viewer()
+    
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before refreshing IDs."
+        )
+        return
+
     layer = mask_editor_widget.mask_layer.value
     if not layer: return
     

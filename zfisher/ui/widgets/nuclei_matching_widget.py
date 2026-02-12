@@ -2,6 +2,7 @@ import napari
 import numpy as np
 from magicgui import magicgui
 
+import zfisher.core.session as session
 from zfisher.core.segmentation import match_nuclei_labels, merge_labeled_masks, get_mask_centroids
 from .. import popups
 
@@ -18,6 +19,17 @@ def nuclei_matching_widget(
 ):
     """Matches nuclei between two aligned mask layers and syncs their IDs."""
     viewer = napari.current_viewer()
+    
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before matching nuclei."
+        )
+        return
+
     if not r1_mask_layer or not r2_mask_layer:
         viewer.status = "Please select both mask layers."
         return

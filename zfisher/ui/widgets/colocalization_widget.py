@@ -18,6 +18,18 @@ def colocalization_widget(
     cutoff: float = 1.0
 ):
     """Defines colocalization rules and exports report."""
+    viewer = napari.current_viewer()
+    
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before adding rules."
+        )
+        return
+
     if not source_layer or not target_layer:
         return
         
@@ -52,6 +64,18 @@ colocalization_widget.append(colocalization_widget.export_btn)
 
 @colocalization_widget.clear_btn.clicked.connect
 def _on_clear_rules():
+    viewer = napari.current_viewer()
+    
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before clearing rules."
+        )
+        return
+
     if hasattr(colocalization_widget, 'rules'):
         colocalization_widget.rules = []
     colocalization_widget.rules_display.value = ""
@@ -60,6 +84,17 @@ def _on_clear_rules():
 @colocalization_widget.export_btn.clicked.connect
 def _on_coloc_export():
     viewer = napari.current_viewer()
+    
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before exporting."
+        )
+        return
+
     rules = getattr(colocalization_widget, 'rules', [])
     
     points_layers = [l for l in viewer.layers if isinstance(l, napari.layers.Points)]

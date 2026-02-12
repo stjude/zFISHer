@@ -19,10 +19,21 @@ def canvas_widget(
 ):
     """Applies the calculated shift to all layers and creates a global canvas."""
     viewer = napari.current_viewer()
+
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before generating the canvas."
+        )
+        return
+
     shift_list = session.get_data("shift")
     shift = np.array(shift_list) if shift_list else None
     
-    output_dir = Path(session.get_data("output_dir") or "") / "aligned"
+    output_dir = Path(output_dir) / "aligned"
     output_dir.mkdir(exist_ok=True, parents=True)
     
     if shift is None:

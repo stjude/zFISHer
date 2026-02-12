@@ -16,6 +16,17 @@ def registration_widget(
 ):
     """Calculates the XYZ shift between two point clouds."""
     viewer = napari.current_viewer()
+    
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before running registration."
+        )
+        return
+
     if r1_points is None or r2_points is None:
         viewer.status = "Please select both centroid layers."
         return

@@ -20,7 +20,7 @@ from .widgets.colocalization_widget import colocalization_widget
 from .widgets.distance_widget import distance_widget
 from .widgets.mask_editor_widget import mask_editor_widget
 from .widgets.puncta_editor_widget import puncta_editor_widget
-from .widgets.capture_widget import capture_widget
+from .widgets.capture_widget import capture_widget, capture_with_hotkey
 
 # Import the event handlers
 from . import events
@@ -139,7 +139,7 @@ def launch_zfisher():
         (puncta_editor_widget, "Puncta Editor"),
         (distance_widget, "7. Simple Export"),
         (colocalization_widget, "8. Colocalization & Export"),
-        (capture_widget, "9. Capture View")
+        (capture_widget, "Capture View")
     ]
 
     toolbox = QToolBox()
@@ -157,5 +157,8 @@ def launch_zfisher():
     # Connect layer events to handlers, passing the widget_map to each.
     viewer.layers.events.inserted.connect(partial(events.on_layer_inserted, widgets=widget_map))
     viewer.layers.events.removed.connect(partial(events.on_layer_removed, widgets=widget_map))
+
+    # --- Register Hotkeys ---
+    viewer.bind_key('p', capture_with_hotkey, overwrite=True)
 
     napari.run()

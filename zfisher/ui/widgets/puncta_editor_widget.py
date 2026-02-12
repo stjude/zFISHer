@@ -1,6 +1,9 @@
 import napari
 from magicgui import magicgui, widgets
 
+import zfisher.core.session as session
+from .. import popups
+
 @magicgui(
     call_button="Delete Selected Points",
     points_layer={"label": "Layer to Edit"}
@@ -8,6 +11,17 @@ from magicgui import magicgui, widgets
 def puncta_editor_widget(points_layer: "napari.layers.Points"):
     """Editor for manually adding/removing puncta."""
     viewer = napari.current_viewer()
+
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before editing puncta."
+        )
+        return
+
     if points_layer:
         if points_layer.mode == 'select':
             if len(points_layer.selected_data) > 0:
@@ -32,6 +46,18 @@ puncta_editor_widget.insert(1, pe_container)
 @pe_add_chk.changed.connect
 def _on_pe_add(value: bool):
     viewer = napari.current_viewer()
+    
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before editing puncta."
+        )
+        pe_add_chk.value = False
+        return
+
     layer = puncta_editor_widget.points_layer.value
     if layer:
         if value:
@@ -46,6 +72,18 @@ def _on_pe_add(value: bool):
 @pe_select_chk.changed.connect
 def _on_pe_select(value: bool):
     viewer = napari.current_viewer()
+    
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before editing puncta."
+        )
+        pe_select_chk.value = False
+        return
+
     layer = puncta_editor_widget.points_layer.value
     if layer:
         if value:
@@ -60,6 +98,17 @@ def _on_pe_select(value: bool):
 @pe_pan_btn.clicked.connect
 def _on_pe_pan():
     viewer = napari.current_viewer()
+    
+    # --- Session Check ---
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "No Active Session",
+            "Please start or load a session before editing puncta."
+        )
+        return
+
     layer = puncta_editor_widget.points_layer.value
     if layer:
         pe_add_chk.value = False
