@@ -55,7 +55,7 @@ def detect_spots_3d(image_data, min_distance=2, threshold_rel=0.05, sigma=0.0, m
             
     return coords
 
-def match_nuclei_labels(mask1, mask2, threshold=20):
+def match_nuclei_labels(mask1, mask2, threshold=20, progress_callback=None):
     """
     Matches nuclei in mask2 to mask1 based on centroid distance.
     Relabels mask2 to match mask1 IDs where possible.
@@ -64,16 +64,21 @@ def match_nuclei_labels(mask1, mask2, threshold=20):
         mask1: Reference labels (Z, Y, X)
         mask2: Moving labels (Z, Y, X)
         threshold: Max distance in pixels to consider a match
+        progress_callback: Optional function for progress reporting.
         
     Returns:
         new_mask2: Relabeled mask2
         points1: List of dicts {'coord', 'label'} for mask1
         points2: List of dicts {'coord', 'label'} for new_mask2
     """
+    if progress_callback: progress_callback(0, "Analyzing reference nuclei...")
     props1 = regionprops(mask1)
+    
+    if progress_callback: progress_callback(15, "Analyzing moving nuclei...")
     props2 = regionprops(mask2)
     
     if not props1 or not props2:
+        if progress_callback: progress_callback(100, "No nuclei found.")
         return mask2, [], []
 
     c1 = np.array([p.centroid for p in props1])
@@ -82,11 +87,11 @@ def match_nuclei_labels(mask1, mask2, threshold=20):
     c2 = np.array([p.centroid for p in props2])
     l2 = np.array([p.label for p in props2])
     
-    # Build Tree for fast lookup
+    if progress_callback: progress_callback(30, "Finding nearest neighbors...")
     tree = cKDTree(c1)
     dists, idxs = tree.query(c2)
     
-    # Create mapping: old_label_2 -> new_label_2
+    if progress_callback: progress_callback(50, "Creating ID map...")
     mapping = {}
     next_id = np.max(l1) + 1
     
@@ -94,12 +99,18 @@ def match_nuclei_labels(mask1, mask2, threshold=20):
         old_label = l2[i]
         if d < threshold:
             target_label = l1[idx]
-            mapping[old_label] = target_label
+            # Handle potential merges: if multiple mask2 labels map to one mask1 label
+            if target_label in mapping.values():
+                # This old_label should be considered unmatched and get a new ID
+                mapping[old_label] = next_id
+                next_id += 1
+            else:
+                mapping[old_label] = target_label
         else:
             mapping[old_label] = next_id
             next_id += 1
             
-    # Apply mapping
+    if progress_callback: progress_callback(75, "Applying new labels to mask...")
     max_val = np.max(mask2)
     lookup = np.zeros(max_val + 1, dtype=mask2.dtype)
     for old, new in mapping.items():
@@ -107,13 +118,11 @@ def match_nuclei_labels(mask1, mask2, threshold=20):
         
     new_mask2 = lookup[mask2]
     
-    # Generate point data for visualization
+    if progress_callback: progress_callback(90, "Generating visualization points...")
     points1_data = [{'coord': p.centroid, 'label': p.label} for p in props1]
-    
-    # For mask2, we need to recalculate centroids or just use old ones with new labels
-    # Using old centroids is faster and correct since we didn't move the pixels
     points2_data = [{'coord': c2[i], 'label': mapping[l2[i]]} for i in range(len(c2))]
         
+    if progress_callback: progress_callback(100, "Done.")
     return new_mask2, points1_data, points2_data
 
 def merge_labeled_masks(mask1, mask2):

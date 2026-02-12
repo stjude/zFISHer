@@ -1,0 +1,111 @@
+import napari
+from pathlib import Path
+from magicgui import magicgui, widgets
+
+import zfisher.core.session as session
+from zfisher.core.report import calculate_distances, export_report
+from .. import popups
+
+@magicgui(
+    call_button="Add Rule",
+    source_layer={"label": "Source Layer"},
+    target_layer={"label": "Target Layer"},
+    cutoff={"label": "Cutoff (um)", "min": 0.1, "step": 0.1}
+)
+def colocalization_widget(
+    source_layer: "napari.layers.Points", 
+    target_layer: "napari.layers.Points", 
+    cutoff: float = 1.0
+):
+    """Defines colocalization rules and exports report."""
+    if not source_layer or not target_layer:
+        return
+        
+    rule = {
+        'source': source_layer.name,
+        'target': target_layer.name,
+        'threshold': cutoff
+    }
+    
+    if not hasattr(colocalization_widget, 'rules'):
+        colocalization_widget.rules = []
+        
+    colocalization_widget.rules.append(rule)
+    
+    lines = [f"{r['source']} -> {r['target']} (<= {r['threshold']} um)" for r in colocalization_widget.rules]
+    colocalization_widget.rules_display.value = "\n".join(lines)
+    
+    napari.current_viewer().status = f"Added rule: {lines[-1]}"
+
+# Add extra UI elements
+colocalization_widget.rules_display = widgets.Label(value="")
+colocalization_widget.clear_btn = widgets.PushButton(text="Clear Rules")
+colocalization_widget.export_btn = widgets.PushButton(text="Run Analysis & Export")
+colocalization_widget.filename = widgets.LineEdit(label="Filename", value="coloc_analysis.xlsx")
+
+colocalization_widget.append(widgets.Label(value="<b>Current Rules:</b>"))
+colocalization_widget.append(colocalization_widget.rules_display)
+colocalization_widget.append(colocalization_widget.clear_btn)
+colocalization_widget.append(widgets.Label(value="<b>Export:</b>"))
+colocalization_widget.append(colocalization_widget.filename)
+colocalization_widget.append(colocalization_widget.export_btn)
+
+@colocalization_widget.clear_btn.clicked.connect
+def _on_clear_rules():
+    if hasattr(colocalization_widget, 'rules'):
+        colocalization_widget.rules = []
+    colocalization_widget.rules_display.value = ""
+    napari.current_viewer().status = "Rules cleared."
+
+@colocalization_widget.export_btn.clicked.connect
+def _on_coloc_export():
+    viewer = napari.current_viewer()
+    rules = getattr(colocalization_widget, 'rules', [])
+    
+    points_layers = [l for l in viewer.layers if isinstance(l, napari.layers.Points)]
+    if len(points_layers) < 2:
+        viewer.status = "Need at least 2 points layers."
+        return
+
+    viewer.status = "Calculating distances..."
+    dialog = popups.show_busy_popup(viewer.window._qt_window, "Running Colocalization Analysis...")
+    
+    try:
+        points_data = [{'name': l.name, 'data': l.data, 'scale': l.scale} for l in points_layers]
+        df = calculate_distances(points_data)
+        
+        if df.empty:
+            viewer.status = "No distances calculated."
+            return
+
+        fname = colocalization_widget.filename.value
+        if not fname.endswith(".xlsx"): fname += ".xlsx"
+        
+        save_path = Path(session.get_data("output_dir", Path.home())) / fname
+            
+        final_path = export_report(
+            df, 
+            save_path, 
+            r1_path=session.get_data("r1_path"),
+            r2_path=session.get_data("r2_path"),
+            output_dir=session.get_data("output_dir"),
+            coloc_rules=rules
+        )
+        
+        print(f"Saved analysis to {final_path}")
+        viewer.status = f"Exported: {final_path.name}"
+        
+        popups.show_info_popup(
+            viewer.window._qt_window,
+            "Export Complete",
+            f"Analysis exported successfully.\n\nFile: {final_path.name}\nPath: {final_path}"
+        )
+            
+    except Exception as e:
+        print(f"Export failed: {e}")
+        viewer.status = "Export failed (check console)."
+        popups.show_error_popup(
+            viewer.window._qt_window, "Export Failed", f"An error occurred during export.\n\nError: {e}"
+        )
+    finally:
+        dialog.close()

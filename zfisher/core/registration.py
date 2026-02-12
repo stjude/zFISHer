@@ -67,16 +67,16 @@ def segment_nuclei_3d(image_data, gpu=True):
     
     return masks, centroids
 
-def segment_nuclei_classical(image_data):
+def segment_nuclei_classical(image_data, progress_callback=None):
     """
     Fast 3D nuclei segmentation using classical image processing.
     Much faster than Cellpose, suitable for registration landmarks.
     """
-    # 1. Downsample for speed (consistent with previous logic)
+    # 1. Downsample for speed
+    if progress_callback: progress_callback(0, "Downsampling...")
     z_step = 2
     scale_factor = 0.25
     
-    # Subsample Z and Downsample XY
     small_data = rescale(
         image_data[::z_step], 
         (1, scale_factor, scale_factor), 
@@ -85,9 +85,11 @@ def segment_nuclei_classical(image_data):
     )
 
     # 2. Smooth to reduce noise
+    if progress_callback: progress_callback(20, "Smoothing...")
     smoothed = gaussian(small_data, sigma=3)
     
     # 3. Threshold (Otsu)
+    if progress_callback: progress_callback(40, "Thresholding...")
     try:
         thresh = threshold_otsu(smoothed)
         binary = smoothed > thresh
@@ -96,19 +98,19 @@ def segment_nuclei_classical(image_data):
         return None, None # Handle empty images
 
     # 4. Distance Transform & Peak Finding (Separates touching nuclei)
+    if progress_callback: progress_callback(60, "Finding nuclei centers...")
     distance = ndi.distance_transform_edt(binary)
     # min_distance=7 corresponds to ~28 pixels in original image (7 / 0.25)
     coords = peak_local_max(distance, min_distance=7, labels=binary)
     
     # 5. Extract Centroids directly from peaks
-    # We can use the peaks as centroids directly for registration speed
-    # Scaling back to original coordinates
     centroids = np.array([
         [c[0] * z_step, c[1] / scale_factor, c[2] / scale_factor] 
         for c in coords
     ])
 
     # Generate markers for watershed
+    if progress_callback: progress_callback(80, "Expanding centers (Watershed)...")
     markers = np.zeros(distance.shape, dtype=int)
     markers[tuple(coords.T)] = np.arange(len(coords)) + 1
     
@@ -124,9 +126,10 @@ def segment_nuclei_classical(image_data):
         anti_aliasing=False
     ).astype(np.uint32)
     
+    if progress_callback: progress_callback(100, "Done.")
     return labels, centroids
 
-def align_centroids_ransac(fixed_points, moving_points, max_distance=None):
+def align_centroids_ransac(fixed_points, moving_points, max_distance=None, progress_callback=None):
     """
     Calculates the rigid shift between two point clouds using Vector Voting + RANSAC.
     This is robust to large shifts where nearest-neighbor matching fails.
@@ -135,12 +138,13 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None):
         fixed_points: (N, 3) array of centroids from Round 1 (Z, Y, X)
         moving_points: (M, 3) array of centroids from Round 2 (Z, Y, X)
         max_distance: Ignored (kept for compatibility).
+        progress_callback: Optional function to report progress (value, message).
         
     Returns:
         shift_vector: (Z, Y, X) translation needed to move Round 2 to Round 1
     """
     # 1. Brute-force Vector Voting to find rough shift
-    # Subsample points if too many (>2000) to keep memory usage low
+    if progress_callback: progress_callback(10, "Finding rough alignment...")
     n_limit = 2000
     fp = fixed_points
     mp = moving_points
@@ -151,30 +155,22 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None):
         mp = mp[np.random.choice(len(mp), n_limit, replace=False)]
         
     if len(fp) < 1 or len(mp) < 1:
-        print("Not enough points.")
         return np.array([0.0, 0.0, 0.0])
 
-    # Calculate all pairwise differences: fixed - moving
-    # shape: (N_fixed, N_moving, 3)
     diffs = fp[:, np.newaxis, :] - mp[np.newaxis, :, :]
     diffs = diffs.reshape(-1, 3)
     
-    # Bin the differences (5.0 pixels bin size is robust for nuclei)
     bin_size = 5.0
     binned_diffs = np.round(diffs / bin_size).astype(int)
     
-    # Find the most frequent bin (the common shift vector)
     unique_bins, counts = np.unique(binned_diffs, axis=0, return_counts=True)
     best_bin = unique_bins[np.argmax(counts)]
     rough_shift = best_bin * bin_size
     
-    print(f"Rough shift via voting: {rough_shift}")
-    
-    # 2. Refine using Nearest Neighbors + RANSAC
-    # Apply rough shift to bring points close
+    # 2. Refine using Nearest Neighbors
+    if progress_callback: progress_callback(40, "Matching nearest neighbors...")
     moving_shifted = moving_points + rough_shift
     
-    # Now we can use a small search radius because they are roughly aligned
     search_radius = 100.0
     tree = cKDTree(fixed_points)
     distances, indices = tree.query(moving_shifted, distance_upper_bound=search_radius)
@@ -184,40 +180,37 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None):
     dst = fixed_points[indices[valid_mask]]
     
     if len(src) < 4:
-        print(f"Only {len(src)} matches found after rough alignment. Returning rough shift.")
+        if progress_callback: progress_callback(100, "Done.")
         return rough_shift
 
-    print(f"Refining with {len(src)} putative matches...")
-
     # 3. Run RANSAC to refine the fit
+    if progress_callback: progress_callback(70, "Running RANSAC to find best fit...")
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="No inliers found")
         model, inliers = ransac(
             (src, dst), 
             AffineTransform, 
             min_samples=4, 
-            residual_threshold=50, # Relaxed threshold to account for segmentation noise
+            residual_threshold=50,
             max_trials=2000
         )
     
     if model is None:
-        print("RANSAC refinement failed. Returning rough shift.")
+        if progress_callback: progress_callback(100, "Done.")
         return rough_shift
 
     shift = model.translation
     
-    # SANITY CHECK: If RANSAC deviates wildly from the voting consensus, it likely failed.
-    # This prevents catastrophic shifts (like -16000 pixels) from crashing the viewer.
     deviation = np.linalg.norm(shift - rough_shift)
-    if deviation > 500.0: # 500 pixel deviation is huge for nuclei registration
-        print(f"RANSAC returned unrealistic shift {shift} (Deviation: {deviation:.2f}). Reverting to rough shift.")
+    if deviation > 500.0:
+        if progress_callback: progress_callback(100, "Done (reverted to rough shift).")
         return rough_shift
     
     if np.any(np.isnan(shift)):
-        print("RANSAC returned NaN. Returning rough shift.")
+        if progress_callback: progress_callback(100, "Done (reverted to rough shift).")
         return rough_shift
         
-    print(f"Refined shift: {shift}")
+    if progress_callback: progress_callback(100, "Done.")
     return shift
 
 def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
