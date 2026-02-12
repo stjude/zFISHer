@@ -22,7 +22,7 @@ def distance_widget(output_filename: str = "puncta_distances.xlsx"):
         return
 
     viewer.status = "Calculating distances..."
-    dialog = popups.show_busy_popup(viewer.window._qt_window, "Calculating Distances...")
+    dialog = popups.ProgressDialog(viewer.window._qt_window, "Calculating Distances...")
     
     try:
         points_data = [{'name': l.name, 'data': l.data, 'scale': l.scale} for l in points_layers]

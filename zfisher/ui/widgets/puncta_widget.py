@@ -28,7 +28,7 @@ def puncta_widget(
         return
         
     viewer.status = f"Detecting spots in {image_layer.name}..."
-    dialog = popups.show_busy_popup(viewer.window._qt_window, f"Detecting Puncta in {image_layer.name}...")
+    dialog = popups.ProgressDialog(viewer.window._qt_window, f"Detecting Puncta in {image_layer.name}...")
     
     try:
         # Run detection

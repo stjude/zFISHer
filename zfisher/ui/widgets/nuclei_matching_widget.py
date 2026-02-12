@@ -27,7 +27,7 @@ def nuclei_matching_widget(
         return
         
     viewer.status = "Matching nuclei..."
-    dialog = popups.show_busy_popup(viewer.window._qt_window, "Matching Nuclei...")
+    dialog = popups.ProgressDialog(viewer.window._qt_window, "Matching Nuclei...")
     
     try:
         # Run matching

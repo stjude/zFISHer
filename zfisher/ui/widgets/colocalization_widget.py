@@ -68,7 +68,7 @@ def _on_coloc_export():
         return
 
     viewer.status = "Calculating distances..."
-    dialog = popups.show_busy_popup(viewer.window._qt_window, "Running Colocalization Analysis...")
+    dialog = popups.ProgressDialog(viewer.window._qt_window, "Running Colocalization Analysis...")
     
     try:
         points_data = [{'name': l.name, 'data': l.data, 'scale': l.scale} for l in points_layers]

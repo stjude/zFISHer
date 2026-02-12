@@ -3,7 +3,7 @@ import webbrowser
 from pathlib import Path
 from functools import partial
 
-from qtpy.QtWidgets import QApplication, QToolBox
+from qtpy.QtWidgets import QApplication, QToolBox, QToolButton
 from qtpy.QtGui import QIcon
 from magicgui import widgets
 import zfisher.core.session as session
@@ -20,6 +20,7 @@ from .widgets.colocalization_widget import colocalization_widget
 from .widgets.distance_widget import distance_widget
 from .widgets.mask_editor_widget import mask_editor_widget
 from .widgets.puncta_editor_widget import puncta_editor_widget
+from .widgets.capture_widget import capture_widget
 
 # Import the event handlers
 from . import events
@@ -73,6 +74,36 @@ def launch_zfisher():
         app.setWindowIcon(QIcon(str(icon_path)))
 
     viewer = napari.Viewer(title="zFISHer - 3D Colocalization", ndisplay=2)
+
+    # The following code is commented out because the napari API has changed,
+    # and it was causing a crash. The 'new shapes layer' button is currently visible.
+    # # Hide the "new shapes" layer button as requested
+    # try:
+    #     # Access the controls widget which contains the layer buttons
+    #     controls = viewer.window._qt_viewer.controls
+    #     layer_buttons = controls.layer_buttons
+        
+    #     found_button = False
+    #     # Use a more specific search to avoid hiding the wrong button
+    #     for btn in layer_buttons.findChildren(QToolButton):
+    #         tooltip = btn.toolTip().lower()
+    #         if 'new shapes layer' in tooltip:
+    #             btn.setVisible(False)
+    #             found_button = True
+    #             break # Exit after finding the button
+        
+    #     if not found_button:
+    #         # This will print to the console if the button wasn't found.
+    #         print("DEBUG: The 'new shapes layer' button could not be found to be hidden.")
+            
+    # except Exception as e:
+    #     # Make errors more visible in the console
+    #     print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+    #     print(f"ERROR: An exception occurred while trying to hide the shapes layer button: {e}")
+    #     print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+
+    print("INFO: The 'new shapes layer' button is currently visible due to a napari API change.")
+
     viewer.scale_bar.visible = True
     viewer.scale_bar.unit = "um"
     
@@ -86,6 +117,7 @@ def launch_zfisher():
         "puncta_detection": puncta_widget,
         "puncta_editor": puncta_editor_widget,
         "colocalization": colocalization_widget,
+        "capture": capture_widget,
         # These are not modified by events, but included for completeness
         "file_selector": file_selector_widget,
         "load_session": load_session_widget,
@@ -106,7 +138,8 @@ def launch_zfisher():
         (puncta_widget, "6. Puncta Detection"),
         (puncta_editor_widget, "Puncta Editor"),
         (distance_widget, "7. Simple Export"),
-        (colocalization_widget, "8. Colocalization & Export")
+        (colocalization_widget, "8. Colocalization & Export"),
+        (capture_widget, "9. Capture View")
     ]
 
     toolbox = QToolBox()

@@ -15,7 +15,9 @@ from ._shared import load_raw_data_into_viewer
 def load_session_widget(session_file: Path):
     """Restores a previous analysis session."""
     viewer = napari.current_viewer()
-    if not session_file.exists():
+    if not session_file.exists() or session_file.is_dir():
+        if session_file.is_dir():
+            viewer.status = "Error: Please select a session file, not a directory."
         return
         
     viewer.layers.clear()
