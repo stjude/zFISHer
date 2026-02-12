@@ -53,63 +53,25 @@ def attach_puncta_listener(layer, name):
     # The 'current_edge_color' event does not exist in all napari versions, causing a crash.
     # layer.events.current_edge_color.connect(sync_color)
 
-@magicgui(
-    call_button="Load Data",
-    round1_path={"label": "Round 1 (.nd2)", "filter": "*.nd2"},
-    round2_path={"label": "Round 2 (.nd2)", "filter": "*.nd2"},
-    output_dir={"label": "Output Directory", "mode": "d"},
-    auto_call=False,
-)
-def file_selector_widget( # No viewer argument
-    round1_path: Path = DEFAULT_R1,
-    round2_path: Path = DEFAULT_R2,
-    output_dir: Path = Path.home() / "zFISHer_Output",
-    _save_session: bool = True # Flag to control session saving
-):
-    """Loads ND2 files, sets up output directories, and initializes session."""
-    viewer = napari.current_viewer()
-    
-    # 1. Setup Output Directories
-    if not output_dir.exists():
-        output_dir.mkdir(parents=True)
-    
-    (output_dir / "segmentation").mkdir(exist_ok=True)
-    (output_dir / "aligned").mkdir(exist_ok=True)
-    
-    # If starting a new session, clear old data and save initial state.
-    # If loading, this is skipped to avoid overwriting the loaded session.
-    if _save_session:
-        viewer.layers.clear()
-        session.clear_session()
-        session.update_data("output_dir", str(output_dir))
-        session.update_data("r1_path", str(round1_path))
-        session.update_data("r2_path", str(round2_path))
-        session.save_session()
-    
-    for path, prefix in [(round1_path, "R1"), (round2_path, "R2")]:
+def _load_raw_data_into_viewer(viewer, round1_path, round2_path):
+    """Helper function to load and display the raw ND2 image data."""
+    for path, prefix in [(Path(round1_path), "R1"), (Path(round2_path), "R2")]:
         if not path.exists():
             print(f"Error: {path} not found.")
             continue
             
         nd2_session = load_nd2(str(path))
         
-        # YOUR DATA SHAPE: (71, 3, 2044, 2048) -> (Z, C, Y, X)
-        # NAPARI EXPECTS CHANNELS AT INDEX 1 IF WE WANT TO SPLIT THEM
-        # We move axis 1 (Channels) to the front so it becomes (C, Z, Y, X)
+        # YOUR DATA SHAPE: (Z, C, Y, X) -> NAPARI EXPECTS (C, Z, Y, X)
         data_swapped = np.moveaxis(nd2_session.data, 1, 0)
         
-        # Print dimensions for the user
         print(f"Loaded {prefix}: {data_swapped.shape[0]} channels, {data_swapped.shape[1]} Z-slices. Full shape: {data_swapped.shape}")
-        
-        # Now shape is (3, 71, 2044, 2048)
-        # Axis 0 = 3 channels
-        # Axis 1 = 71 Z-slices
         
         new_layers = viewer.add_image(
             data_swapped,
             name=[f"{prefix} - {ch}" for ch in nd2_session.channels],
-            channel_axis=0,        # Now correctly sees 3 channels
-            scale=nd2_session.voxels,   # Matches the (71, 2044, 2048) ZYX stack
+            channel_axis=0,
+            scale=nd2_session.voxels,
             blending="additive"
         )
 
@@ -122,9 +84,41 @@ def file_selector_widget( # No viewer argument
             if "DAPI" not in layer.name.upper():
                 layer.visible = False
 
-    # Force the Z-slider to appear for the 71 slices
+    # Force the Z-slider to appear
     viewer.dims.axis_labels = ("z", "y", "x")
     viewer.reset_view()
+
+@magicgui(
+    call_button="Load Data",
+    round1_path={"label": "Round 1 (.nd2)", "filter": "*.nd2"},
+    round2_path={"label": "Round 2 (.nd2)", "filter": "*.nd2"},
+    output_dir={"label": "Output Directory", "mode": "d"},
+    auto_call=False,
+)
+def file_selector_widget(
+    round1_path: Path = DEFAULT_R1,
+    round2_path: Path = DEFAULT_R2,
+    output_dir: Path = Path.home() / "zFISHer_Output",
+):
+    """Loads ND2 files, sets up output directories, and initializes a new session."""
+    viewer = napari.current_viewer()
+    
+    # 1. Setup Output Directories
+    if not output_dir.exists():
+        output_dir.mkdir(parents=True)
+    (output_dir / "segmentation").mkdir(exist_ok=True)
+    (output_dir / "aligned").mkdir(exist_ok=True)
+    
+    # This widget always starts a new session.
+    viewer.layers.clear()
+    session.clear_session()
+    session.update_data("output_dir", str(output_dir))
+    session.update_data("r1_path", str(round1_path))
+    session.update_data("r2_path", str(round2_path))
+    session.save_session()
+    
+    # Load the raw data into the viewer
+    _load_raw_data_into_viewer(viewer, round1_path, round2_path)
 
 @magicgui(
     call_button="Run DAPI Mapping",
@@ -848,13 +842,8 @@ def load_session_widget(session_file: Path):
     r1_path = session.get_data("r1_path")
     r2_path = session.get_data("r2_path")
     if r1_path and r2_path:
-        # Call file selector but prevent it from overwriting the session file
-        file_selector_widget(
-            round1_path=Path(r1_path), 
-            round2_path=Path(r2_path),
-            output_dir=Path(session.get_data("output_dir")),
-            _save_session=False
-        )
+        # Call the helper to load data without creating a new session
+        _load_raw_data_into_viewer(viewer, r1_path, r2_path)
 
     # Determine scale from loaded raw data layers
     scale = (1, 1, 1)
