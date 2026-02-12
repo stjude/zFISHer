@@ -32,6 +32,9 @@ CHANNEL_COLORS = {
     "TXRED": "magenta"
 }
 
+# Global to track the zoom listener
+_current_scale_updater = None
+
 def attach_puncta_listener(layer, name):
     """Attaches listeners to a points layer for auto-saving and color syncing."""
     def sync_data(event=None):
@@ -54,6 +57,7 @@ def attach_puncta_listener(layer, name):
     # layer.events.current_edge_color.connect(sync_color)
 
 def _load_raw_data_into_viewer(viewer, round1_path, round2_path):
+    global _current_scale_updater
     """Helper function to load and display the raw ND2 image data."""
     for path, prefix in [(Path(round1_path), "R1"), (Path(round2_path), "R2")]:
         if not path.exists():
@@ -83,6 +87,41 @@ def _load_raw_data_into_viewer(viewer, round1_path, round2_path):
             
             if "DAPI" not in layer.name.upper():
                 layer.visible = False
+
+        # Update Text Overlay with Pixel Info
+        # voxels is (dz, dy, dx)
+        dz, dy, dx = nd2_session.voxels
+        
+        def update_scale_text(event=None):
+            try:
+                # Calculate Field of View (FOV) width
+                width = viewer.window.qt_viewer.width()
+                zoom = viewer.camera.zoom
+                if zoom > 0:
+                    fov_px = width / zoom
+                    fov_um = fov_px * dx
+                    px_per_um = 1.0 / dx if dx > 0 else 0
+                    viewer.text_overlay.text = (
+                        f"Voxel Size: {dx:.4f} x {dy:.4f} x {dz:.4f} um\n"
+                        f"Scale: 1 um = {px_per_um:.2f} px\n"
+                        f"FOV Width: {fov_um:.1f} um ({int(fov_px)} px)"
+                    )
+            except Exception:
+                pass
+
+        # Prevent duplicate listeners if loading multiple files
+        if _current_scale_updater is not None:
+            try: viewer.camera.events.zoom.disconnect(_current_scale_updater)
+            except: pass
+        _current_scale_updater = update_scale_text
+        viewer.camera.events.zoom.connect(update_scale_text)
+        
+        viewer.text_overlay.visible = True
+        viewer.text_overlay.color = "white"
+        viewer.text_overlay.font_size = 10
+        viewer.text_overlay.position = "top_right"
+        
+        update_scale_text()
 
     # Force the Z-slider to appear
     viewer.dims.axis_labels = ("z", "y", "x")
@@ -205,11 +244,11 @@ def registration_widget(
     print(msg)
     viewer.status = msg
     
-    # Show a message box (optional, but helpful)
-    from qtpy.QtWidgets import QMessageBox
-    msg_box = QMessageBox()
-    msg_box.setText(f"Registration Complete.\n\n{msg}\n\nNext Step: Generate Global Canvas.")
-    msg_box.exec_()
+    # Update result label
+    registration_widget.result_label.value = f"<b>{msg}</b>"
+
+registration_widget.result_label = widgets.Label(value="")
+registration_widget.append(registration_widget.result_label)
 
 @magicgui(
     call_button="Generate Global Canvas",
@@ -1031,6 +1070,7 @@ def launch_zfisher():
 
     toolbox = QToolBox()
     toolbox.setMinimumWidth(350)
+    toolbox.setStyleSheet("QLabel { qproperty-alignment: 'AlignVCenter | AlignLeft'; }")
     
     for widget, name in widgets_to_add:
         # This is the secret sauce: 
