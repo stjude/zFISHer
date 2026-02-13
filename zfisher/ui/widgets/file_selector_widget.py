@@ -11,8 +11,8 @@ DEFAULT_R2 = Path("/Users/sstaller/Desktop/ND2_FILE_INPUTS/1-17-24Adecon.nd2")
 
 @magicgui(
     call_button="Load Data",
-    round1_path={"label": "Round 1 (.nd2)", "filter": "*.nd2"},
-    round2_path={"label": "Round 2 (.nd2)", "filter": "*.nd2"},
+    round1_path={"label": "Round 1", "filter": "*.nd2 *.tif *.tiff *.ome.tif"},
+    round2_path={"label": "Round 2", "filter": "*.nd2 *.tif *.tiff *.ome.tif"},
     output_dir={"label": "Output Directory", "mode": "d"},
     auto_call=False,
 )
@@ -57,6 +57,11 @@ def file_selector_widget(
             viewer, 
             round1_path, 
             round2_path,
+            output_dir=output_dir,
             progress_callback=lambda p, t: dialog.update_progress(p, t)
         )
         dialog.update_progress(100, "Done.")
+
+    # Reset scale bar position to bottom right
+    if hasattr(viewer.window, 'custom_scale_bar'):
+        viewer.window.custom_scale_bar.move_to_bottom_right()

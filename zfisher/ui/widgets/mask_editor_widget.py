@@ -1,10 +1,82 @@
 import napari
 import numpy as np
 from magicgui import magicgui, widgets
+import tifffile
+from pathlib import Path
 
 import zfisher.core.session as session
 from .. import popups
 from zfisher.core.segmentation import get_mask_centroids
+
+class MaskHighlighter:
+    """Helper class to highlight labels in red under the mouse cursor."""
+    def __init__(self, viewer):
+        self.viewer = viewer
+        self.last_layer = None
+        self.last_id = None
+        self.saved_color = None
+        self.active = False
+
+    def enable(self):
+        if not self.active:
+            self.viewer.mouse_move_callbacks.append(self.on_mouse_move)
+            self.active = True
+
+    def disable(self):
+        if self.active:
+            if self.on_mouse_move in self.viewer.mouse_move_callbacks:
+                self.viewer.mouse_move_callbacks.remove(self.on_mouse_move)
+            self.reset_highlight()
+            self.active = False
+
+    def reset_highlight(self):
+        if self.last_layer and self.last_id is not None:
+            try:
+                # Restore original color
+                if self.saved_color is None:
+                    if self.last_id in self.last_layer.color:
+                        del self.last_layer.color[self.last_id]
+                else:
+                    self.last_layer.color[self.last_id] = self.saved_color
+                self.last_layer.refresh()
+            except Exception:
+                pass
+        self.last_layer = None
+        self.last_id = None
+        self.saved_color = None
+
+    def on_mouse_move(self, viewer, event):
+        if not self.active: return
+        
+        layer = mask_editor_widget.mask_layer.value
+        if not isinstance(layer, napari.layers.Labels):
+            self.reset_highlight()
+            return
+
+        val = layer.get_value(
+            event.position,
+            view_direction=event.view_direction,
+            dims_displayed=list(event.dims_displayed),
+            world=True
+        )
+        
+        if val is None or val == 0:
+            self.reset_highlight()
+            return
+            
+        if val != self.last_id or layer != self.last_layer:
+            self.reset_highlight()
+            self.last_layer = layer
+            self.last_id = val
+            self.saved_color = layer.color.get(val)
+            
+            # Set to bright red
+            layer.color[val] = 'red'
+            layer.refresh()
+            viewer.status = f"Hovering Nucleus ID: {val} (Press 'C' to delete)"
+
+# Global instance
+_highlighter = None
 
 @magicgui(
     call_button="Merge IDs",
@@ -51,6 +123,37 @@ def mask_editor_widget(
     
     viewer.status = f"Merged ID {source_id} into {target_id} ({count} pixels)."
 
+def delete_mask_under_mouse(viewer):
+    """Deletes the mask label currently under the mouse cursor."""
+    global _highlighter
+    
+    # 1. Try to use the highlighter's cached ID for speed/accuracy if active
+    if _highlighter and _highlighter.active and _highlighter.last_id:
+        layer = _highlighter.last_layer
+        val = _highlighter.last_id
+        if layer and val:
+            # Delete the label
+            layer.data[layer.data == val] = 0
+            layer.refresh()
+            viewer.status = f"Deleted Nucleus ID {val}"
+            # Reset highlighter since ID is gone
+            _highlighter.reset_highlight()
+            return
+
+    # 2. Fallback: Calculate value under cursor manually
+    layer = viewer.layers.selection.active
+    if isinstance(layer, napari.layers.Labels):
+        val = layer.get_value(
+            viewer.cursor.position,
+            view_direction=viewer.camera.view_direction,
+            dims_displayed=list(viewer.dims.displayed),
+            world=True
+        )
+        if val is not None and val > 0:
+            layer.data[layer.data == val] = 0
+            layer.refresh()
+            viewer.status = f"Deleted Nucleus ID {val}"
+
 # Add Tools to Mask Editor
 editor_label = widgets.Label(value="<b>Editing Tools:</b>")
 btn_container = widgets.Container(layout="horizontal", labels=False)
@@ -59,12 +162,14 @@ erase_chk = widgets.CheckBox(text="Erase")
 pick_btn = widgets.PushButton(text="Pick ID")
 extrude_btn = widgets.PushButton(text="Extrude ID (Fill Z)")
 delete_btn = widgets.PushButton(text="Delete Source ID")
+hover_chk = widgets.CheckBox(text="Hover Edit Mode (Red + 'C' to Del)")
 refresh_ids_btn = widgets.PushButton(text="Show/Refresh IDs")
 
 btn_container.extend([paint_chk, erase_chk, pick_btn])
 
 mask_editor_widget.append(editor_label)
 mask_editor_widget.append(btn_container)
+mask_editor_widget.append(hover_chk)
 mask_editor_widget.append(extrude_btn)
 mask_editor_widget.append(delete_btn)
 mask_editor_widget.append(refresh_ids_btn)
@@ -210,6 +315,20 @@ def _on_delete():
         else:
             viewer.status = f"ID {src} not found."
 
+@hover_chk.changed.connect
+def _on_hover_mode(value: bool):
+    viewer = napari.current_viewer()
+    global _highlighter
+    if _highlighter is None:
+        _highlighter = MaskHighlighter(viewer)
+    
+    if value:
+        _highlighter.enable()
+        viewer.status = "Hover Edit Mode ON. Nuclei turn red. Press 'C' to delete."
+    else:
+        _highlighter.disable()
+        viewer.status = "Hover Edit Mode OFF."
+
 @refresh_ids_btn.clicked.connect
 def _on_refresh_ids():
     viewer = napari.current_viewer()
@@ -247,3 +366,40 @@ def _on_refresh_ids():
             blending='translucent_no_depth'
         )
     viewer.status = f"Refreshed IDs for {layer.name}"
+
+# --- Auto-saving for selected mask layer ---
+
+# Store a reference to the layer and the callback to allow disconnection
+mask_editor_widget._current_layer = None
+mask_editor_widget._current_callback = None
+
+def _create_save_callback(layer):
+    """Factory to create a save callback for a specific layer."""
+    def _save_mask_data(event=None):
+        out_dir = session.get_data("output_dir")
+        if out_dir and layer and layer.name: # Ensure layer name is valid
+            seg_dir = Path(out_dir) / "segmentation"
+            seg_dir.mkdir(exist_ok=True, parents=True)
+            mask_path = seg_dir / f"{layer.name}.tif"
+            tifffile.imwrite(mask_path, layer.data)
+            session.set_processed_file(layer.name, str(mask_path))
+            session.save_session()
+    return _save_mask_data
+
+@mask_editor_widget.mask_layer.changed.connect
+def _on_mask_layer_changed(new_layer: "napari.layers.Labels"):
+    """Disconnects the old listener and connects a new one to the selected layer."""
+    old_layer = mask_editor_widget._current_layer
+    old_callback = mask_editor_widget._current_callback
+
+    if old_layer and old_callback and old_callback in old_layer.events.data.callbacks:
+        old_layer.events.data.disconnect(old_callback)
+
+    if new_layer:
+        new_callback = _create_save_callback(new_layer)
+        new_layer.events.data.connect(new_callback)
+        mask_editor_widget._current_layer = new_layer
+        mask_editor_widget._current_callback = new_callback
+    else:
+        mask_editor_widget._current_layer = None
+        mask_editor_widget._current_callback = None

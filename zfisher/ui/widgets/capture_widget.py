@@ -8,93 +8,59 @@ from .. import popups
 
 # --- Arrow Drawing ---
 
-class SafeShapes(napari.layers.Shapes):
-    """A Shapes layer that suppresses errors during status updates (e.g. 3D ray intersection bugs)."""
-    def get_status(self, position, *args, **kwargs):
-        try:
-            return super().get_status(position, *args, **kwargs)
-        except Exception:
-            # Return None or empty dict to avoid crashing the status checker
-            return None
-
 class ArrowDrawer:
     def __init__(self, viewer: napari.Viewer):
         self.viewer = viewer
         self.start_pos = None
         self.arrows_layer = None
         self._is_active = False
+        self._save_callback = self._create_save_callback()
 
-    def _calculate_arrow_geometry(self, start, end):
-        vector = end - start
-        length = np.linalg.norm(vector)
-        if length == 0:
-            return None, None
-            
-        direction = vector / length
-        
-        # Head is 25% of length
-        head_len = length * 0.25
-        head_width = head_len * 0.5
-        
-        base = end - direction * head_len
-        
-        perp = np.zeros_like(vector)
-        if self.viewer.dims.ndisplay == 3:
-            view_dir = np.array(self.viewer.camera.view_direction)
-            cross = np.cross(direction, view_dir)
-            norm_cross = np.linalg.norm(cross)
-            if norm_cross > 1e-6:
-                perp = cross / norm_cross
-            else:
-                perp = np.zeros_like(vector)
-                perp[0] = 1 
-        else:
-            # 2D mode: rotate 90 degrees in the last 2 dimensions
-            perp[-2] = -direction[-1]
-            perp[-1] = direction[-2]
-            
-        wing1 = base + perp * head_width
-        wing2 = base - perp * head_width
-        
-        # Shaft: Start -> Base
-        shaft = np.array([start, base])
-        # Head: End -> Wing1 -> Wing2 (Triangle)
-        head = np.array([end, wing1, wing2])
-        
-        return shaft, head
+    def _create_save_callback(self):
+        def _save_arrows_data(event=None):
+            out_dir = session.get_data("output_dir")
+            if out_dir and self.arrows_layer:
+                seg_dir = Path(out_dir) / "segmentation"
+                seg_dir.mkdir(exist_ok=True, parents=True)
+                arrows_path = seg_dir / f"{self.arrows_layer.name}.npy"
+                np.save(arrows_path, self.arrows_layer.data)
+                session.set_processed_file(self.arrows_layer.name, str(arrows_path))
+                session.save_session()
+        return _save_arrows_data
 
     def _get_or_create_layer(self):
         if self.arrows_layer and self.arrows_layer.name in self.viewer.layers:
             return self.arrows_layer
         
         for layer in self.viewer.layers:
-            if layer.name == "Arrows" and isinstance(layer, napari.layers.Shapes):
+            if layer.name == "Arrows" and isinstance(layer, napari.layers.Vectors):
                 self.arrows_layer = layer
+                # Ensure listener is attached
+                if self._save_callback not in self.arrows_layer.events.data.callbacks:
+                    self.arrows_layer.events.data.connect(self._save_callback)
                 return layer
 
-        # Use SafeShapes instead of viewer.add_shapes to prevent 3D status crashes
-        self.arrows_layer = SafeShapes(
-            ndim=self.viewer.dims.ndim,
+        self.arrows_layer = self.viewer.add_vectors(
+            data=np.empty((0, 2, self.viewer.dims.ndim)),
             name="Arrows",
+            opacity=1.0,
             edge_width=2,
-            edge_color='white',
-            face_color='white',
-            opacity=1.0
+            length=10,
+            edge_color='cyan'
         )
-        self.viewer.add_layer(self.arrows_layer)
+        self.arrows_layer.events.data.connect(self._save_callback)
         return self.arrows_layer
 
     def on_mouse_click(self, viewer, event):
         if not self._is_active:
             return
 
+        layer = self._get_or_create_layer()
+
         # Right-click to remove last arrow
         if event.button == 2:
-            if self.arrows_layer and len(self.arrows_layer.data) > 0:
-                if len(self.arrows_layer.data) >= 2:
-                    self.arrows_layer.data = self.arrows_layer.data[:-2]
-                else:
-                    self.arrows_layer.data = []
+            if len(layer.data) > 0:
+                layer.data = layer.data[:-1]
                 self.viewer.status = "Removed last arrow."
             return
         
@@ -109,24 +75,13 @@ class ArrowDrawer:
             self.viewer.status = "Arrow start set. Click again for the end."
         else:
             end_pos = cursor_pos
+            
+            # The vector is the difference between end and start
             vector = end_pos - self.start_pos
             
-            # Project vector onto the plane perpendicular to view direction in 3D
-            if self.viewer.dims.ndisplay == 3:
-                view_dir = np.array(self.viewer.camera.view_direction)
-                norm = np.linalg.norm(view_dir)
-                if norm > 0:
-                    view_dir = view_dir / norm
-                    projection = np.dot(vector, view_dir)
-                    vector = vector - (projection * view_dir)
-            
-            end_pos = self.start_pos + vector
-            shaft, head = self._calculate_arrow_geometry(self.start_pos, end_pos)
-            
-            if shaft is not None:
-                layer = self._get_or_create_layer()
-                layer.add([shaft], shape_type='path', edge_width=2, edge_color='white')
-                layer.add([head], shape_type='polygon', face_color='white', edge_color='white', edge_width=0)
+            # Add the new vector to the layer data
+            new_arrow = np.array([self.start_pos, vector])
+            layer.data = np.vstack([layer.data, [new_arrow]])
             
             self.start_pos = None
             self.viewer.status = "Arrow drawn."
@@ -163,9 +118,8 @@ def _get_next_filename():
             return filename
         capture_count += 1
 
-def _capture_view(output_filename: str):
+def _capture_view(viewer: napari.Viewer, output_filename: str):
     """Core logic to capture the view."""
-    viewer = napari.current_viewer()
     
     if not viewer:
         print("Error: No napari viewer found.")
@@ -222,24 +176,56 @@ def _capture_view(output_filename: str):
 )
 def capture_widget(output_filename: str):
     """Magicgui widget to capture the current viewer canvas."""
-    _capture_view(output_filename)
+    viewer = napari.current_viewer()
+    _capture_view(viewer, output_filename)
 
 # --- Hotkey setup ---
 def capture_with_hotkey(viewer: napari.Viewer):
     """Wrapper to call capture from a hotkey."""
     # Use the filename currently in the widget's textbox
     filename = capture_widget.output_filename.value
-    _capture_view(filename)
+    _capture_view(viewer, filename)
 
 # --- Widget Setup ---
 # Add hotkey information and initialize filename
-capture_widget.insert(0, widgets.Label(value="Hotkey: P (press in canvas)"))
+hotkey_container = widgets.Container(layout="horizontal", labels=False)
+hotkey_container.append(widgets.Label(value="Hotkey: P (press in canvas)"))
+capture_widget.insert(0, hotkey_container)
+
 initial_filename = _get_next_filename()
 capture_widget.output_filename.value = initial_filename if initial_filename else "capture1.png"
 
 # Add Arrow drawing tool
+arrow_container = widgets.Container(layout="horizontal", labels=False)
 arrow_chk = widgets.CheckBox(text="Draw Arrows")
-capture_widget.append(arrow_chk)
+arrow_container.append(arrow_chk)
+capture_widget.append(arrow_container)
+
+# Add Scale Bar Options
+sb_container = widgets.Container(layout="horizontal", labels=False)
+sb_label = widgets.Label(value="<b>Scalebar:</b>")
+sb_lock = widgets.CheckBox(text="Lock")
+sb_pixels = widgets.CheckBox(text="Show Pixels")
+
+sb_container.extend([sb_label, sb_lock, sb_pixels])
+capture_widget.append(sb_container)
+
+@sb_lock.changed.connect
+def _on_sb_lock(state: bool):
+    viewer = napari.current_viewer()
+    if viewer and hasattr(viewer.window, 'custom_scale_bar'):
+        viewer.window.custom_scale_bar.locked = state
+        if not state:
+            viewer.status = "Scale Bar Unlocked: Hold Right-Click to drag."
+        else:
+            viewer.status = "Scale Bar Locked."
+
+@sb_pixels.changed.connect
+def _on_sb_pixels(state: bool):
+    viewer = napari.current_viewer()
+    if viewer and hasattr(viewer.window, 'custom_scale_bar'):
+        viewer.window.custom_scale_bar.show_pixels = state
+        viewer.window.custom_scale_bar.recalculate() # Recalculate text
 
 # This needs a viewer instance, so we can't do it until the viewer is created.
 # A bit of a hack: we'll check for the viewer when the checkbox is clicked.

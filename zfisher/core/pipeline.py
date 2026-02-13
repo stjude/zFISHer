@@ -31,13 +31,17 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
             aligned_pairs[channel_name] = (aligned_r1, aligned_r2, r1, r2)
 
     transform = None
-    if apply_warp:
-        if "DAPI" in aligned_pairs:
-            yield 10, "Calculating deformable registration on DAPI...", None
-            dapi_r1, dapi_r2, _, _ = aligned_pairs["DAPI"]
-            transform = calculate_deformable_transform(dapi_r1, dapi_r2)
-        else:
-            print("Warning: No DAPI channel found. Skipping deformable registration.")
+    has_dapi = "DAPI" in aligned_pairs
+    
+    if apply_warp and has_dapi:
+        yield 10, "Calculating deformable registration on DAPI...", None
+        yield 11, "(This may take several minutes for large images)", None
+        dapi_r1, dapi_r2, _, _ = aligned_pairs["DAPI"]
+        transform = calculate_deformable_transform(dapi_r1, dapi_r2)
+        yield 40, "Deformable registration complete.", None
+    elif apply_warp and not has_dapi:
+        print("Warning: No DAPI channel found. Skipping deformable registration.")
+        yield 10, "No DAPI channel; skipping deformable warp.", None
 
     def warp_worker(item):
         channel_name, (r1_data, r2_data, r1_meta, r2_meta) = item
@@ -66,16 +70,24 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
         }
 
     num_channels = len(aligned_pairs)
-    start_progress = 20
+    start_progress = 40 if (apply_warp and has_dapi) else 10
     
     if num_channels > 0:
         for i, item in enumerate(aligned_pairs.items()):
             channel_name, _ = item
-            progress = start_progress + int(((i + 1) / num_channels) * (100 - start_progress))
             
-            yield progress, f"Applying warp to {channel_name} ({i+1}/{num_channels})...", None
+            # Progress at the START of this channel's processing
+            base_progress = start_progress + int((i / num_channels) * (100 - start_progress))
+            yield base_progress, f"Processing {channel_name} ({i+1}/{num_channels})...", None
+
+            if transform:
+                yield base_progress, f"Applying warp to {channel_name} (can be slow)...", None
+
             result = warp_worker(item)
-            yield progress, f"Applied warp to {channel_name} ({i+1}/{num_channels})", result
+            
+            # Progress at the END of this channel's processing
+            end_progress = start_progress + int(((i + 1) / num_channels) * (100 - start_progress))
+            yield end_progress, f"Finished {channel_name}", result
             
             gc.collect()
         

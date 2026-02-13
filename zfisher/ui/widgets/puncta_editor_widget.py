@@ -43,6 +43,34 @@ pe_container.extend([pe_add_chk, pe_select_chk, pe_pan_btn])
 puncta_editor_widget.insert(0, pe_lbl)
 puncta_editor_widget.insert(1, pe_container)
 
+hotkey_lbl = widgets.Label(value="Hotkey: 'X' (Hover to Delete)")
+puncta_editor_widget.insert(2, hotkey_lbl)
+
+def delete_point_under_mouse(viewer):
+    """Deletes the point currently under the mouse cursor in the active editor layer."""
+    layer = puncta_editor_widget.points_layer.value
+    
+    if not layer or not isinstance(layer, napari.layers.Points):
+        return
+        
+    # Only allow deletion if the layer is visible
+    if not layer.visible:
+        return
+
+    # Get value at cursor position
+    val = layer.get_value(
+        viewer.cursor.position, 
+        view_direction=viewer.camera.view_direction, 
+        dims_displayed=list(viewer.dims.displayed), 
+        world=True
+    )
+    
+    if val is not None:
+        # Select and remove
+        layer.selected_data = {val}
+        layer.remove_selected()
+        viewer.status = f"Deleted point {val} from {layer.name}"
+
 @pe_add_chk.changed.connect
 def _on_pe_add(value: bool):
     viewer = napari.current_viewer()
