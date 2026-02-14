@@ -187,7 +187,7 @@ Please choose a different output directory, or use the 'Load Session' button to 
                                 text_params = {
                                     'string': '{label}',
                                     'size': 10,
-                                    'color': 'cyan',
+                                    'color': '#40b5d8',
                                     'translation': np.array([0, -5, 0])
                                 }
                                 self._viewer.add_points(

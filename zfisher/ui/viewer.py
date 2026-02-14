@@ -7,12 +7,12 @@ from functools import partial
 
 from napari.utils.theme import get_theme, register_theme
 from qtpy.QtWidgets import QApplication, QToolBox, QToolButton, QWidget, QLabel, QVBoxLayout, QDockWidget
-from qtpy.QtGui import QIcon, QPainter, QColor, QFont
+from qtpy.QtGui import QIcon, QPainter, QColor, QFont, QPalette
 from qtpy.QtCore import Qt, QPoint, QTimer
 from magicgui import widgets
 import zfisher.core.session as session
 
-# Import all the individual widgets from their own scripts
+# Import all individual widgets from their own scripts
 from .widgets.start_session_widget import StartSessionWidget
 from .widgets.dapi_segmentation_widget import dapi_segmentation_widget
 from .widgets.registration_widget import registration_widget
@@ -28,7 +28,7 @@ from .widgets.capture_widget import capture_widget, capture_with_hotkey
 # Import the event handlers
 from . import events
 
-# --- Helper Classes (ScaleBar, WelcomeWidget) ---
+# --- Helper Classes ---
 
 class DraggableScaleBar(QWidget):
     def __init__(self, viewer, parent=None):
@@ -121,24 +121,53 @@ class DraggableScaleBar(QWidget):
             self.dragging = False
 
 class WelcomeWidget(QWidget):
-    def __init__(self, parent=None):
+    """A solid black splash screen that manages its own visibility."""
+    def __init__(self, viewer, parent=None):
         super().__init__(parent)
-        self.setStyleSheet("QLabel { background-color: transparent; }")
+        self.viewer = viewer
+        
+        # Ensure it is opaque and black
+        self.setAutoFillBackground(True)
+        palette = self.palette()
+        palette.setColor(QPalette.Window, QColor('#000000'))
+        self.setPalette(palette)
+        
+        # Prevent the widget from blocking clicks when hidden
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        
         self.setLayout(QVBoxLayout())
         self.layout().setAlignment(Qt.AlignCenter)
-        self.layout().setContentsMargins(20, 20, 20, 20)
-        custom_label = QLabel(
-            "<h1 style='font-size: 32px; color: #00FFFF;'>Welcome to zFISHer</h1>"
-            "<p style='font-size: 16px; color: #CCC;'>Load data or a session to begin</p>"
+        
+        # Mint and White branding for the publication-ready look
+        self.label = QLabel(
+            "<h1 style='font-size: 50px; color: white; margin-bottom: 0px;'>zFISHer</h1>"
+            "<p style='font-size: 24px; color: #b2f2bb; margin-top: 0px;'>Version 2.0</p>"
         )
-        custom_label.setAlignment(Qt.AlignCenter)
-        self.layout().addWidget(custom_label)
+        self.label.setAlignment(Qt.AlignCenter)
+        self.layout().addWidget(self.label)
+
+        # Connect to viewer events to handle auto-hide
+        self.viewer.layers.events.inserted.connect(self._check_visibility)
+        self.viewer.layers.events.removed.connect(self._check_visibility)
+
         if self.parent():
             QTimer.singleShot(100, self.resize_to_parent)
-            
+
+    def _check_visibility(self, event=None):
+        """Hides when layers exist, shows when empty."""
+        if len(self.viewer.layers) > 0:
+            self.hide()
+            self.setEnabled(False) 
+        else:
+            self.show()
+            self.raise_() 
+            self.setEnabled(True)
+
     def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.fillRect(self.rect(), Qt.black)
+        """Force paint the background black to ensure no native leaks."""
+        if self.isVisible():
+            painter = QPainter(self)
+            painter.fillRect(self.rect(), Qt.black)
             
     def resize_to_parent(self):
         if not self.parent(): return
@@ -148,8 +177,10 @@ class WelcomeWidget(QWidget):
 # --- Creation Logic ---
 
 def create_welcome_widget(viewer):
+    """The 'Home' tab content for the sidebar."""
     container = widgets.Container(labels=False)
-    container.append(widgets.Label(value="<h1 style='color: #00FFFF;'>Welcome to zFISHer</h1>"))
+    # Using Mint color (#b2f2bb) for consistency
+    container.append(widgets.Label(value="<h1 style='color: #b2f2bb;'>Welcome to zFISHer</h1>"))
     container.append(widgets.Label(value="<em>Multiplexed Sequential FISH Analysis</em>"))
     container.append(widgets.Label(value="<p>Version 2.0</p>"))
     container.append(widgets.Label(value="<h3>Workflow:</h3>"))
@@ -183,21 +214,14 @@ def create_welcome_widget(viewer):
     return container
 
 def launch_zfisher():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
+    app = QApplication.instance() or QApplication([])
     
-    # --- 1. Custom Theme Registration ---
+    # --- 1. Amethyst & Mint Theme Registration ---
     try:
-        # FIX: get_theme takes only one positional argument in your version
         custom_theme = get_theme('dark')
-        
-        # Modify specific panel colors for zFISHer branding
-        custom_theme.background = '#1a1421' # Panel background color
-        custom_theme.canvas = '#000000'     # Main image area background
-        custom_theme.primary = '#00FFFF'    # Cyan highlights/selection borders
-        
-        # Register the new theme
+        custom_theme.background = '#1a1421' # Deep Amethyst Purple
+        custom_theme.canvas = '#000000'     # Black Canvas
+        custom_theme.primary = '#b2f2bb'    # Classy Mint
         register_theme('zfisher_theme', custom_theme, 'dark')
     except Exception as e:
         print(f"Theme registration failed: {e}")
@@ -207,47 +231,28 @@ def launch_zfisher():
         app.setWindowIcon(QIcon(str(icon_path)))
 
     # --- 2. Create Viewer ---
-    # FIX: Remove 'theme' from init to avoid TypeError on older napari versions
-    viewer = napari.Viewer(
-        title="zFISHer - 3D Colocalization", 
-        ndisplay=2
-    )
-
-    # Apply the custom theme after viewer creation
+    viewer = napari.Viewer(title="zFISHer - 3D Colocalization", ndisplay=2, show_welcome_screen=False)
+    #viewer.QtViewer.setAttribute(show_welcome_screen=False) # Allow transparency for custom welcome screen
+    # NATIVE FIX: Hide the built-in welcome screen by targeting the widget
+    if hasattr(viewer.window.qt_viewer, 'welcome_widget'):
+        viewer.window.qt_viewer.welcome_widget.setVisible(False)
+    
     try:
         viewer.theme = 'zfisher_theme'
     except Exception as e:
-        print(f"Could not apply theme to viewer: {e}")
+        print(f"Could not apply theme: {e}")
 
-    def hide_native_welcome():
-        try:
-            if hasattr(viewer.window._qt_viewer, 'canvas') and hasattr(viewer.window._qt_viewer.canvas, '_welcome_widget'):
-                viewer.window._qt_viewer.canvas._welcome_widget.setVisible(False)
-            elif hasattr(viewer.window._qt_viewer, '_welcome_widget'):
-                viewer.window._qt_viewer._welcome_widget.setVisible(False)
-        except Exception:
-            pass
-
-    QTimer.singleShot(500, hide_native_welcome)
     viewer.scale_bar.visible = False
     
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", FutureWarning)
         viewer_canvas_native = viewer.window.qt_viewer.canvas.native
 
-    welcome_widget = WelcomeWidget(parent=viewer_canvas_native)
+    # Setup Custom Welcome Overlay
+    welcome_widget = WelcomeWidget(viewer, parent=viewer_canvas_native)
     viewer.window.custom_welcome_widget = welcome_widget
 
-    def _toggle_welcome_widget(event=None):
-        hide_native_welcome()
-        has_layers = len(viewer.layers) > 0
-        if hasattr(viewer.window, 'custom_welcome_widget'):
-            viewer.window.custom_welcome_widget.setVisible(not has_layers)
-
-    viewer.layers.events.inserted.connect(_toggle_welcome_widget)
-    viewer.layers.events.removed.connect(_toggle_welcome_widget)
-    _toggle_welcome_widget()
-
+    # Custom Scale Bar
     scale_bar_widget = DraggableScaleBar(viewer, parent=viewer_canvas_native)
     viewer.window.custom_scale_bar = scale_bar_widget
     
@@ -280,14 +285,19 @@ def launch_zfisher():
         (capture_widget, "Capture View")
     ]
 
+    # --- 3. Sidebar Toolbox Styling ---
     toolbox = QToolBox()
     toolbox.setMinimumWidth(350)
-    
-    # Updated StyleSheet to target the headers (tabs) with Cyan
     toolbox.setStyleSheet("""
         QToolBox::tab {
-            color: #00FFFF;       
-            font-weight: bold;    
+            color: #b2f2bb;       /* Mint Text */
+            background: #251f2e;  /* Amethyst Background */
+            font-weight: bold;
+            border-radius: 4px;
+        }
+        QToolBox::tab:selected {
+            background: #352c42;
+            border: 1px solid #b2f2bb;
         }
         QLabel { 
             qproperty-alignment: 'AlignVCenter | AlignLeft'; 
@@ -299,25 +309,19 @@ def launch_zfisher():
             widget.reset_choices()
         toolbox.addItem(widget.native, name)
 
-    # --- 3. The Workflow Dock Widget ---
+    # --- 4. Dock Widget and UI Lock ---
     dock_widget = viewer.window.add_dock_widget(toolbox, area="right", name="zFISHer Workflow")
 
-    def lock_workflow_widget():
-        """Strips close button and locks widget after napari finishes loading."""
+    def lock_ui():
         if dock_widget:
-            # Disable all features (No closing, no moving, no floating)
             dock_widget.setFeatures(QDockWidget.NoDockWidgetFeatures)
-            # Replace title bar with an empty widget to hide the 'X'
             empty_title = QWidget()
             empty_title.setFixedHeight(0)
             dock_widget.setTitleBarWidget(empty_title)
-            # Ensure it stays anchored to the right
-            dock_widget.setAllowedAreas(Qt.RightDockWidgetArea)
 
-    # Use a 1-second delay to beat the napari theme engine
-    QTimer.singleShot(1000, lock_workflow_widget)
+    QTimer.singleShot(1000, lock_ui)
 
-    # --- 4. Event Binding ---
+    # Event Binding
     viewer.layers.events.inserted.connect(partial(events.on_layer_inserted, widgets=widget_map))
     viewer.layers.events.removed.connect(partial(events.on_layer_removed, widgets=widget_map))
 
