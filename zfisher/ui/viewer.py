@@ -5,15 +5,14 @@ import warnings
 from pathlib import Path
 from functools import partial
 
-from qtpy.QtWidgets import QApplication, QToolBox, QToolButton, QWidget
+from qtpy.QtWidgets import QApplication, QToolBox, QToolButton, QWidget, QLabel, QVBoxLayout, QDockWidget
 from qtpy.QtGui import QIcon, QPainter, QColor, QFont
 from qtpy.QtCore import Qt, QPoint, QTimer
 from magicgui import widgets
 import zfisher.core.session as session
 
 # Import all the individual widgets from their own scripts
-from .widgets.file_selector_widget import file_selector_widget
-from .widgets.load_session_widget import load_session_widget
+from .widgets.start_session_widget import StartSessionWidget
 from .widgets.dapi_segmentation_widget import dapi_segmentation_widget
 from .widgets.registration_widget import registration_widget
 from .widgets.canvas_widget import canvas_widget
@@ -141,13 +140,57 @@ class DraggableScaleBar(QWidget):
         if event.button() == Qt.RightButton:
             self.dragging = False
 
+class WelcomeWidget(QWidget):
+    """A custom welcome widget that overlays the napari canvas."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        # The background will be handled by paintEvent for robustness.
+        # The QLabel background must be transparent to not obscure the parent.
+        self.setStyleSheet("""
+            QLabel {
+                background-color: transparent;
+            }
+        """)
+
+        self.setLayout(QVBoxLayout())
+        # Center the text vertically. The horizontal alignment is on the QLabel.
+        self.layout().setAlignment(Qt.AlignCenter)
+        self.layout().setContentsMargins(20, 20, 20, 20)
+        
+        # Create and add a custom welcome label
+        custom_label = QLabel(
+            "<h1 style='font-size: 32px; color: #00FFFF;'>Welcome to zFISHer</h1>"
+            "<p style='font-size: 16px; color: #CCC;'>Load data or a session to begin</p>"
+        )
+        custom_label.setAlignment(Qt.AlignCenter)
+        self.layout().addWidget(custom_label)
+
+        if self.parent():
+            # Use a timer to ensure the parent has its final size before positioning
+            QTimer.singleShot(100, self.resize_to_parent)
+            
+    def paintEvent(self, event):
+        """Override paintEvent to fill the entire background, ensuring opacity."""
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), Qt.black) # Black background
+            
+    def resize_to_parent(self):
+        """Adjusts the widget to be the same size as its parent."""
+        if not self.parent():
+            return
+        self.resize(self.parent().size())
+        self.move(0, 0)
+
+
 def create_welcome_widget(viewer):
     """Creates a welcome widget with instructions and a help button."""
     container = widgets.Container(labels=False)
     
     # HTML-subset styling is supported in Qt labels
-    container.append(widgets.Label(value="<h1 style='color: #00FFFF;'>zFISHer</h1>"))
+    container.append(widgets.Label(value="<h1 style='color: #00FFFF;'>Welcome to zFISHer</h1>"))
     container.append(widgets.Label(value="<em>Multiplexed Sequential FISH Analysis</em>"))
+    container.append(widgets.Label(value="<p>Version 2.0</p>"))
     
     container.append(widgets.Label(value="<h3>Workflow:</h3>"))
     container.append(widgets.Label(value="1. <b>Load Data</b> (.nd2 files)"))
@@ -185,12 +228,6 @@ def create_welcome_widget(viewer):
     return container
 
 def launch_zfisher():
-    # To prevent the napari icon from flashing, we must take control of the
-    # application startup sequence.
-
-    # 1. Ensure a QApplication instance exists and set the icon on it.
-    # This sets the icon at the application level, which is our first step
-    # to showing the correct icon from the very beginning.
     app = QApplication.instance()
     if app is None:
         app = QApplication([])
@@ -198,50 +235,58 @@ def launch_zfisher():
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 
-    # 2. Create the viewer. napari will use the existing QApplication.
+    # 1. Create the viewer.
     viewer = napari.Viewer(title="zFISHer - 3D Colocalization", ndisplay=2)
 
-    # The following code is commented out because the napari API has changed,
-    # and it was causing a crash. The 'new shapes layer' button is currently visible.
-    # # Hide the "new shapes" layer button as requested
-    # try:
-    #     # Access the controls widget which contains the layer buttons
-    #     controls = viewer.window._qt_viewer.controls
-    #     layer_buttons = controls.layer_buttons
-        
-    #     found_button = False
-    #     # Use a more specific search to avoid hiding the wrong button
-    #     for btn in layer_buttons.findChildren(QToolButton):
-    #         tooltip = btn.toolTip().lower()
-    #         if 'new shapes layer' in tooltip:
-    #             btn.setVisible(False)
-    #             found_button = True
-    #             break # Exit after finding the button
-        
-    #     if not found_button:
-    #         # This will print to the console if the button wasn't found.
-    #         print("DEBUG: The 'new shapes layer' button could not be found to be hidden.")
-            
-    # except Exception as e:
-    #     # Make errors more visible in the console
-    #     print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-    #     print(f"ERROR: An exception occurred while trying to hide the shapes layer button: {e}")
-    #     print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+    # 2. UPDATED HELPER FUNCTION
+    def hide_native_welcome():
+        return
+        """Force hides the native napari welcome screen across different versions."""
+        try:
+            # Check for the 0.7.0a3 path
+            if hasattr(viewer.window._qt_viewer, 'canvas') and hasattr(viewer.window._qt_viewer.canvas, '_welcome_widget'):
+                viewer.window._qt_viewer.canvas._welcome_widget.setVisible(False)
+            # Check for the 0.5.0 path
+            elif hasattr(viewer.window._qt_viewer, '_welcome_widget'):
+                viewer.window._qt_viewer._welcome_widget.setVisible(False)
+        except Exception:
+            pass
 
-    print("INFO: The 'new shapes layer' button is currently visible due to a napari API change.")
+    # 3. USE A TIMER TO WIN THE RACE CONDITION
+    # This runs the hide function 500ms after startup to make sure napari is done loading
+    QTimer.singleShot(500, hide_native_welcome)
 
-    # Disable native scale bar and use custom draggable one
+    # Disable native scale bar
     viewer.scale_bar.visible = False
     
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", FutureWarning)
         viewer_canvas_native = viewer.window.qt_viewer.canvas.native
 
+    # --- Custom Welcome Screen (Overlay Method) ---
+    welcome_widget = WelcomeWidget(parent=viewer_canvas_native)
+    viewer.window.custom_welcome_widget = welcome_widget
+
+    def _toggle_welcome_widget(event=None):
+        """Hides/Shows the welcome widgets based on layer count."""
+        # Always re-trigger the hide on any layer change
+        hide_native_welcome()
+        
+        has_layers = len(viewer.layers) > 0
+        if hasattr(viewer.window, 'custom_welcome_widget'):
+            viewer.window.custom_welcome_widget.setVisible(not has_layers)
+
+    # Connect events
+    viewer.layers.events.inserted.connect(_toggle_welcome_widget)
+    viewer.layers.events.removed.connect(_toggle_welcome_widget)
+    
+    # Set initial visibility
+    _toggle_welcome_widget()
+
+    # --- Setup Scale Bar and Toolbox (Remainder of your original code) ---
     scale_bar_widget = DraggableScaleBar(viewer, parent=viewer_canvas_native)
     viewer.window.custom_scale_bar = scale_bar_widget
     
-    # This dictionary holds all widget objects, keyed by a simple name.
-    # It's passed to the event handlers so they can update the correct widget.
     widget_map = {
         "dapi_segmentation": dapi_segmentation_widget,
         "registration": registration_widget,
@@ -251,18 +296,14 @@ def launch_zfisher():
         "puncta_editor": puncta_editor_widget,
         "colocalization": colocalization_widget,
         "capture": capture_widget,
-        # These are not modified by events, but included for completeness
-        "file_selector": file_selector_widget,
-        "load_session": load_session_widget,
+        "start_session": StartSessionWidget(viewer),
         "canvas": canvas_widget,
         "distance": distance_widget,
     }
 
-    # The order of widgets in the UI
     widgets_to_add = [
         (create_welcome_widget(viewer), "Home"),
-        (load_session_widget, "Resume Session"),
-        (file_selector_widget, "1. File Selection"),
+        (StartSessionWidget(viewer), "1. Start Session"),
         (dapi_segmentation_widget, "2. DAPI Mapping"),
         (registration_widget, "3. Registration"),
         (canvas_widget, "4. Global Canvas"),
@@ -282,38 +323,30 @@ def launch_zfisher():
     for widget, name in widgets_to_add:
         if hasattr(widget, "reset_choices"):
             widget.reset_choices()
-        
         toolbox.addItem(widget.native, name)
 
-    viewer.window.add_dock_widget(toolbox, area="right", name="zFISHer Workflow")
+    # Add the toolbox as a dock widget and capture the returned QDockWidget
+    dock_widget = viewer.window.add_dock_widget(toolbox, area="right", name="zFISHer Workflow")
+    
+    # Remove the 'close' button from the dock widget to prevent accidental closing.
+    # We explicitly set the features we want to keep (movable, floatable).
+    if dock_widget:
+        dock_widget.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
 
-    # Connect layer events to handlers, passing the widget_map to each.
     viewer.layers.events.inserted.connect(partial(events.on_layer_inserted, widgets=widget_map))
     viewer.layers.events.removed.connect(partial(events.on_layer_removed, widgets=widget_map))
 
-    # --- Register Hotkeys ---
     viewer.bind_key('Shift-P', capture_with_hotkey, overwrite=True)
     viewer.bind_key('x', delete_point_under_mouse, overwrite=True)
     viewer.bind_key('c', delete_mask_under_mouse, overwrite=True)
 
-    # --- Icon Handling: Final Steps ---
-    # This is a multi-step process to robustly set the icon and prevent it
-    # from being overwritten by napari's internal startup routines.
-
-    # 3. Re-apply the icon directly to the window object itself. This is an
-    # attempt to synchronously override napari's icon before the window is shown.
     if icon_path.exists() and hasattr(viewer.window, '_qt_window'):
         viewer.window._qt_window.setWindowIcon(QIcon(str(icon_path)))
 
-    # 4. Schedule the icon to be set again after a minimal delay. This is the
-    # crucial step to win the "race condition." The timer ensures this code
-    # runs *after* napari's setup is fully complete, making our icon the final,
-    # persistent one.
     def reapply_icon():
         if icon_path.exists():
             QApplication.instance().setWindowIcon(QIcon(str(icon_path)))
 
-    # A minimal 1ms delay is enough to queue this for after napari's init.
     QTimer.singleShot(1, reapply_icon)
 
     napari.run()

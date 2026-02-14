@@ -41,6 +41,9 @@ def on_layer_inserted(event, widgets):
             if hasattr(w, "reset_choices"):
                 w.reset_choices()
 
+        if session.is_loading():
+            return
+
         # Now, try to intelligently set the value based on layer type and name
         if isinstance(layer, napari.layers.Image):
             if "DAPI" in layer.name.upper():

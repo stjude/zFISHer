@@ -10,6 +10,16 @@ _SESSION_DATA = {
     "shift": None,
     "processed_files": {} 
 }
+_is_loading = False
+
+def set_loading(state: bool):
+    """Sets the session loading state."""
+    global _is_loading
+    _is_loading = state
+
+def is_loading():
+    """Checks if a session is currently being loaded."""
+    return _is_loading
 
 def get_data(key=None):
     """Retrieves a value from the session data."""
