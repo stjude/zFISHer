@@ -3,7 +3,7 @@ from pathlib import Path
 import napari
 from zfisher.core import session
 from qtpy.QtCore import Qt
-from .. import popups
+from .. import popups, style
 from ._shared import load_raw_data_into_viewer
 import zfisher.core.session as session
 from ..constants import CHANNEL_COLORS
@@ -24,7 +24,7 @@ class StartSessionWidget(Container):
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
         line.setFrameShadow(QFrame.Sunken)
-        line.setStyleSheet("margin: 15px 0; color: #555;") # Adds spacing and color
+        line.setStyleSheet(style.LINE_STYLESHEET) # Adds spacing and color
             
         # Use HTML to center the headers. A block-level tag like <h3> is needed
         # for the alignment to apply across the widget's width.
@@ -33,12 +33,7 @@ class StartSessionWidget(Container):
         
         # Create the separator using a styled Container
         self._separator = Container(labels=False)
-        self._separator.native.setStyleSheet("""
-            margin: 10px 0px;
-            border-bottom: 1px solid #555;
-            max-height: 1px;
-            min-height: 1px;
-        """)
+        self._separator.native.setStyleSheet(style.SEPARATOR_STYLESHEET)
         
         
         self._load_session_header = Label(value="<b>Load Previous Session</b>")

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from zfisher.core.io import load_nd2
 from ..constants import CHANNEL_COLORS
+from .. import style
 
 # Global to track the zoom listener
 _current_scale_updater = None
@@ -212,8 +213,8 @@ def load_raw_data_into_viewer(viewer, round1_path, round2_path, output_dir=None,
         viewer.camera.events.zoom.connect(update_scale_text)
         
         viewer.text_overlay.visible = True
-        viewer.text_overlay.color = "white"
-        viewer.text_overlay.font_size = 10
+        viewer.text_overlay.color = style.COLORS['text']
+        viewer.text_overlay.font_size = style.TEXT_OVERLAY_FONT_SIZE
         viewer.text_overlay.position = "top_right"
         
         update_scale_text()

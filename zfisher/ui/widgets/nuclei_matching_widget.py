@@ -102,7 +102,7 @@ def nuclei_matching_widget(
                 size=0, # Invisible points, just text
                 scale=scale,
                 properties={'label': labels},
-                text={'string': '{label}', 'size': 10, 'color': 'cyan', 'translation': np.array([0, -5, 0])},
+                text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
                 blending='translucent_no_depth'
             )
 

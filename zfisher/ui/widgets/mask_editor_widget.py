@@ -399,7 +399,7 @@ def _on_refresh_ids():
             size=0,
             scale=layer.scale,
             properties={'label': labels},
-            text={'string': '{label}', 'size': 10, 'color': 'cyan', 'translation': np.array([0, -5, 0])},
+            text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
             blending='translucent_no_depth'
         )
     viewer.status = f"Refreshed IDs for {layer.name}"
