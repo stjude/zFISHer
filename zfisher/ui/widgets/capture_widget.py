@@ -2,6 +2,7 @@ import napari
 import numpy as np
 from pathlib import Path
 from magicgui import magicgui, widgets
+from packaging.version import parse as parse_version
 
 import zfisher.core.session as session
 from .. import popups
@@ -40,63 +41,94 @@ class ArrowDrawer:
                     self.arrows_layer.events.data.connect(self._save_callback)
                 return layer
 
-        self.arrows_layer = self.viewer.add_vectors(
-            data=np.empty((0, 2, self.viewer.dims.ndim)),
-            name="Arrows",
-            opacity=1.0,
-            edge_width=2,
-            length=10,
-            edge_color='cyan'
-        )
+        vector_params = {
+            'data': np.empty((0, 2, self.viewer.dims.ndim)),
+            'name': "Arrows",
+            'opacity': 1.0,
+            'edge_width': 1,
+            'length': 1,
+            'edge_color': 'white',
+        }
+        
+        # Defensively add new arrow head styling parameters based on napari version
+        # to ensure consistent appearance with loaded arrows.
+        if parse_version(napari.__version__) >= parse_version("0.7.0"):
+            # Use smaller values to prevent the head from overpowering the tail
+            vector_params['head_width'] = 4
+            vector_params['head_length'] = 6
+
+        self.arrows_layer = self.viewer.add_vectors(**vector_params)
         self.arrows_layer.events.data.connect(self._save_callback)
         return self.arrows_layer
 
-    def on_mouse_click(self, viewer, event):
+    def on_mouse_drag(self, viewer, event):
+        """A generator function to handle mouse dragging for drawing arrows."""
         if not self._is_active:
             return
 
-        layer = self._get_or_create_layer()
-
-        # Right-click to remove last arrow
-        if event.button == 2:
+        # On mouse press, handle right-click to delete. This does not require a modifier.
+        if event.type == 'mouse_press' and event.button == 2:
+            layer = self._get_or_create_layer()
             if len(layer.data) > 0:
                 layer.data = layer.data[:-1]
                 self.viewer.status = "Removed last arrow."
-            return
-        
-        # Only left-click from here
-        if event.button != 1:
+            # We yield to consume the event and prevent a context menu from appearing.
+            yield
             return
 
+        # For drawing, require Shift + Left-Click to avoid conflict with default panning.
+        # If the modifier is not present, we return immediately, allowing panning to occur.
+        if 'Shift' not in event.modifiers or event.button != 1:
+            return
+
+        # --- on mouse press (event.type == 'mouse_press') ---
+        layer = self._get_or_create_layer()
         cursor_pos = np.array(event.position)
-        
-        if self.start_pos is None:
-            self.start_pos = cursor_pos
-            self.viewer.status = "Arrow start set. Click again for the end."
-        else:
-            end_pos = cursor_pos
-            
-            # The vector is the difference between end and start
-            vector = end_pos - self.start_pos
-            
-            # Add the new vector to the layer data
-            new_arrow = np.array([self.start_pos, vector])
-            layer.data = np.vstack([layer.data, [new_arrow]])
-            
-            self.start_pos = None
-            self.viewer.status = "Arrow drawn."
+        self.start_pos = cursor_pos
+
+        # A new arrow is a zero-length vector at the start position.
+        # The data format is [start_point, vector_from_start].
+        new_arrow_data = np.array([self.start_pos, np.zeros_like(self.start_pos)])
+        layer.data = np.vstack([layer.data, [new_arrow_data]])
+        self.viewer.status = "Release mouse to finish arrow."
+        yield
+
+        # --- on mouse move ---
+        while event.type == 'mouse_move':
+            cursor_pos = np.array(event.position)
+            # Update the vector component of the arrow data.
+            vector = cursor_pos - self.start_pos
+            layer.data[-1, 1, :] = vector
+            # Force a refresh to ensure the view updates.
+            layer.refresh()
+            yield
+
+        # --- on mouse release ---
+        # The data is already in the correct [start, vector] format.
+        # We just need to finalize the state.
+        self.start_pos = None
+        self.viewer.status = "Arrow drawn."
 
     def set_active(self, active: bool):
         self._is_active = active
         if active:
             self._get_or_create_layer()
-            self.viewer.status = "Arrow drawing ON. Left-click to set start."
-            if self.on_mouse_click not in self.viewer.mouse_drag_callbacks:
-                self.viewer.mouse_drag_callbacks.append(self.on_mouse_click)
+            self.viewer.status = "Arrow drawing ON. Hold Shift & drag to draw, right-click to remove last."
+            # Insert the callback at the beginning of the list to capture the event
+            # before napari's default pan/zoom handlers can.
+            if self.on_mouse_drag not in self.viewer.mouse_drag_callbacks:
+                self.viewer.mouse_drag_callbacks.insert(0, self.on_mouse_drag)
         else:
+            # If we were in the middle of drawing, cancel it
+            if self.start_pos is not None:
+                # Remove the temporary arrow that was being drawn
+                if self.arrows_layer and len(self.arrows_layer.data) > 0:
+                    self.arrows_layer.data = self.arrows_layer.data[:-1]
+                self.start_pos = None
+            
             self.viewer.status = "Arrow drawing OFF."
-            if self.on_mouse_click in self.viewer.mouse_drag_callbacks:
-                self.viewer.mouse_drag_callbacks.remove(self.on_mouse_click)
+            if self.on_mouse_drag in self.viewer.mouse_drag_callbacks:
+                self.viewer.mouse_drag_callbacks.remove(self.on_mouse_drag)
 
 # --- State for auto-incrementing filename ---
 capture_count = 1
@@ -150,7 +182,10 @@ def _capture_view(viewer: napari.Viewer, output_filename: str):
             capture_widget.output_filename.value = next_name
             return
 
-        viewer.screenshot(str(save_path))
+        # Use Qt's grab method to include custom widgets like the scale bar
+        canvas_qwidget = viewer.window.qt_viewer.canvas.native
+        pixmap = canvas_qwidget.grab()
+        pixmap.save(str(save_path))
         
         print(f"Saved screenshot to {save_path}")
         viewer.status = f"Saved screenshot: {save_path.name}"
@@ -189,7 +224,7 @@ def capture_with_hotkey(viewer: napari.Viewer):
 # --- Widget Setup ---
 # Add hotkey information and initialize filename
 hotkey_container = widgets.Container(layout="horizontal", labels=False)
-hotkey_container.append(widgets.Label(value="Hotkey: P (press in canvas)"))
+hotkey_container.append(widgets.Label(value="Hotkey: Shift+P (press in canvas)"))
 capture_widget.insert(0, hotkey_container)
 
 initial_filename = _get_next_filename()

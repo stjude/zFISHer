@@ -64,4 +64,5 @@ def file_selector_widget(
 
     # Reset scale bar position to bottom right
     if hasattr(viewer.window, 'custom_scale_bar'):
+        viewer.window.custom_scale_bar.show()
         viewer.window.custom_scale_bar.move_to_bottom_right()

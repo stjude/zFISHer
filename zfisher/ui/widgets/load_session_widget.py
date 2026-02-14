@@ -3,6 +3,7 @@ from pathlib import Path
 from magicgui import magicgui
 import numpy as np
 import tifffile
+from packaging.version import parse as parse_version
 
 import zfisher.core.session as session
 from .. import popups
@@ -109,14 +110,20 @@ def load_session_widget(session_file: Path):
                     # Handle simple coordinate arrays
                     else:
                         if name == "Arrows":
-                            viewer.add_vectors(
-                                data,
-                                name=name,
-                                opacity=1.0,
-                                edge_width=2,
-                                length=10,
-                                edge_color='cyan'
-                            )
+                            vector_params = {
+                                'data': data,
+                                'name': name,
+                                'opacity': 1.0,
+                                'edge_width': 1,
+                                'length': 1,
+                                'edge_color': 'white',
+                            }
+                            # Defensively add parameters based on napari version
+                            if parse_version(napari.__version__) >= parse_version("0.7.0"):
+                                vector_params['head_width'] = 4
+                                vector_params['head_length'] = 6
+                            
+                            viewer.add_vectors(**vector_params)
                         elif "centroids" in name.lower():
                             viewer.add_points(data, name=name, size=5, face_color='orange', scale=scale)
                         else: # Assume it's puncta
@@ -155,6 +162,7 @@ def load_session_widget(session_file: Path):
 
         # Reset scale bar position to bottom right
         if hasattr(viewer.window, 'custom_scale_bar'):
+            viewer.window.custom_scale_bar.show()
             viewer.window.custom_scale_bar.move_to_bottom_right()
         
         dialog.update_progress(100, "Done.")

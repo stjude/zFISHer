@@ -14,7 +14,7 @@ class MaskHighlighter:
         self.viewer = viewer
         self.last_layer = None
         self.last_id = None
-        self.saved_color = None
+        self.highlight_layer = None # To store the temporary highlight layer
         self.active = False
 
     def enable(self):
@@ -30,50 +30,83 @@ class MaskHighlighter:
             self.active = False
 
     def reset_highlight(self):
-        if self.last_layer and self.last_id is not None:
+        """Removes the temporary highlight layer."""
+        if self.highlight_layer:
             try:
-                # Restore original color
-                if self.saved_color is None:
-                    if self.last_id in self.last_layer.color:
-                        del self.last_layer.color[self.last_id]
-                else:
-                    self.last_layer.color[self.last_id] = self.saved_color
-                self.last_layer.refresh()
-            except Exception:
+                self.viewer.layers.remove(self.highlight_layer)
+            except (KeyError, ValueError):
+                # Layer might have been removed manually
                 pass
+        
+        # Clear state
         self.last_layer = None
         self.last_id = None
-        self.saved_color = None
+        self.highlight_layer = None
+
+    def perform_highlight(self, layer, label_id_to_highlight):
+        """Creates a temporary layer to show the highlighted label in red."""
+        self.last_layer = layer
+        self.last_id = label_id_to_highlight
+
+        try:
+            # Create a boolean mask of the label to highlight.
+            # We will display this as an Image layer, which is more robust
+            # across napari versions than trying to color a Labels layer.
+            highlight_mask = (layer.data == label_id_to_highlight)
+
+            # The name for our temporary layer
+            highlight_layer_name = "_highlight"
+
+            # Remove the old highlight layer if it exists
+            if self.highlight_layer and self.highlight_layer.name in self.viewer.layers:
+                self.viewer.layers.remove(self.highlight_layer)
+
+            # Add the new highlight layer as an Image layer with a red colormap.
+            self.highlight_layer = self.viewer.add_image(
+                highlight_mask,
+                name=highlight_layer_name,
+                scale=layer.scale,
+                colormap='red',
+                opacity=0.8,
+                blending='additive',
+            )
+            
+            self.viewer.status = f"Hovering Nucleus ID: {label_id_to_highlight} (Press 'C' to delete)"
+
+        except Exception as e:
+            # This might still fail on very old napari.
+            print(f"Highlighting failed: {e}")
+            self.reset_highlight() # Clean up if something went wrong
+            self.viewer.status = "Error: Cannot highlight on this napari version."
 
     def on_mouse_move(self, viewer, event):
         if not self.active: return
         
         layer = mask_editor_widget.mask_layer.value
         if not isinstance(layer, napari.layers.Labels):
-            self.reset_highlight()
+            if self.last_id: self.reset_highlight()
             return
 
-        val = layer.get_value(
+        # Get the ID under the cursor from the original layer
+        id_under_cursor = layer.get_value(
             event.position,
             view_direction=event.view_direction,
             dims_displayed=list(event.dims_displayed),
             world=True
         )
+
+        # If we are currently highlighting a nucleus...
+        if self.last_id is not None:
+            # ...and the cursor is still over it, do nothing.
+            if id_under_cursor == self.last_id:
+                return
+            # ...otherwise, the cursor has moved off, so reset the highlight.
+            else:
+                self.reset_highlight()
         
-        if val is None or val == 0:
-            self.reset_highlight()
-            return
-            
-        if val != self.last_id or layer != self.last_layer:
-            self.reset_highlight()
-            self.last_layer = layer
-            self.last_id = val
-            self.saved_color = layer.color.get(val)
-            
-            # Set to bright red
-            layer.color[val] = 'red'
-            layer.refresh()
-            viewer.status = f"Hovering Nucleus ID: {val} (Press 'C' to delete)"
+        # After a potential reset, if the cursor is now over a valid nucleus, highlight it.
+        if id_under_cursor is not None and id_under_cursor > 0:
+            self.perform_highlight(layer, id_under_cursor)
 
 # Global instance
 _highlighter = None
@@ -126,18 +159,22 @@ def mask_editor_widget(
 def delete_mask_under_mouse(viewer):
     """Deletes the mask label currently under the mouse cursor."""
     global _highlighter
-    
-    # 1. Try to use the highlighter's cached ID for speed/accuracy if active
-    if _highlighter and _highlighter.active and _highlighter.last_id:
+
+    # 1. If hover-edit is active, use its state for accuracy.
+    if _highlighter and _highlighter.active and _highlighter.last_id is not None:
         layer = _highlighter.last_layer
-        val = _highlighter.last_id
-        if layer and val:
-            # Delete the label
-            layer.data[layer.data == val] = 0
-            layer.refresh()
-            viewer.status = f"Deleted Nucleus ID {val}"
-            # Reset highlighter since ID is gone
+        
+        id_to_delete = _highlighter.last_id
+
+        if layer and id_to_delete:
+            # First, remove the temporary highlight layer.
             _highlighter.reset_highlight()
+
+            # Now, delete the label from the original data array.
+            layer.data[layer.data == id_to_delete] = 0
+            layer.refresh() # Force a redraw
+            
+            viewer.status = f"Deleted Nucleus ID {id_to_delete}"
             return
 
     # 2. Fallback: Calculate value under cursor manually

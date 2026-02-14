@@ -64,7 +64,6 @@ class DraggableScaleBar(QWidget):
         self.text = ""
         
         self.recalculate()
-        self.show()
 
     def move_to_bottom_right(self):
         self.adjustSize()
@@ -180,16 +179,26 @@ def create_welcome_widget(viewer):
         viewer.layers.clear()
         session.clear_session()
         viewer.status = "Viewer cleared."
+        if hasattr(viewer.window, 'custom_scale_bar'):
+            viewer.window.custom_scale_bar.hide()
             
     return container
 
 def launch_zfisher():
-    # Set App Icon
-    app = QApplication.instance() or QApplication([])
+    # To prevent the napari icon from flashing, we must take control of the
+    # application startup sequence.
+
+    # 1. Ensure a QApplication instance exists and set the icon on it.
+    # This sets the icon at the application level, which is our first step
+    # to showing the correct icon from the very beginning.
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
     icon_path = Path(__file__).parent.parent.parent / "icon.png"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 
+    # 2. Create the viewer. napari will use the existing QApplication.
     viewer = napari.Viewer(title="zFISHer - 3D Colocalization", ndisplay=2)
 
     # The following code is commented out because the napari API has changed,
@@ -283,8 +292,28 @@ def launch_zfisher():
     viewer.layers.events.removed.connect(partial(events.on_layer_removed, widgets=widget_map))
 
     # --- Register Hotkeys ---
-    viewer.bind_key('p', capture_with_hotkey, overwrite=True)
+    viewer.bind_key('Shift-P', capture_with_hotkey, overwrite=True)
     viewer.bind_key('x', delete_point_under_mouse, overwrite=True)
     viewer.bind_key('c', delete_mask_under_mouse, overwrite=True)
+
+    # --- Icon Handling: Final Steps ---
+    # This is a multi-step process to robustly set the icon and prevent it
+    # from being overwritten by napari's internal startup routines.
+
+    # 3. Re-apply the icon directly to the window object itself. This is an
+    # attempt to synchronously override napari's icon before the window is shown.
+    if icon_path.exists() and hasattr(viewer.window, '_qt_window'):
+        viewer.window._qt_window.setWindowIcon(QIcon(str(icon_path)))
+
+    # 4. Schedule the icon to be set again after a minimal delay. This is the
+    # crucial step to win the "race condition." The timer ensures this code
+    # runs *after* napari's setup is fully complete, making our icon the final,
+    # persistent one.
+    def reapply_icon():
+        if icon_path.exists():
+            QApplication.instance().setWindowIcon(QIcon(str(icon_path)))
+
+    # A minimal 1ms delay is enough to queue this for after napari's init.
+    QTimer.singleShot(1, reapply_icon)
 
     napari.run()
