@@ -83,6 +83,35 @@ def _get_nearest_neighbor_pairs(fixed_points, moving_points, rough_shift, search
     
     return src, dst
 
+def _calculate_rmsd(src_points, dst_points, model, inliers):
+    """
+    Calculates the Root Mean Square Deviation (RMSD) for inlier points.
+
+    Parameters
+    ----------
+    src_points : np.ndarray
+        The source points used for RANSAC.
+    dst_points : np.ndarray
+        The destination points used for RANSAC.
+    model : skimage.transform.AffineTransform
+        The transformation model estimated by RANSAC.
+    inliers : np.ndarray
+        A boolean mask indicating the inlier points.
+
+    Returns
+    -------
+    float
+        The calculated RMSD value, or 0.0 if no inliers are found.
+    """
+    if inliers is None or not np.any(inliers):
+        return 0.0
+
+    inlier_src = src_points[inliers]
+    inlier_dst = dst_points[inliers]
+    transformed_src = model.predict(inlier_src)
+    squared_distances = np.sum((transformed_src - inlier_dst) ** 2, axis=1)
+    return np.sqrt(np.mean(squared_distances))
+
 def _refine_shift_with_ransac(src_points, dst_points, residual_threshold=constants.RANSAC_RESIDUAL_THRESHOLD, max_trials=constants.RANSAC_MAX_TRIALS):
     """
     Refines the transformation using RANSAC to find a robust affine shift.
@@ -100,8 +129,8 @@ def _refine_shift_with_ransac(src_points, dst_points, residual_threshold=constan
 
     Returns
     -------
-    np.ndarray or None
-        The refined (3,) translation vector, or None if RANSAC fails.
+    tuple[AffineTransform, np.ndarray] or tuple[None, None]
+        The estimated model and a boolean mask of the inliers, or (None, None).
     """
     if len(src_points) < 4:
         return None
@@ -113,7 +142,7 @@ def _refine_shift_with_ransac(src_points, dst_points, residual_threshold=constan
             residual_threshold=residual_threshold, max_trials=max_trials
         )
     
-    return model.translation if model else None
+    return model, inliers
 
 def align_centroids_ransac(fixed_points, moving_points, max_distance=None, progress_callback=None):
     """
@@ -134,8 +163,10 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, progr
 
     Returns
     -------
-    np.ndarray
-        The calculated (Z, Y, X) shift vector.
+    tuple[np.ndarray, float]
+        A tuple containing:
+        - The calculated (Z, Y, X) shift vector.
+        - The calculated RMSD of the inlier points.
     """
     # 1. Brute-force Vector Voting to find rough shift
     if progress_callback: progress_callback(10, "Finding rough alignment...")
@@ -147,24 +178,27 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, progr
     
     if len(src) < 4:
         if progress_callback: progress_callback(100, "Done (not enough matches for RANSAC).")
-        return rough_shift
+        return rough_shift, 0.0
 
     # 3. Run RANSAC to refine the fit
     if progress_callback: progress_callback(70, "Running RANSAC to find best fit...")
-    refined_shift = _refine_shift_with_ransac(src, dst)
+    model, inliers = _refine_shift_with_ransac(src, dst)
     
-    if refined_shift is None:
+    if model is None:
         if progress_callback: progress_callback(100, "Done (RANSAC failed, using rough shift).")
-        return rough_shift
+        return rough_shift, 0.0
 
+    rmsd = _calculate_rmsd(src, dst, model, inliers)
+    refined_shift = model.translation
+    
     # Sanity checks on the refined shift
     deviation = np.linalg.norm(refined_shift - rough_shift)
     if deviation > constants.RANSAC_DEVIATION_THRESHOLD or np.any(np.isnan(refined_shift)):
         if progress_callback: progress_callback(100, "Done (RANSAC result invalid, reverted to rough shift).")
-        return rough_shift
+        return rough_shift, 0.0
         
     if progress_callback: progress_callback(100, "Done.")
-    return refined_shift
+    return refined_shift, rmsd
 
 def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
     """

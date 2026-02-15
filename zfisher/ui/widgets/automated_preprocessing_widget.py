@@ -66,9 +66,10 @@ def _automated_preprocessing_magic_widget(
 
         # === STEP 2: REGISTRATION ===
         dialog.update_progress(35, "Registering rounds...")
-        shift = align_centroids_ransac(r1_centroids, r2_centroids, progress_callback=lambda p, m: dialog.update_progress(35 + int(p*0.15), f"Registering: {m}"))
+        shift, rmsd = align_centroids_ransac(r1_centroids, r2_centroids, progress_callback=lambda p, m: dialog.update_progress(35 + int(p*0.15), f"Registering: {m}"))
         session.update_data("shift", shift.tolist())
-        viewer.status = f"Calculated Shift: {np.round(shift, 2)}"
+        session.update_data("registration_rmsd", rmsd)
+        viewer.status = f"Calculated Shift: {np.round(shift, 2)}, RMSD: {rmsd:.4f}"
 
         # === STEP 3: GENERATE GLOBAL CANVAS ===
         dialog.update_progress(50, "Generating global canvas...")

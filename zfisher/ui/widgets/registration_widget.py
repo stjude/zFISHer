@@ -34,15 +34,17 @@ def registration_widget(
         def on_progress(value, text):
             dialog.update_progress(value, text)
 
-        shift = align_centroids_ransac(p1, p2, progress_callback=on_progress)
+        shift, rmsd = align_centroids_ransac(p1, p2, progress_callback=on_progress)
         
         session.update_data("shift", shift.tolist())
+        session.update_data("registration_rmsd", rmsd)
         
         msg = f"Calculated Shift: Z={shift[0]:.2f}, Y={shift[1]:.2f}, X={shift[2]:.2f}"
+        rmsd_msg = f"RMSD: {rmsd:.4f} px"
         print(msg)
-        viewer.status = msg
+        viewer.status = f"{msg}, {rmsd_msg}"
         
-        registration_widget.result_label.value = f"<b>{msg}</b>"
+        registration_widget.result_label.value = f"<b>{msg}</b><br>{rmsd_msg}"
         dialog.update_progress(100, "Done.")
 
 registration_widget.result_label = widgets.Label(value="")
