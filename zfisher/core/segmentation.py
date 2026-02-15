@@ -7,7 +7,7 @@ import logging
 from skimage.transform import rescale, resize
 from scipy import ndimage as ndi
 from skimage.segmentation import watershed
-from skimage.morphology import remove_small_objects
+from skimage.morphology import remove_small_objects, white_tophat, disk
 from cellpose import models, core
 
 from .. import constants
@@ -168,6 +168,31 @@ def segment_nuclei_classical(image_data, progress_callback=None):
     if progress_callback: progress_callback(100, "Done.")
     return labels, centroids
 
+def preprocess_white_tophat(image_data, radius=constants.PUNCTA_TOPHAT_RADIUS):
+    """
+    Applies a white top-hat transform to subtract uneven background.
+
+    This is useful for enhancing bright spots before detection. The operation
+    is applied slice-by-slice in 3D.
+
+    Parameters
+    ----------
+    image_data : np.ndarray
+        The 3D (Z, Y, X) image data.
+    radius : int, optional
+        The radius of the disk-shaped structuring element for the morphological
+        opening. This should be larger than the radius of the spots.
+
+    Returns
+    -------
+    np.ndarray
+        The background-subtracted image.
+    """
+    selem = disk(radius)
+    # Apply to each Z-slice. This is generally faster and effective for spots.
+    processed_slices = [white_tophat(image_slice, selem) for image_slice in image_data]
+    return np.stack(processed_slices, axis=0)
+
 def _detect_spots_local_maxima(image_data, min_distance, threshold_rel, sigma):
     """
     Finds spots using the local maxima method.
@@ -225,7 +250,7 @@ def _detect_spots_log(image_data, threshold_rel, sigma):
         return blobs[:, :3].astype(int)
     return np.empty((0, 3))
 
-def detect_spots_3d(image_data, min_distance=constants.PUNCTA_MIN_DISTANCE, threshold_rel=constants.PUNCTA_THRESHOLD_REL, sigma=constants.PUNCTA_SIGMA, method="Local Maxima"):
+def detect_spots_3d(image_data, min_distance=constants.PUNCTA_MIN_DISTANCE, threshold_rel=constants.PUNCTA_THRESHOLD_REL, sigma=constants.PUNCTA_SIGMA, method="Local Maxima", use_tophat=False, tophat_radius=constants.PUNCTA_TOPHAT_RADIUS):
     """
     Detects diffraction-limited spots (puncta) in a 3D image.
     
@@ -241,12 +266,20 @@ def detect_spots_3d(image_data, min_distance=constants.PUNCTA_MIN_DISTANCE, thre
         Standard deviation for Gaussian kernel (smoothing). 0 to disable.
     method : {"Local Maxima", "Laplacian of Gaussian"}, optional
         The algorithm to use for spot detection.
+    use_tophat : bool, optional
+        If True, applies a white top-hat filter for background subtraction
+        before spot detection.
+    tophat_radius : int, optional
+        The radius for the white top-hat structuring element.
 
     Returns
     -------
     np.ndarray
         (N, 3) array of (Z, Y, X) spot coordinates.
     """
+    if use_tophat:
+        image_data = preprocess_white_tophat(image_data, radius=tophat_radius)
+
     if method == "Local Maxima":
         return _detect_spots_local_maxima(image_data, min_distance, threshold_rel, sigma)
     elif method == "Laplacian of Gaussian":

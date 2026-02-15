@@ -13,9 +13,11 @@ from ... import constants
     image_layer={"label": "Target Channel"},
     nuclei_layer={"label": "Nuclei Masks (Optional)"},
     method={"label": "Algorithm", "choices": ["Local Maxima", "Laplacian of Gaussian"]},
-    threshold={"label": "Sensitivity (0-1)", "min": 0.01, "max": 1.0, "step": 0.01},
+    threshold={"label": "Sensitivity (0-1)", "min": 0.01, "max": 1.0, "step": 0.01, "value": constants.PUNCTA_THRESHOLD_REL},
     min_distance={"label": "Min Distance (px)", "min": 1, "max": 20, "step": 1, "value": constants.PUNCTA_MIN_DISTANCE},
-    sigma={"label": "Spot Radius (Sigma)", "min": 0.0, "max": 5.0, "step": 0.1, "value": constants.PUNCTA_SIGMA}
+    sigma={"label": "Spot Radius (Sigma)", "min": 0.0, "max": 5.0, "step": 0.1, "value": constants.PUNCTA_SIGMA},
+    use_tophat={"label": "Subtract Background (Top-hat)"},
+    tophat_radius={"label": "Top-hat Radius (px)", "min": 1, "max": 50, "value": constants.PUNCTA_TOPHAT_RADIUS}
 )
 @require_active_session("Please start or load a session before detecting puncta.")
 @error_handler("Puncta Detection Failed")
@@ -24,8 +26,10 @@ def puncta_widget(
     nuclei_layer: "napari.layers.Labels",
     method: str = "Local Maxima",
     threshold: float = constants.PUNCTA_THRESHOLD_REL,
-    min_distance: int = 2,
-    sigma: float = 0.0
+    min_distance: int = constants.PUNCTA_MIN_DISTANCE,
+    sigma: float = constants.PUNCTA_SIGMA,
+    use_tophat: bool = False,
+    tophat_radius: int = constants.PUNCTA_TOPHAT_RADIUS
 ):
     """Detects spots in the selected image layer."""
     viewer = napari.current_viewer()
@@ -36,7 +40,15 @@ def puncta_widget(
     with popups.ProgressDialog(viewer.window._qt_window, f"Detecting Puncta in {image_layer.name}...") as dialog:
         viewer.status = f"Detecting spots in {image_layer.name}..."
         # Run detection
-        coords = detect_spots_3d(image_layer.data, threshold_rel=threshold, min_distance=min_distance, sigma=sigma, method=method)
+        coords = detect_spots_3d(
+            image_layer.data, 
+            threshold_rel=threshold, 
+            min_distance=min_distance, 
+            sigma=sigma, 
+            method=method,
+            use_tophat=use_tophat,
+            tophat_radius=tophat_radius
+        )
         
         layer_name = f"{image_layer.name}{constants.PUNCTA_SUFFIX}"
         
