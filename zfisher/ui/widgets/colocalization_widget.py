@@ -4,7 +4,7 @@ from magicgui import magicgui, widgets
 
 import zfisher.core.session as session
 from .. import popups
-from ..decorators import require_active_session
+from ..decorators import require_active_session, error_handler
 from zfisher.core.report import calculate_distances, export_report
 
 @magicgui(
@@ -64,6 +64,7 @@ def _on_clear_rules():
     napari.current_viewer().status = "Rules cleared."
 
 @require_active_session("Please start or load a session before exporting.")
+@error_handler("Colocalization Export Failed")
 def _on_coloc_export():
     viewer = napari.current_viewer()
 
@@ -71,13 +72,10 @@ def _on_coloc_export():
     
     points_layers = [l for l in viewer.layers if isinstance(l, napari.layers.Points)]
     if len(points_layers) < 2:
-        viewer.status = "Need at least 2 points layers."
-        return
+        raise ValueError("Need at least 2 points layers for analysis.")
 
-    viewer.status = "Calculating distances..."
-    dialog = popups.ProgressDialog(viewer.window._qt_window, "Running Colocalization Analysis...")
-    
-    try:
+    with popups.ProgressDialog(viewer.window._qt_window, "Running Colocalization Analysis...") as dialog:
+        viewer.status = "Calculating distances..."
         points_data = [{'name': l.name, 'data': l.data, 'scale': l.scale} for l in points_layers]
         df = calculate_distances(points_data)
         
@@ -88,7 +86,7 @@ def _on_coloc_export():
         fname = colocalization_widget.filename.value
         if not fname.endswith(".xlsx"): fname += ".xlsx"
         
-        save_path = Path(session.get_data("output_dir", Path.home())) / fname
+        save_path = Path(session.get_data("output_dir", default=Path.home())) / fname
             
         final_path = export_report(
             df, 
@@ -99,23 +97,12 @@ def _on_coloc_export():
             coloc_rules=rules
         )
         
-        print(f"Saved analysis to {final_path}")
-        viewer.status = f"Exported: {final_path.name}"
-        
         popups.show_info_popup(
             viewer.window._qt_window,
             "Export Complete",
             f"Analysis exported successfully.\n\nFile: {final_path.name}\nPath: {final_path}"
         )
-            
-    except Exception as e:
-        print(f"Export failed: {e}")
-        viewer.status = "Export failed (check console)."
-        popups.show_error_popup(
-            viewer.window._qt_window, "Export Failed", f"An error occurred during export.\n\nError: {e}"
-        )
-    finally:
-        dialog.close()
+        viewer.status = f"Exported: {final_path.name}"
 
 colocalization_widget.clear_btn.clicked.connect(_on_clear_rules)
 colocalization_widget.export_btn.clicked.connect(_on_coloc_export)

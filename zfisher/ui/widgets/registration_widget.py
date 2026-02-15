@@ -3,7 +3,7 @@ from magicgui import magicgui, widgets
 
 import zfisher.core.session as session
 from .. import popups
-from ..decorators import require_active_session
+from ..decorators import require_active_session, error_handler
 from zfisher.core.registration import align_centroids_ransac
 
 @magicgui(
@@ -12,6 +12,7 @@ from zfisher.core.registration import align_centroids_ransac
     r2_points={"label": "R2 Centroids"}
 )
 @require_active_session("Please start or load a session before running registration.")
+@error_handler("Registration Failed")
 def registration_widget(
     r1_points: "napari.layers.Points",
     r2_points: "napari.layers.Points"

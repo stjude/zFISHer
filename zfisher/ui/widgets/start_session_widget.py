@@ -4,6 +4,7 @@ import napari
 
 from zfisher.core import session
 from .. import popups, viewer_helpers
+from ..decorators import error_handler
 from ._shared import load_raw_data_into_viewer
 
 class StartSessionWidget(Container):
@@ -66,6 +67,7 @@ class StartSessionWidget(Container):
         self._new_session_btn.clicked.connect(self._on_new_session)
         self._load_session_btn.clicked.connect(self._on_load_session)
 
+    @error_handler("New Session Failed")
     def _on_new_session(self):
         # Get paths from widgets to initialize the session
         round1_path_val = self._round1_path.value
@@ -105,6 +107,7 @@ Please choose a different output directory, or use the 'Load Session' button to 
             self._viewer.window.custom_scale_bar.show()
             self._viewer.window.custom_scale_bar.move_to_bottom_right()
 
+    @error_handler("Load Session Failed")
     def _on_load_session(self):
         session_file = self._load_session_file.value
         if not session_file.exists() or session_file.is_dir():
@@ -112,53 +115,51 @@ Please choose a different output directory, or use the 'Load Session' button to 
                 self._viewer.status = "Error: Please select a session file, not a directory."
             return
 
-        dialog = popups.ProgressDialog(self._viewer.window._qt_window, "Loading Session...")
-        session.set_loading(True)
-        try:
-            self._viewer.layers.clear()
-            
-            dialog.update_progress(10, "Loading session file...")
-            session.load_session_file(session_file)
-            
-            shift = session.get_data("shift")
-            if shift:
-                print(f"Restored Shift: {shift}")
+        with popups.ProgressDialog(self._viewer.window._qt_window, "Loading Session...") as dialog:
+            session.set_loading(True)
+            try:
+                self._viewer.layers.clear()
+                
+                dialog.update_progress(10, "Loading session file...")
+                session.load_session_file(session_file)
+                
+                shift = session.get_data("shift")
+                if shift:
+                    print(f"Restored Shift: {shift}")
 
-            # --- Load Raw Data ---
-            r1_path = session.get_data("r1_path")
-            r2_path = session.get_data("r2_path")
-            output_dir = session.get_data("output_dir")
-            if r1_path and r2_path:
-                def raw_progress(p, text):
-                    scaled_progress = 10 + int(p * 0.6) 
-                    dialog.update_progress(scaled_progress, text)
+                # --- Load Raw Data ---
+                r1_path = session.get_data("r1_path")
+                r2_path = session.get_data("r2_path")
+                output_dir = session.get_data("output_dir")
+                if r1_path and r2_path:
+                    def raw_progress(p, text):
+                        scaled_progress = 10 + int(p * 0.6) 
+                        dialog.update_progress(scaled_progress, text)
 
-                load_raw_data_into_viewer(
-                    self._viewer, 
-                    r1_path, 
-                    r2_path,
-                    output_dir=output_dir,
-                    progress_callback=raw_progress
-                )
+                    load_raw_data_into_viewer(
+                        self._viewer, 
+                        r1_path, 
+                        r2_path,
+                        output_dir=output_dir,
+                        progress_callback=raw_progress
+                    )
 
-            # --- Restore Processed Layers ---
-            processed_files = session.get_data("processed_files", default={})
-            if processed_files:
-                scale = next((layer.scale for layer in self._viewer.layers if isinstance(layer, napari.layers.Image)), (1, 1, 1))
-                def processed_progress(p, text):
-                    scaled_progress = 70 + int(p * 0.25)
-                    dialog.update_progress(scaled_progress, text)
-                viewer_helpers.restore_processed_layers(self._viewer, processed_files, scale, progress_callback=processed_progress)
-            
-            dialog.update_progress(95, "Finalizing...")
-            self._viewer.status = "Session Restored."
+                # --- Restore Processed Layers ---
+                processed_files = session.get_data("processed_files", default={})
+                if processed_files:
+                    scale = next((layer.scale for layer in self._viewer.layers if isinstance(layer, napari.layers.Image)), (1, 1, 1))
+                    def processed_progress(p, text):
+                        scaled_progress = 70 + int(p * 0.25)
+                        dialog.update_progress(scaled_progress, text)
+                    viewer_helpers.restore_processed_layers(self._viewer, processed_files, scale, progress_callback=processed_progress)
+                
+                dialog.update_progress(95, "Finalizing...")
+                self._viewer.status = "Session Restored."
 
-            if hasattr(self._viewer.window, 'custom_scale_bar'):
-                self._viewer.window.custom_scale_bar.show()
-                self._viewer.window.custom_scale_bar.move_to_bottom_right()
-            
-            dialog.update_progress(100, "Done.")
-
-        finally:
-            session.set_loading(False)
-            dialog.close()
+                if hasattr(self._viewer.window, 'custom_scale_bar'):
+                    self._viewer.window.custom_scale_bar.show()
+                    self._viewer.window.custom_scale_bar.move_to_bottom_right()
+                
+                dialog.update_progress(100, "Done.")
+            finally:
+                session.set_loading(False)

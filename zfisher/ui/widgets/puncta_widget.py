@@ -4,7 +4,7 @@ from magicgui import magicgui, widgets
 
 import zfisher.core.session as session
 from .. import popups
-from ..decorators import require_active_session
+from ..decorators import require_active_session, error_handler
 from zfisher.core.segmentation import detect_spots_3d
 
 @magicgui(
@@ -17,6 +17,7 @@ from zfisher.core.segmentation import detect_spots_3d
     sigma={"label": "Spot Radius (Sigma)", "min": 0.0, "max": 5.0, "step": 0.1}
 )
 @require_active_session("Please start or load a session before detecting puncta.")
+@error_handler("Puncta Detection Failed")
 def puncta_widget(
     image_layer: "napari.layers.Image",
     nuclei_layer: "napari.layers.Labels",
@@ -31,10 +32,8 @@ def puncta_widget(
     if image_layer is None:
         return
         
-    viewer.status = f"Detecting spots in {image_layer.name}..."
-    dialog = popups.ProgressDialog(viewer.window._qt_window, f"Detecting Puncta in {image_layer.name}...")
-    
-    try:
+    with popups.ProgressDialog(viewer.window._qt_window, f"Detecting Puncta in {image_layer.name}...") as dialog:
+        viewer.status = f"Detecting spots in {image_layer.name}..."
         # Run detection
         coords = detect_spots_3d(image_layer.data, threshold_rel=threshold, min_distance=min_distance, sigma=sigma, method=method)
         
@@ -70,8 +69,6 @@ def puncta_widget(
         msg = f"Found {len(coords)} spots."
         print(msg)
         viewer.status = msg
-    finally:
-        dialog.close()
 
 # Add editing tools to the Puncta Widget
 edit_chk = widgets.CheckBox(text="Edit Mode")

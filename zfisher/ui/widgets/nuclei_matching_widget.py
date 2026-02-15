@@ -6,7 +6,7 @@ from magicgui import magicgui
 
 import zfisher.core.session as session
 from .. import popups
-from ..decorators import require_active_session
+from ..decorators import require_active_session, error_handler
 from zfisher.core.segmentation import match_nuclei_labels, merge_labeled_masks, get_mask_centroids
 
 @magicgui(
@@ -16,6 +16,7 @@ from zfisher.core.segmentation import match_nuclei_labels, merge_labeled_masks, 
     threshold={"label": "Max Distance (px)", "min": 0, "max": 100, "step": 1}
 )
 @require_active_session("Please start or load a session before matching nuclei.")
+@error_handler("Nuclei Matching Failed")
 def nuclei_matching_widget(
     r1_mask_layer: "napari.layers.Labels",
     r2_mask_layer: "napari.layers.Labels",
@@ -32,11 +33,9 @@ def nuclei_matching_widget(
         viewer.status = "Error: Same layer selected for both. Please select R1 for the first and R2 for the second."
         return
         
-    viewer.status = "Matching nuclei..."
-    dialog = popups.ProgressDialog(viewer.window._qt_window, "Matching Nuclei...")
-    output_dir = session.get_data("output_dir")
-    
-    try:
+    with popups.ProgressDialog(viewer.window._qt_window, "Matching Nuclei...") as dialog:
+        viewer.status = "Matching nuclei..."
+        output_dir = session.get_data("output_dir")
         # Run matching
         new_mask2, pts1, pts2 = match_nuclei_labels(r1_mask_layer.data, r2_mask_layer.data, threshold=threshold)
         
@@ -101,8 +100,3 @@ def nuclei_matching_widget(
         
         viewer.status = f"Matched {len(pts1)} nuclei."
         dialog.update_progress(100, "Done.")
-    except Exception as e:
-        print(f"Matching failed: {e}")
-        viewer.status = "Matching failed."
-    finally:
-        dialog.close()

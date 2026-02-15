@@ -2,11 +2,10 @@ import napari
 import numpy as np
 from pathlib import Path
 from magicgui import magicgui
-from qtpy.QtWidgets import QApplication
 
 import zfisher.core.session as session
 from .. import popups
-from ..decorators import require_active_session
+from ..decorators import require_active_session, error_handler
 from zfisher.core.pipeline import generate_global_canvas
 
 @magicgui(
@@ -15,6 +14,7 @@ from zfisher.core.pipeline import generate_global_canvas
     hide_raw={"label": "Hide Raw Layers?"}
 )
 @require_active_session("Please start or load a session before generating the canvas.")
+@error_handler("Canvas Generation Failed")
 def canvas_widget(
     apply_warp: bool = True,
     hide_raw: bool = True

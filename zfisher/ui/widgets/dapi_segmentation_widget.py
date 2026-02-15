@@ -6,7 +6,7 @@ from magicgui import magicgui
 
 import zfisher.core.session as session
 from .. import popups
-from ..decorators import require_active_session
+from ..decorators import require_active_session, error_handler
 from zfisher.core.segmentation import segment_nuclei_classical
 
 @magicgui(
@@ -16,6 +16,7 @@ from zfisher.core.segmentation import segment_nuclei_classical
     auto_call=False,
 )
 @require_active_session("Please start or load a session before running segmentation.")
+@error_handler("DAPI Segmentation Failed")
 def dapi_segmentation_widget(
     r1_layer: "napari.layers.Image",
     r2_layer: "napari.layers.Image"

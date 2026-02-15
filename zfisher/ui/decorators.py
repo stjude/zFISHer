@@ -25,3 +25,24 @@ def require_active_session(message="Please start or load a session first."):
             return func(*args, **kwargs)
         return wrapper
     return decorator
+
+def error_handler(title="An Error Occurred"):
+    """
+    A decorator to catch exceptions in widget functions and show an error popup.
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                print(f"Error in {func.__name__}: {e}")
+                try:
+                    viewer = napari.current_viewer()
+                    if viewer:
+                        viewer.status = f"Error: {e}"
+                        popups.show_error_popup(viewer.window._qt_window, title, str(e))
+                except Exception as popup_e:
+                    print(f"Could not show error popup: {popup_e}")
+        return wrapper
+    return decorator
