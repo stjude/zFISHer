@@ -1,6 +1,7 @@
 from magicgui.widgets import Container, PushButton, FileEdit, Label
 from pathlib import Path
 import napari
+import os
 
 from zfisher.core import session
 from .. import popups, viewer_helpers
@@ -67,12 +68,33 @@ class StartSessionWidget(Container):
         self._new_session_btn.clicked.connect(self._on_new_session)
         self._load_session_btn.clicked.connect(self._on_load_session)
 
+    def _validate_input_files(self, r1_path, r2_path):
+        """Checks if files exist, are files, and are readable."""
+        error_messages = []
+        for path, name in [(r1_path, "Round 1"), (r2_path, "Round 2")]:
+            if not path.is_file():
+                error_messages.append(f"• {name} file does not exist or is a directory:\n  {path}")
+            elif not os.access(path, os.R_OK):
+                error_messages.append(f"• {name} file is not readable (check permissions):\n  {path}")
+
+        if error_messages:
+            popups.show_error_popup(
+                self._viewer.window._qt_window,
+                "Invalid Input Files",
+                "Please correct the following issues:\n\n" + "\n\n".join(error_messages)
+            )
+            return False
+        return True
+
     @error_handler("New Session Failed")
     def _on_new_session(self):
         # Get paths from widgets to initialize the session
         round1_path_val = self._round1_path.value
         round2_path_val = self._round2_path.value
         output_dir_val = self._output_dir.value
+
+        if not self._validate_input_files(round1_path_val, round2_path_val):
+            return
 
         if not session.initialize_new_session(output_dir_val, round1_path_val, round2_path_val):
             popups.show_error_popup(
