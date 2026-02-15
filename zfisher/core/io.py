@@ -87,15 +87,46 @@ def load_nd2_session(path: str) -> FISHSession:
         An object containing the data and metadata from the ND2 file.
     """
     with nd2.ND2File(path) as f:
-        # Data is loaded as (C, Z, Y, X) or (Z, Y, X) etc.
-        # f.asarray() brings it to a standard order, often TZCYX or TCYX
+        # Read data and axis order
         img = f.asarray()
 
-        # Ensure data is at least 4D (Z, C, Y, X)
-        if img.ndim == 3: # (Z, Y, X) -> (Z, 1, Y, X)
-            img = img[:, np.newaxis, :, :]
-        elif img.ndim == 2: # (Y, X) -> (1, 1, Y, X)
-            img = img[np.newaxis, np.newaxis, :, :]
+        # The `sizes` attribute is a reliable way to get the axis names and order,
+        # which is more robust across different versions of the nd2 library.
+        if not hasattr(f, 'sizes') or not f.sizes:
+            raise AttributeError("Could not determine axis order from nd2 file. The 'sizes' attribute is missing or empty.")
+        original_axes = "".join(f.sizes.keys())
+        order = list(f.sizes.keys())
+
+        # If a T axis is present and singular, squeeze it
+        if 'T' in order:
+            t_idx = order.index('T')
+            if img.shape[t_idx] == 1:
+                img = np.squeeze(img, axis=t_idx)
+                order.pop(t_idx)
+        
+        # Add singleton C axis if missing
+        if 'C' not in order:
+            # Find where to insert C. Usually after Z.
+            if 'Z' in order:
+                c_idx = order.index('Z') + 1
+            else:
+                c_idx = 0
+            img = np.expand_dims(img, axis=c_idx)
+            order.insert(c_idx, 'C')
+
+        # Add singleton Z axis if missing
+        if 'Z' not in order:
+            img = np.expand_dims(img, axis=0)
+            order.insert(0, 'Z')
+
+        # Now we should have at least Z, C, Y, X. Let's enforce the order.
+        target_order = ['Z', 'C', 'Y', 'X']
+        
+        if not all(axis in order for axis in target_order):
+             raise ValueError(f"Could not normalize axes. Original: {original_axes}, Current: {order}")
+
+        current_indices = [order.index(axis) for axis in target_order]
+        img = np.transpose(img, current_indices)
 
         # Voxel size handling
         v_size = (f.voxel_size().z, f.voxel_size().y, f.voxel_size().x)

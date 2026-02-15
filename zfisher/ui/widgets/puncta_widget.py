@@ -49,18 +49,19 @@ def puncta_widget(
             use_tophat=use_tophat,
             tophat_radius=tophat_radius
         )
-        
+
         layer_name = f"{image_layer.name}{constants.PUNCTA_SUFFIX}"
-        
+
         if layer_name in viewer.layers:
             pts_layer = viewer.layers[layer_name]
-            pts_layer.data = merge_puncta(pts_layer.data, coords)
+            # This assignment triggers the event listener in events.py to save the data
+            pts_layer.data = merge_puncta(pts_layer.data, coords) 
             pts_layer.properties = {'id': np.arange(len(pts_layer.data)) + 1}
             pts_layer.text = {'string': '{id}', 'size': 8, 'color': 'white', 'translation': np.array([0, 5, 5])}
         else:
             properties = {'id': np.arange(len(coords)) + 1}
             text_params = {'string': '{id}', 'size': 8, 'color': 'white', 'translation': np.array([0, 5, 5])}
-            
+
             pts_layer = viewer.add_points(
                 coords,
                 name=layer_name,
@@ -70,8 +71,15 @@ def puncta_widget(
                 properties=properties,
                 text=text_params
             )
-            # The main event handler in events.py will now attach the listener.
-            pts_layer.events.data(value=pts_layer.data)
+            # The event handler in events.py attaches a save-on-edit listener, but it
+            # runs on a timer, creating a race condition for the *initial* save.
+            # We must perform the initial save explicitly here.
+            out_dir = session.get_data("output_dir")
+            if out_dir:
+                seg_dir = Path(out_dir) / constants.SEGMENTATION_DIR
+                puncta_path = seg_dir / f"{layer_name}.npy"
+                np.save(puncta_path, coords)
+                session.set_processed_file(layer_name, str(puncta_path), layer_type='points', metadata={'subtype': 'puncta'})
 
         msg = f"Found {len(coords)} spots."
         print(msg)
