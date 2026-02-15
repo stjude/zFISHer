@@ -8,6 +8,7 @@ from ...core import session
 from .. import popups
 from ..decorators import require_active_session, error_handler
 from ...core.segmentation import segment_nuclei_classical
+from ... import constants
 
 @magicgui(
     call_button="Run DAPI Mapping",
@@ -47,20 +48,20 @@ def dapi_segmentation_widget(
             
             out_dir = session.get_data("output_dir")
             if out_dir:
-                seg_dir = Path(out_dir) / "segmentation"
+                seg_dir = Path(out_dir) / constants.SEGMENTATION_DIR
                 
             if masks is not None:
-                viewer.add_labels(masks, name=f"{layer.name}_masks", opacity=0.3, visible=False, scale=layer.scale)
+                viewer.add_labels(masks, name=f"{layer.name}{constants.MASKS_SUFFIX}", opacity=0.3, visible=False, scale=layer.scale)
                 if out_dir:
-                    mask_path = seg_dir / f"{layer.name}_masks.tif"
+                    mask_path = seg_dir / f"{layer.name}{constants.MASKS_SUFFIX}.tif"
                     tifffile.imwrite(mask_path, masks)
-                    session.set_processed_file(f"{layer.name}_masks", str(mask_path), layer_type='labels', metadata={'subtype': 'mask'})
+                    session.set_processed_file(f"{layer.name}{constants.MASKS_SUFFIX}", str(mask_path), layer_type='labels', metadata={'subtype': 'mask'})
                 
             if centroids is not None:
                 ids = np.arange(len(centroids)) + 1
                 viewer.add_points(
                     centroids,
-                    name=f"{layer.name}_centroids",
+                    name=f"{layer.name}{constants.CENTROIDS_SUFFIX}",
                     size=5,
                     face_color='orange',
                     scale=layer.scale,
@@ -69,9 +70,9 @@ def dapi_segmentation_widget(
                     blending='translucent_no_depth'
                 )
                 if out_dir:
-                    cent_path = seg_dir / f"{layer.name}_centroids.npy"
+                    cent_path = seg_dir / f"{layer.name}{constants.CENTROIDS_SUFFIX}.npy"
                     np.save(cent_path, centroids)
-                    session.set_processed_file(f"{layer.name}_centroids", str(cent_path), layer_type='points', metadata={'subtype': 'centroids'})
+                    session.set_processed_file(f"{layer.name}{constants.CENTROIDS_SUFFIX}", str(cent_path), layer_type='points', metadata={'subtype': 'centroids'})
         
         dialog.update_progress(100, "Complete.")
         viewer.status = "Segmentation complete."

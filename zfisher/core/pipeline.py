@@ -8,16 +8,17 @@ from .registration import (
     apply_deformable_transform
 )
 from .session import set_processed_file
+from .. import constants
 
 def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, apply_warp=True):
     """
     Orchestrates the alignment and warping of multiple channels, yielding progress.
     
-    Args:
-        ... (same as before)
-        
     Yields:
-        A tuple: (progress_int, message_str, result_dict_or_None)
+    ------
+    tuple
+        A tuple containing (progress_int, message_str, result_dict_or_None).
+        The result dictionary contains the processed layer data for napari.
     """
     yield 0, "Matching channels...", None
     aligned_pairs = {}
@@ -31,12 +32,12 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
             aligned_pairs[channel_name] = (aligned_r1, aligned_r2, r1, r2)
 
     transform = None
-    has_dapi = "DAPI" in aligned_pairs
+    has_dapi = constants.DAPI_CHANNEL_NAME in aligned_pairs
     
     if apply_warp and has_dapi:
         yield 10, "Calculating deformable registration on DAPI...", None
         yield 11, "(This may take several minutes for large images)", None
-        dapi_r1, dapi_r2, _, _ = aligned_pairs["DAPI"]
+        dapi_r1, dapi_r2, _, _ = aligned_pairs[constants.DAPI_CHANNEL_NAME]
         transform = calculate_deformable_transform(dapi_r1, dapi_r2)
         yield 40, "Deformable registration complete.", None
     elif apply_warp and not has_dapi:
@@ -46,26 +47,26 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
     def warp_worker(item):
         channel_name, (r1_data, r2_data, r1_meta, r2_meta) = item
         final_r2 = r2_data
-        r2_name_prefix = "Aligned"
+        r2_name_prefix = constants.ALIGNED_PREFIX
         is_label = r1_meta.get('is_label', False)
         
         if transform:
             final_r2 = apply_deformable_transform(r2_data, transform, r1_data, is_label=is_label)
-            r2_name_prefix = "Warped"
+            r2_name_prefix = constants.WARPED_PREFIX
             
         if output_dir:
             try:
-                out_name_r1 = output_dir / f"Aligned_R1_{channel_name}.tif"
+                out_name_r1 = output_dir / f"{constants.ALIGNED_PREFIX}_R1_{channel_name}.tif"
                 out_name_r2 = output_dir / f"{r2_name_prefix}_R2_{channel_name}.tif"
                 tifffile.imwrite(out_name_r1, r1_data)
                 tifffile.imwrite(out_name_r2, final_r2)
-                set_processed_file(f"Aligned R1 - {channel_name}", str(out_name_r1), layer_type='labels' if is_label else 'image')
+                set_processed_file(f"{constants.ALIGNED_PREFIX} R1 - {channel_name}", str(out_name_r1), layer_type='labels' if is_label else 'image')
                 set_processed_file(f"{r2_name_prefix} R2 - {channel_name}", str(out_name_r2), layer_type='labels' if is_label else 'image')
             except OSError as e:
                 print(f"Error saving {channel_name}: {e}. Check disk space.")
             
         return {
-            'r1': {'data': r1_data, 'name': f"Aligned R1 - {channel_name}", 'colormap': r1_meta['colormap'], 'scale': r1_meta['scale'], 'is_label': is_label},
+            'r1': {'data': r1_data, 'name': f"{constants.ALIGNED_PREFIX} R1 - {channel_name}", 'colormap': r1_meta['colormap'], 'scale': r1_meta['scale'], 'is_label': is_label},
             'r2': {'data': final_r2, 'name': f"{r2_name_prefix} R2 - {channel_name}", 'colormap': r2_meta['colormap'], 'scale': r2_meta['scale'], 'is_label': is_label}
         }
 

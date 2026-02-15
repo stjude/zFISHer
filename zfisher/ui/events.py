@@ -3,13 +3,14 @@ import numpy as np
 from pathlib import Path
 from qtpy.QtCore import QTimer
 from ..core import session
+from .. import constants
 
 def attach_puncta_listener(layer, name):
     """Attaches listeners to a points layer for auto-saving and color syncing."""
     def sync_data(event=None):
         out_dir = session.get_data("output_dir")
         if out_dir:
-            seg_dir = Path(out_dir) / "segmentation"
+            seg_dir = Path(out_dir) / constants.SEGMENTATION_DIR
             seg_dir.mkdir(exist_ok=True, parents=True)
             puncta_path = seg_dir / f"{name}.npy"
             np.save(puncta_path, layer.data)

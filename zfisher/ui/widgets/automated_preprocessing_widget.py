@@ -15,6 +15,7 @@ from ...core.segmentation import (
     merge_labeled_masks,
 )
 from ...core.pipeline import generate_global_canvas
+from ... import constants
 
 @magicgui(
     call_button="Run Automated Preprocessing",
@@ -110,14 +111,14 @@ def _automated_preprocessing_magic_widget(
             new_mask2, _, _ = match_nuclei_labels(aligned_r1_dapi_mask.data, aligned_r2_dapi_mask.data, threshold=match_threshold)
             merged_mask = merge_labeled_masks(aligned_r1_dapi_mask.data, new_mask2)
             
-            layer_name = "Consensus_Nuclei_Masks"
+            layer_name = constants.CONSENSUS_MASKS_NAME
             viewer.add_labels(merged_mask, name=layer_name, scale=aligned_r1_dapi_mask.scale, opacity=0.5)
             
-            seg_dir = Path(output_dir) / "segmentation"
+            seg_dir = Path(output_dir) / constants.SEGMENTATION_DIR
             seg_dir.mkdir(exist_ok=True, parents=True)
             mask_save_path = seg_dir / f"{layer_name}.tif"
             tifffile.imwrite(mask_save_path, merged_mask)
-            session.set_processed_file(layer_name, str(mask_save_path))
+            session.set_processed_file(layer_name, str(mask_save_path), layer_type='labels', metadata={'subtype': 'consensus_mask'})
 
         dialog.update_progress(95, "Cleaning up...")
         if hide_raw:

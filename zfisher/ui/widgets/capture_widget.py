@@ -7,6 +7,7 @@ from packaging.version import parse as parse_version
 from ...core import session
 from .. import popups
 from ..decorators import require_active_session
+from ... import constants
 
 # --- Arrow Drawing ---
 
@@ -22,7 +23,7 @@ class ArrowDrawer:
         def _save_arrows_data(event=None):
             out_dir = session.get_data("output_dir")
             if out_dir and self.arrows_layer:
-                seg_dir = Path(out_dir) / "segmentation"
+                seg_dir = Path(out_dir) / constants.SEGMENTATION_DIR
                 seg_dir.mkdir(exist_ok=True, parents=True)
                 arrows_path = seg_dir / f"{self.arrows_layer.name}.npy"
                 np.save(arrows_path, self.arrows_layer.data)
@@ -141,7 +142,7 @@ def _get_next_filename():
     if not output_dir:
         return None
     
-    captures_dir = Path(output_dir) / "captures"
+    captures_dir = Path(output_dir) / constants.CAPTURES_DIR
     captures_dir.mkdir(parents=True, exist_ok=True)
 
     while True:
@@ -160,7 +161,7 @@ def _capture_view(viewer: napari.Viewer, output_filename: str):
 
     try:
         output_dir = session.get_data("output_dir") # We know this exists due to the decorator
-        captures_dir = Path(output_dir) / "captures"
+        captures_dir = Path(output_dir) / constants.CAPTURES_DIR
         captures_dir.mkdir(parents=True, exist_ok=True)
             
         save_path = captures_dir / output_filename

@@ -1,0 +1,72 @@
+"""
+Centralized constants for the zFISHer application.
+
+This module contains hardcoded values, file paths, and parameters
+used throughout the core processing and UI logic to ensure consistency
+and ease of modification.
+"""
+
+# --- File and Directory Names ---
+SESSION_FILENAME = "zfisher_session.json"
+SEGMENTATION_DIR = "segmentation"
+ALIGNED_DIR = "aligned"
+CAPTURES_DIR = "captures"
+INPUT_DIR = "input"
+REPORTS_DIR = "reports"
+
+# --- Layer Name Prefixes/Suffixes ---
+ALIGNED_PREFIX = "Aligned"
+WARPED_PREFIX = "Warped"
+CENTROIDS_SUFFIX = "_centroids"
+MASKS_SUFFIX = "_masks"
+PUNCTA_SUFFIX = "_puncta"
+CONSENSUS_MASKS_NAME = "Consensus_Nuclei_Masks"
+CONSENSUS_IDS_SUFFIX = "_IDs"
+
+# --- Segmentation Parameters ---
+# Classical Nuclei Segmentation
+NUC_SEG_Z_STEP = 2
+NUC_SEG_SCALE_FACTOR = 0.25
+NUC_SEG_GAUSSIAN_SIGMA = 3
+NUC_SEG_OTSU_MIN_SIZE = 50
+NUC_SEG_PEAK_MIN_DIST = 7
+
+# Cellpose 3D Nuclei Segmentation
+NUC_SEG_3D_Z_STEP = 2
+NUC_SEG_3D_SCALE_FACTOR = 0.25
+NUC_SEG_3D_STITCH_THRESH = 0.5
+NUC_SEG_3D_BATCH_SIZE = 16
+
+# Puncta Detection
+PUNCTA_MIN_DISTANCE = 2
+PUNCTA_THRESHOLD_REL = 0.05
+PUNCTA_SIGMA = 0.0
+
+# --- Registration Parameters ---
+RANSAC_N_LIMIT = 2000
+RANSAC_BIN_SIZE = 5.0
+RANSAC_SEARCH_RADIUS = 100.0
+RANSAC_RESIDUAL_THRESHOLD = 50
+RANSAC_MAX_TRIALS = 2000
+RANSAC_DEVIATION_THRESHOLD = 500.0
+DEFORMABLE_DOWNSAMPLE_FACTOR = 16
+DEFORMABLE_MESH_SIZE = 8
+DEFORMABLE_ITERATIONS = 10
+DEFORMABLE_SAMPLING_PERC = 0.01
+
+# --- Analysis & Reporting ---
+EXCEL_SUFFIX = ".xlsx"
+METADATA_SHEET = "Metadata"
+DISTANCES_SHEET = "Distances"
+COLOCALIZATION_SHEET = "Colocalization"
+
+# --- UI Constants ---
+# Channel color mapping
+CHANNEL_COLORS = {
+    "DAPI": "blue",
+    "FITC": "green",
+    "CY3": "yellow",
+    "CY5": "red",
+    "TXRED": "magenta"
+}
+DAPI_CHANNEL_NAME = "DAPI"

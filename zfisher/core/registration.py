@@ -6,8 +6,31 @@ from scipy import ndimage as ndi
 import SimpleITK as sitk
 import warnings
 
-def _find_rough_shift_vector_voting(fixed_points, moving_points, n_limit=2000, bin_size=5.0):
-    """Finds a rough alignment shift using brute-force vector voting."""
+from .. import constants
+
+def _find_rough_shift_vector_voting(fixed_points, moving_points, n_limit=constants.RANSAC_N_LIMIT, bin_size=constants.RANSAC_BIN_SIZE):
+    """
+    Finds a rough alignment shift using brute-force vector voting.
+
+    This method is robust to large displacements and is used to get a
+    coarse initial alignment before refinement.
+
+    Parameters
+    ----------
+    fixed_points : np.ndarray
+        (N, 3) array of reference points.
+    moving_points : np.ndarray
+        (M, 3) array of points to be aligned.
+    n_limit : int, optional
+        The maximum number of points to use for voting to limit computation.
+    bin_size : float, optional
+        The size of the bins for discretizing displacement vectors.
+
+    Returns
+    -------
+    np.ndarray
+        A (3,) array representing the coarse shift vector (Z, Y, X).
+    """
     fp = fixed_points
     mp = moving_points
     
@@ -28,8 +51,27 @@ def _find_rough_shift_vector_voting(fixed_points, moving_points, n_limit=2000, b
     best_bin = unique_bins[np.argmax(counts)]
     return best_bin * bin_size
 
-def _get_nearest_neighbor_pairs(fixed_points, moving_points, rough_shift, search_radius=100.0):
-    """Matches points based on nearest neighbors after applying a rough shift."""
+def _get_nearest_neighbor_pairs(fixed_points, moving_points, rough_shift, search_radius=constants.RANSAC_SEARCH_RADIUS):
+    """
+    Matches points based on nearest neighbors after applying a rough shift.
+
+    Parameters
+    ----------
+    fixed_points : np.ndarray
+        (N, 3) array of reference points.
+    moving_points : np.ndarray
+        (M, 3) array of points to be aligned.
+    rough_shift : np.ndarray
+        A (3,) coarse shift vector to apply to `moving_points` before matching.
+    search_radius : float, optional
+        The maximum distance to search for a nearest neighbor.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        A tuple containing (src, dst) points, where `src` are from `moving_points`
+        and `dst` are their corresponding matches in `fixed_points`.
+    """
     moving_shifted = moving_points + rough_shift
     
     tree = cKDTree(fixed_points)
@@ -41,8 +83,26 @@ def _get_nearest_neighbor_pairs(fixed_points, moving_points, rough_shift, search
     
     return src, dst
 
-def _refine_shift_with_ransac(src_points, dst_points, residual_threshold=50, max_trials=2000):
-    """Refines the transformation using RANSAC."""
+def _refine_shift_with_ransac(src_points, dst_points, residual_threshold=constants.RANSAC_RESIDUAL_THRESHOLD, max_trials=constants.RANSAC_MAX_TRIALS):
+    """
+    Refines the transformation using RANSAC to find a robust affine shift.
+
+    Parameters
+    ----------
+    src_points : np.ndarray
+        (K, 3) array of source points (from the moving set).
+    dst_points : np.ndarray
+        (K, 3) array of corresponding destination points (from the fixed set).
+    residual_threshold : float, optional
+        Maximum distance for a data point to be considered an inlier.
+    max_trials : int, optional
+        The maximum number of RANSAC iterations.
+
+    Returns
+    -------
+    np.ndarray or None
+        The refined (3,) translation vector, or None if RANSAC fails.
+    """
     if len(src_points) < 4:
         return None
 
@@ -57,17 +117,25 @@ def _refine_shift_with_ransac(src_points, dst_points, residual_threshold=50, max
 
 def align_centroids_ransac(fixed_points, moving_points, max_distance=None, progress_callback=None):
     """
-    Calculates the rigid shift between two point clouds using Vector Voting + RANSAC.
-    This is robust to large shifts where nearest-neighbor matching fails.
-    
-    Args:
-        fixed_points: (N, 3) array of centroids from Round 1 (Z, Y, X)
-        moving_points: (M, 3) array of centroids from Round 2 (Z, Y, X)
-        max_distance: Ignored (kept for compatibility).
-        progress_callback: Optional function to report progress (value, message).
-        
-    Returns:
-        shift_vector: (Z, Y, X) translation needed to move Round 2 to Round 1
+    Calculates the rigid shift between two point clouds.
+
+    This function uses a two-step process:
+    1. Coarse alignment via vector voting.
+    2. Fine alignment using RANSAC on nearest-neighbor pairs.
+
+    Parameters
+    ----------
+    fixed_points : np.ndarray
+        (N, 3) array of centroids from the reference image (e.g., Round 1).
+    moving_points : np.ndarray
+        (M, 3) array of centroids from the image to be aligned (e.g., Round 2).
+    progress_callback : callable, optional
+        A function to report progress, e.g., `lambda p, m: print(f"{p}%: {m}")`.
+
+    Returns
+    -------
+    np.ndarray
+        The calculated (Z, Y, X) shift vector.
     """
     # 1. Brute-force Vector Voting to find rough shift
     if progress_callback: progress_callback(10, "Finding rough alignment...")
@@ -91,7 +159,7 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, progr
 
     # Sanity checks on the refined shift
     deviation = np.linalg.norm(refined_shift - rough_shift)
-    if deviation > 500.0 or np.any(np.isnan(refined_shift)):
+    if deviation > constants.RANSAC_DEVIATION_THRESHOLD or np.any(np.isnan(refined_shift)):
         if progress_callback: progress_callback(100, "Done (RANSAC result invalid, reverted to rough shift).")
         return rough_shift
         
@@ -100,16 +168,27 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, progr
 
 def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
     """
-    Aligns two 3D volumes based on a shift vector by zero-padding.
-    Returns two volumes of the same shape (Union Bounding Box).
-    
-    Args:
-        fixed_data: (Z, Y, X) numpy array
-        moving_data: (Z, Y, X) numpy array
-        shift_vector: (Z, Y, X) shift to apply to moving_data to match fixed_data
-        
-    Returns:
-        padded_fixed, padded_moving
+    Aligns two 3D volumes based on a shift vector by padding.
+
+    Creates a new canvas large enough to contain both volumes after alignment
+    and pastes them into the correct positions. Handles sub-pixel shifts via
+    interpolation.
+
+    Parameters
+    ----------
+    fixed_data : np.ndarray
+        The reference (Z, Y, X) image data.
+    moving_data : np.ndarray
+        The (Z, Y, X) image data to be aligned.
+    shift_vector : np.ndarray
+        The (Z, Y, X) shift to apply to `moving_data`.
+    is_label : bool, optional
+        If True, uses nearest-neighbor interpolation for label images.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        A tuple containing (padded_fixed, padded_moving), both of the same shape.
     """
     # Round shift to nearest integer for lossless padding
     shift = np.round(shift_vector).astype(int)
@@ -160,16 +239,23 @@ def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
 
 def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=16):
     """
-    Calculates B-Spline deformable transform using SimpleITK.
-    Returns the transform object, does not return the image.
-    
-    Args:
-        fixed_data: (Z, Y, X) numpy array
-        moving_data: (Z, Y, X) numpy array
-        downsample_factor: Factor to downsample XY dimensions for speed
-        
-    Returns:
-        transform: SimpleITK Transform object
+    Calculates a B-Spline deformable transform using SimpleITK.
+
+    The registration is performed on downsampled images for speed.
+
+    Parameters
+    ----------
+    fixed_data : np.ndarray
+        The reference (Z, Y, X) image data.
+    moving_data : np.ndarray
+        The (Z, Y, X) image data to be warped.
+    downsample_factor : int, optional
+        The factor by which to downsample XY dimensions for faster registration.
+
+    Returns
+    -------
+    SimpleITK.Transform
+        The calculated B-spline transform.
     """
     print(f"Downsampling data by {downsample_factor}x (BinShrink) for registration calculation...")
     
@@ -186,15 +272,15 @@ def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=16
     
     # Initialize B-Spline Transform
     # Mesh size determines flexibility (lower = more rigid, higher = more flexible)
-    transformDomainMeshSize = [8] * fixed_img.GetDimension()
+    transformDomainMeshSize = [constants.DEFORMABLE_MESH_SIZE] * fixed_img.GetDimension()
     tx = sitk.BSplineTransformInitializer(fixed_img, transformDomainMeshSize)
     
     # Set up Registration Method
     R = sitk.ImageRegistrationMethod()
     R.SetMetricAsCorrelation() 
     R.SetMetricSamplingStrategy(R.RANDOM)
-    R.SetMetricSamplingPercentage(0.01)
-    R.SetOptimizerAsLBFGSB(gradientConvergenceTolerance=1e-5, numberOfIterations=10)
+    R.SetMetricSamplingPercentage(constants.DEFORMABLE_SAMPLING_PERC)
+    R.SetOptimizerAsLBFGSB(gradientConvergenceTolerance=1e-5, numberOfIterations=constants.DEFORMABLE_ITERATIONS)
     R.SetInitialTransform(tx, True)
     R.SetInterpolator(sitk.sitkLinear)
     
@@ -208,6 +294,22 @@ def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=16
 def apply_deformable_transform(moving_data, transform, fixed_reference_data, is_label=False):
     """
     Applies a calculated SimpleITK transform to an image array.
+
+    Parameters
+    ----------
+    moving_data : np.ndarray
+        The (Z, Y, X) image data to warp.
+    transform : SimpleITK.Transform
+        The transform to apply.
+    fixed_reference_data : np.ndarray
+        A reference image defining the output grid (size, spacing, origin).
+    is_label : bool, optional
+        If True, uses nearest-neighbor interpolation.
+
+    Returns
+    -------
+    np.ndarray
+        The warped image data.
     """
     # Convert inputs to SimpleITK
     moving_img = sitk.GetImageFromArray(moving_data.astype(np.float32))

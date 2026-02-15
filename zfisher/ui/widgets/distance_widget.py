@@ -6,6 +6,7 @@ from ...core import session
 from .. import popups
 from ..decorators import require_active_session, error_handler
 from ...core.report import calculate_distances, export_report
+from ... import constants
 
 @magicgui(
     call_button="Calculate & Export Distances",
@@ -48,7 +49,7 @@ def distance_widget(output_filename: str = "puncta_distances.xlsx"):
         viewer.status = f"Exported: {final_path.name}"
         
         if session.get_data("output_dir"):
-             session.set_processed_file("Distance_Report", str(final_path), layer_type='report')
+             session.set_processed_file(f"{constants.REPORTS_DIR}_Distance", str(final_path), layer_type='report')
         
         popups.show_info_popup(
             viewer.window._qt_window,

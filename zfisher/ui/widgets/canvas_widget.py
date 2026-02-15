@@ -7,6 +7,7 @@ from ...core import session
 from .. import popups
 from ..decorators import require_active_session, error_handler
 from ...core.pipeline import generate_global_canvas
+from ... import constants
 
 @magicgui(
     call_button="Generate Global Canvas",
@@ -26,7 +27,7 @@ def canvas_widget(
     shift = np.array(shift_list) if shift_list else None
     
     base_output_dir = session.get_data("output_dir")
-    output_dir = Path(base_output_dir) / "aligned"
+    output_dir = Path(base_output_dir) / constants.ALIGNED_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
     
     if shift is None:

@@ -10,20 +10,43 @@ from skimage.segmentation import watershed
 from skimage.morphology import remove_small_objects
 from cellpose import models, core
 
+from .. import constants
+
 # Set logging to see the progress bar in terminal
 logging.basicConfig(level=logging.INFO)
 
 def segment_nuclei_3d(image_data, gpu=True):
+    """
+    Segments 3D nuclei using the Cellpose model.
+
+    This function downsamples the data for performance, runs the 'nuclei'
+    model, and then scales the resulting masks and centroids back to the
+    original image dimensions.
+
+    Parameters
+    ----------
+    image_data : np.ndarray
+        The 3D (Z, Y, X) image data containing nuclei (e.g., DAPI channel).
+    gpu : bool, optional
+        Whether to use a GPU for computation if available. Defaults to True.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        A tuple containing:
+        - masks: A (Z, Y, X) labeled integer mask of the segmented nuclei.
+        - centroids: A (N, 3) array of the (Z, Y, X) centroids for each nucleus.
+    """
     # 1. SETUP
     use_gpu = core.use_gpu() if gpu else False
     model = models.CellposeModel(gpu=use_gpu, model_type='nuclei')
 
     # 2. SUBSAMPLE Z
-    z_step = 2
+    z_step = constants.NUC_SEG_3D_Z_STEP
     subsampled_data = image_data[::z_step, :, :]
     
     # 3. DOWNSAMPLE X/Y
-    scale_factor = 0.25
+    scale_factor = constants.NUC_SEG_3D_SCALE_FACTOR
     small_data = rescale(
         subsampled_data, 
         (1, scale_factor, scale_factor), 
@@ -38,9 +61,9 @@ def segment_nuclei_3d(image_data, gpu=True):
         diameter=None,       # We already handled scaling manually
         rescale=1.0,         # <--- CRITICAL: Prevents internal resizing
         do_3D=True,
-        stitch_threshold=0.5,       
+        stitch_threshold=constants.NUC_SEG_3D_STITCH_THRESH,
         z_axis=0,
-        batch_size=16,               
+        batch_size=constants.NUC_SEG_3D_BATCH_SIZE,
         progress=True,
         resample=False       # <--- CRITICAL: Prevents internal resampling
     )
@@ -67,13 +90,31 @@ def segment_nuclei_3d(image_data, gpu=True):
 
 def segment_nuclei_classical(image_data, progress_callback=None):
     """
-    Fast 3D nuclei segmentation using classical image processing.
-    Much faster than Cellpose, suitable for registration landmarks.
+    Segment 3D nuclei using a classical image processing workflow.
+
+    This method is significantly faster than deep learning models like Cellpose
+    and is well-suited for generating landmarks for registration. The workflow
+    involves downsampling, smoothing, thresholding, and watershed segmentation.
+
+    Parameters
+    ----------
+    image_data : np.ndarray
+        The 3D (Z, Y, X) image data containing nuclei.
+    progress_callback : callable, optional
+        A function to report progress, e.g., `lambda p, m: print(f"{p}%: {m}")`.
+
+    Returns
+    -------
+    tuple[np.ndarray | None, np.ndarray | None]
+        A tuple containing:
+        - labels: A (Z, Y, X) labeled integer mask of the segmented nuclei.
+        - centroids: A (N, 3) array of the (Z, Y, X) centroids.
+        Returns (None, None) if the input image is empty or segmentation fails.
     """
     # 1. Downsample for speed
     if progress_callback: progress_callback(0, "Downsampling...")
-    z_step = 2
-    scale_factor = 0.25
+    z_step = constants.NUC_SEG_Z_STEP
+    scale_factor = constants.NUC_SEG_SCALE_FACTOR
     
     small_data = rescale(
         image_data[::z_step], 
@@ -84,22 +125,22 @@ def segment_nuclei_classical(image_data, progress_callback=None):
 
     # 2. Smooth to reduce noise
     if progress_callback: progress_callback(20, "Smoothing...")
-    smoothed = gaussian(small_data, sigma=3)
+    smoothed = gaussian(small_data, sigma=constants.NUC_SEG_GAUSSIAN_SIGMA)
     
     # 3. Threshold (Otsu)
     if progress_callback: progress_callback(40, "Thresholding...")
     try:
         thresh = threshold_otsu(smoothed)
         binary = smoothed > thresh
-        binary = remove_small_objects(binary, min_size=50)
+        binary = remove_small_objects(binary, min_size=constants.NUC_SEG_OTSU_MIN_SIZE)
     except ValueError:
         return None, None # Handle empty images
 
     # 4. Distance Transform & Peak Finding (Separates touching nuclei)
     if progress_callback: progress_callback(60, "Finding nuclei centers...")
     distance = ndi.distance_transform_edt(binary)
-    # min_distance=7 corresponds to ~28 pixels in original image (7 / 0.25)
-    coords = peak_local_max(distance, min_distance=7, labels=binary)
+    # min_distance corresponds to ~28 pixels in original image (7 / 0.25)
+    coords = peak_local_max(distance, min_distance=constants.NUC_SEG_PEAK_MIN_DIST, labels=binary)
     
     # 5. Extract Centroids directly from peaks
     centroids = np.array([
@@ -128,7 +169,21 @@ def segment_nuclei_classical(image_data, progress_callback=None):
     return labels, centroids
 
 def _detect_spots_local_maxima(image_data, min_distance, threshold_rel, sigma):
-    """Finds spots using the local maxima method."""
+    """
+    Finds spots using the local maxima method.
+
+    Parameters
+    ----------
+    image_data : np.ndarray
+        The 3D image data.
+    min_distance, threshold_rel, sigma :
+        Parameters for `skimage.feature.peak_local_max`.
+
+    Returns
+    -------
+    np.ndarray
+        (N, 3) array of spot coordinates.
+    """
     if sigma > 0:
         image_data = gaussian(image_data, sigma=sigma, preserve_range=True)
     
@@ -140,7 +195,21 @@ def _detect_spots_local_maxima(image_data, min_distance, threshold_rel, sigma):
     )
 
 def _detect_spots_log(image_data, threshold_rel, sigma):
-    """Finds spots using the Laplacian of Gaussian method."""
+    """
+    Finds spots using the Laplacian of Gaussian (LoG) method.
+
+    Parameters
+    ----------
+    image_data : np.ndarray
+        The 3D image data.
+    threshold_rel, sigma :
+        Parameters for `skimage.feature.blob_log`.
+
+    Returns
+    -------
+    np.ndarray
+        (N, 3) array of spot coordinates.
+    """
     s = sigma if sigma > 0 else 1.0
     abs_threshold = threshold_rel * np.max(image_data)
     
@@ -156,19 +225,27 @@ def _detect_spots_log(image_data, threshold_rel, sigma):
         return blobs[:, :3].astype(int)
     return np.empty((0, 3))
 
-def detect_spots_3d(image_data, min_distance=2, threshold_rel=0.05, sigma=0.0, method="Local Maxima"):
+def detect_spots_3d(image_data, min_distance=constants.PUNCTA_MIN_DISTANCE, threshold_rel=constants.PUNCTA_THRESHOLD_REL, sigma=constants.PUNCTA_SIGMA, method="Local Maxima"):
     """
     Detects diffraction-limited spots (puncta) in a 3D image.
     
-    Args:
-        image_data: 3D numpy array (Z, Y, X)
-        min_distance: Minimum pixel distance between spots
-        threshold_rel: Relative intensity threshold (0.0 to 1.0)
-        sigma: Standard deviation for Gaussian kernel (smoothing). 0 to disable.
-        method: "Local Maxima" (fast) or "Laplacian of Gaussian" (robust but slower).
+    Parameters
+    ----------
+    image_data : np.ndarray
+        The 3D (Z, Y, X) image data.
+    min_distance : int, optional
+        Minimum pixel distance between spots for the "Local Maxima" method.
+    threshold_rel : float, optional
+        Relative intensity threshold (0.0 to 1.0).
+    sigma : float, optional
+        Standard deviation for Gaussian kernel (smoothing). 0 to disable.
+    method : {"Local Maxima", "Laplacian of Gaussian"}, optional
+        The algorithm to use for spot detection.
 
-    Returns:
-        coords: (N, 3) array of (Z, Y, X) coordinates
+    Returns
+    -------
+    np.ndarray
+        (N, 3) array of (Z, Y, X) spot coordinates.
     """
     if method == "Local Maxima":
         return _detect_spots_local_maxima(image_data, min_distance, threshold_rel, sigma)
@@ -180,13 +257,18 @@ def detect_spots_3d(image_data, min_distance=2, threshold_rel=0.05, sigma=0.0, m
 def merge_puncta(existing_coords, new_coords):
     """
     Combines new puncta coordinates with existing ones and removes duplicates.
-    
-    Args:
-        existing_coords (np.ndarray): Array of existing (N, D) coordinates.
-        new_coords (np.ndarray): Array of new (M, D) coordinates to add.
-        
-    Returns:
-        np.ndarray: A new array of unique combined coordinates.
+
+    Parameters
+    ----------
+    existing_coords : np.ndarray
+        Array of existing (N, D) coordinates.
+    new_coords : np.ndarray
+        Array of new (M, D) coordinates to add.
+
+    Returns
+    -------
+    np.ndarray
+        A new array of unique combined coordinates.
     """
     if new_coords is None or len(new_coords) == 0:
         return existing_coords
@@ -199,18 +281,25 @@ def merge_puncta(existing_coords, new_coords):
 def match_nuclei_labels(mask1, mask2, threshold=20, progress_callback=None):
     """
     Matches nuclei in mask2 to mask1 based on centroid distance.
+
     Relabels mask2 to match mask1 IDs where possible.
     
-    Args:
-        mask1: Reference labels (Z, Y, X)
-        mask2: Moving labels (Z, Y, X)
-        threshold: Max distance in pixels to consider a match
-        progress_callback: Optional function for progress reporting.
-        
-    Returns:
-        new_mask2: Relabeled mask2
-        points1: List of dicts {'coord', 'label'} for mask1
-        points2: List of dicts {'coord', 'label'} for new_mask2
+    Parameters
+    ----------
+    mask1 : np.ndarray
+        The reference labels (Z, Y, X) array.
+    mask2 : np.ndarray
+        The moving labels (Z, Y, X) array to be relabeled.
+    threshold : float, optional
+        Maximum distance in pixels to consider two centroids a match.
+    progress_callback : callable, optional
+        A function to report progress.
+
+    Returns
+    -------
+    tuple[np.ndarray, list, list]
+        A tuple containing (new_mask2, points1, points2), where `points1` and
+        `points2` are lists of dictionaries containing centroid coordinates and labels.
     """
     if progress_callback: progress_callback(0, "Analyzing reference nuclei...")
     props1 = regionprops(mask1)
@@ -268,8 +357,21 @@ def match_nuclei_labels(mask1, mask2, threshold=20, progress_callback=None):
 
 def merge_labeled_masks(mask1, mask2):
     """
-    Merges two labeled masks. Assumes IDs are already matched/synchronized.
-    Prioritizes mask1, fills gaps with mask2.
+    Merges two labeled masks, prioritizing mask1.
+
+    Assumes that the label IDs in both masks have already been synchronized.
+    This function fills in the background of `mask1` with labeled regions
+    from `mask2`.
+
+    Parameters
+    ----------
+    mask1, mask2 : np.ndarray
+        The two (Z, Y, X) label arrays to merge.
+
+    Returns
+    -------
+    np.ndarray
+        The merged label mask.
     """
     merged = mask1.copy()
     # Where mask1 is 0 (background) and mask2 has a label, use mask2
@@ -278,6 +380,18 @@ def merge_labeled_masks(mask1, mask2):
     return merged
 
 def get_mask_centroids(mask):
-    """Returns list of dicts {'coord': (z,y,x), 'label': id} for a mask."""
+    """
+    Calculates the centroid for each labeled region in a mask.
+
+    Parameters
+    ----------
+    mask : np.ndarray
+        A (Z, Y, X) labeled integer mask.
+
+    Returns
+    -------
+    list[dict]
+        A list of dictionaries, each with 'coord' and 'label' keys.
+    """
     props = regionprops(mask)
     return [{'coord': p.centroid, 'label': p.label} for p in props]

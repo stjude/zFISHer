@@ -6,6 +6,7 @@ from ...core import session
 from .. import popups
 from ..decorators import require_active_session, error_handler
 from ...core.segmentation import detect_spots_3d, merge_puncta
+from ... import constants
 
 @magicgui(
     call_button="Detect Puncta",
@@ -13,8 +14,8 @@ from ...core.segmentation import detect_spots_3d, merge_puncta
     nuclei_layer={"label": "Nuclei Masks (Optional)"},
     method={"label": "Algorithm", "choices": ["Local Maxima", "Laplacian of Gaussian"]},
     threshold={"label": "Sensitivity (0-1)", "min": 0.01, "max": 1.0, "step": 0.01},
-    min_distance={"label": "Min Distance (px)", "min": 1, "max": 20, "step": 1},
-    sigma={"label": "Spot Radius (Sigma)", "min": 0.0, "max": 5.0, "step": 0.1}
+    min_distance={"label": "Min Distance (px)", "min": 1, "max": 20, "step": 1, "value": constants.PUNCTA_MIN_DISTANCE},
+    sigma={"label": "Spot Radius (Sigma)", "min": 0.0, "max": 5.0, "step": 0.1, "value": constants.PUNCTA_SIGMA}
 )
 @require_active_session("Please start or load a session before detecting puncta.")
 @error_handler("Puncta Detection Failed")
@@ -22,7 +23,7 @@ def puncta_widget(
     image_layer: "napari.layers.Image",
     nuclei_layer: "napari.layers.Labels",
     method: str = "Local Maxima",
-    threshold: float = 0.05,
+    threshold: float = constants.PUNCTA_THRESHOLD_REL,
     min_distance: int = 2,
     sigma: float = 0.0
 ):
@@ -37,7 +38,7 @@ def puncta_widget(
         # Run detection
         coords = detect_spots_3d(image_layer.data, threshold_rel=threshold, min_distance=min_distance, sigma=sigma, method=method)
         
-        layer_name = f"{image_layer.name}_puncta"
+        layer_name = f"{image_layer.name}{constants.PUNCTA_SUFFIX}"
         
         if layer_name in viewer.layers:
             pts_layer = viewer.layers[layer_name]

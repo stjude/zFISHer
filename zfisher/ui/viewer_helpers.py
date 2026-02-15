@@ -4,7 +4,7 @@ import tifffile
 from pathlib import Path
 from packaging.version import parse as parse_version
 
-from .constants import CHANNEL_COLORS
+from .. import constants
 from . import style
 
 # Global to track the zoom listener, but now it's scoped to this module
@@ -36,7 +36,7 @@ def add_image_session_to_viewer(viewer: napari.Viewer, image_session, prefix: st
 
     # Apply colors
     for layer in new_layers:
-        for ch_name, color in CHANNEL_COLORS.items():
+        for ch_name, color in constants.CHANNEL_COLORS.items():
             if ch_name.upper() in layer.name.upper():
                 layer.colormap = color
         
@@ -113,7 +113,7 @@ def _load_labels_layer(viewer, name, path, scale, file_info):
 def _load_image_layer(viewer, name, path, scale, file_info):
     data = tifffile.imread(path)
     c_map = 'gray'
-    for ch, color in CHANNEL_COLORS.items():
+    for ch, color in constants.CHANNEL_COLORS.items():
         if ch.upper() in name.upper():
             c_map = color
             break

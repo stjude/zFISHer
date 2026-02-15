@@ -4,18 +4,23 @@ from scipy.spatial import cKDTree
 from pathlib import Path
 from datetime import datetime
 
+from .. import constants
+
 def calculate_distances(points_layers_data):
     """
     Calculates nearest neighbor distances between all pairs of points layers.
     
-    Args:
-        points_layers_data: List of dictionaries, each containing:
-            - 'name': str
-            - 'data': np.ndarray (N, 3) in pixel coordinates
-            - 'scale': tuple (3,) scale factors
-            
-    Returns:
-        pd.DataFrame: Results dataframe
+    Parameters
+    ----------
+    points_layers_data : list[dict]
+        A list of dictionaries, where each dictionary represents a points layer
+        and contains 'name', 'data' (in pixels), and 'scale' keys.
+
+    Returns
+    -------
+    pd.DataFrame
+        A DataFrame containing the nearest neighbor analysis, with columns
+        for source/target layers, IDs, distance, and coordinates.
     """
     results = []
     
@@ -55,12 +60,35 @@ def calculate_distances(points_layers_data):
     return pd.DataFrame(results)
 
 def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None, coloc_rules=None):
-    """Exports the dataframe to Excel with metadata."""
+    """
+    Exports a distances DataFrame to an Excel file with multiple sheets.
+
+    The output file will contain sheets for:
+    - 'Distances': The raw nearest-neighbor data.
+    - 'Colocalization': A filtered view based on colocalization rules.
+    - 'Metadata': Information about the analysis session.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The DataFrame of distances from `calculate_distances`.
+    save_path : Path
+        The path where the Excel file will be saved.
+    r1_path, r2_path, output_dir : str, optional
+        Session metadata to include in the report.
+    coloc_rules : list[dict], optional
+        A list of colocalization rules to apply for the 'Colocalization' sheet.
+
+    Returns
+    -------
+    Path
+        The final path of the saved report file.
+    """
     save_path = Path(save_path)
     
     try:
-        if not str(save_path).endswith(".xlsx"):
-            save_path = save_path.with_suffix(".xlsx")
+        if not str(save_path).endswith(constants.EXCEL_SUFFIX):
+            save_path = save_path.with_suffix(constants.EXCEL_SUFFIX)
         
         # Prepare Metadata
         r1_p = Path(r1_path) if r1_path else Path("Not Set")
@@ -103,10 +131,10 @@ def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None, co
         df_meta = pd.DataFrame(meta_list)
         
         with pd.ExcelWriter(save_path, engine='openpyxl') as writer:
-            df.to_excel(writer, sheet_name='Distances', index=False)
+            df.to_excel(writer, sheet_name=constants.DISTANCES_SHEET, index=False)
             if not df_coloc.empty:
-                df_coloc.to_excel(writer, sheet_name='Colocalization', index=False)
-            df_meta.to_excel(writer, sheet_name='Metadata', index=False)
+                df_coloc.to_excel(writer, sheet_name=constants.COLOCALIZATION_SHEET, index=False)
+            df_meta.to_excel(writer, sheet_name=constants.METADATA_SHEET, index=False)
             
         return save_path
         

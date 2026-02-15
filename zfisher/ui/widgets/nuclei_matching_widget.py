@@ -12,6 +12,7 @@ from ...core.segmentation import (
     merge_labeled_masks,
     get_mask_centroids,
 )
+from ... import constants
 
 @magicgui(
     call_button="Match & Merge Nuclei",
@@ -46,7 +47,7 @@ def nuclei_matching_widget(
         # Merge into a single consensus mask
         merged_mask = merge_labeled_masks(r1_mask_layer.data, new_mask2)
         
-        layer_name = "Consensus_Nuclei_Masks"
+        layer_name = constants.CONSENSUS_MASKS_NAME
         
         # Add merged layer
         viewer.add_labels(
@@ -59,7 +60,7 @@ def nuclei_matching_widget(
         # Save to disk
         if output_dir:
             try:
-                seg_dir = Path(output_dir) / "segmentation"
+                seg_dir = Path(output_dir) / constants.SEGMENTATION_DIR
                 seg_dir.mkdir(exist_ok=True, parents=True)
                 
                 # Save mask
@@ -70,7 +71,7 @@ def nuclei_matching_widget(
 
                 # Save IDs/points
                 if pts1:
-                    ids_layer_name = f"{layer_name}_IDs"
+                    ids_layer_name = f"{layer_name}{constants.CONSENSUS_IDS_SUFFIX}"
                     ids_save_path = seg_dir / f"{ids_layer_name}.npy"
                     
                     # Convert to structured array
@@ -100,7 +101,7 @@ def nuclei_matching_widget(
                 blending='translucent_no_depth'
             )
 
-        add_id_points(pts1, f"{layer_name}_IDs", r1_mask_layer.scale)
+        add_id_points(pts1, f"{layer_name}{constants.CONSENSUS_IDS_SUFFIX}", r1_mask_layer.scale)
         
         viewer.status = f"Matched {len(pts1)} nuclei."
         dialog.update_progress(100, "Done.")

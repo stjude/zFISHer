@@ -7,6 +7,23 @@ from pathlib import Path
 
 @dataclass
 class FISHSession:
+    """
+    A data class to hold information from a single imaging session,
+    typically loaded from an .nd2 file.
+
+    Attributes
+    ----------
+    data : np.ndarray
+        The image data in (Z, C, Y, X) order.
+    voxels : tuple
+        A tuple representing voxel size (dz, dy, dx) in microns.
+    channels : list
+        A list of channel names as strings.
+    path : str
+        The file path to the original image file.
+    metadata : dict, optional
+        A dictionary containing raw metadata from the file.
+    """
     data: np.ndarray      # (Z, C, Y, X)
     voxels: tuple        # (dz, dy, dx) in microns
     channels: list       # ['DAPI', 'FISH1', ...]
@@ -14,7 +31,9 @@ class FISHSession:
     metadata: dict = None # Store raw metadata
 
 class TiffSession:
-    """Helper to wrap TIFF data with an interface similar to the ND2 loader."""
+    """
+    A helper class to wrap TIFF data with an interface similar to FISHSession.
+    """
     def __init__(self, path: Path):
         self.path = str(path)
         self.ome_metadata = None
@@ -24,6 +43,19 @@ class TiffSession:
         self.voxels = (1.0, 1.0, 1.0) # (dz, dy, dx)
 
     def _load_data(self, path_str: str):
+        """
+        Loads image data from a TIFF file and normalizes its dimensions.
+
+        Parameters
+        ----------
+        path_str : str
+            The file path to the TIFF image.
+
+        Returns
+        -------
+        np.ndarray
+            The image data normalized to (Z, C, Y, X) order.
+        """
         with tifffile.TiffFile(path_str) as tif:
             data = tif.asarray()
             self.ome_metadata = tif.ome_metadata
@@ -41,7 +73,19 @@ class TiffSession:
         return data
 
 def load_nd2_session(path: str) -> FISHSession:
-    """Loads an ND2 file into a FISHSession object."""
+    """
+    Loads an ND2 file into a FISHSession object.
+
+    Parameters
+    ----------
+    path : str
+        The file path to the .nd2 file.
+
+    Returns
+    -------
+    FISHSession
+        An object containing the data and metadata from the ND2 file.
+    """
     with nd2.ND2File(path) as f:
         # Data is loaded as (C, Z, Y, X) or (Z, Y, X) etc.
         # f.asarray() brings it to a standard order, often TZCYX or TCYX
@@ -64,8 +108,20 @@ def load_nd2_session(path: str) -> FISHSession:
 
 def load_image_session(path: Path):
     """
-    Loads an image file (ND2 or TIFF) and returns a session object
-    with a consistent data structure.
+    Loads an image file (ND2 or TIFF) and returns a session object.
+
+    This function acts as a factory, dispatching to the appropriate loader
+    based on the file extension.
+
+    Parameters
+    ----------
+    path : Path
+        The path to the image file.
+
+    Returns
+    -------
+    FISHSession or TiffSession
+        An object containing the loaded image data and metadata.
     """
     if path.suffix.lower() == '.nd2':
         return load_nd2_session(str(path))
@@ -78,7 +134,23 @@ def convert_nd2_to_ome(
     prefix: str,
     progress_callback=None
 ):
-    """Converts an ND2 session to OME-TIFF and saves metadata."""
+    """
+    Converts an ND2 session to OME-TIFF and saves associated metadata.
+
+    This function saves the image data as a multi-channel OME-TIFF file
+    and also exports the OME-XML and raw ND2 metadata to separate files.
+
+    Parameters
+    ----------
+    nd2_session : FISHSession
+        The session object loaded from an ND2 file.
+    output_dir : Path
+        The directory where the converted files will be saved.
+    prefix : str
+        A prefix (e.g., 'R1', 'R2') to use for the output filenames.
+    progress_callback : callable, optional
+        A function to call with progress messages.
+    """
     if not output_dir:
         return
 

@@ -8,6 +8,7 @@ from ...core import session
 from .. import popups
 from ..decorators import require_active_session
 from ...core.segmentation import get_mask_centroids
+from ... import constants
 
 class MaskHighlighter:
     """Helper class to highlight labels in red under the mouse cursor."""
@@ -353,8 +354,8 @@ def _create_save_callback(layer):
     """Factory to create a save callback for a specific layer."""
     def _save_mask_data(event=None):
         out_dir = session.get_data("output_dir")
-        if out_dir and layer and layer.name: # Ensure layer name is valid
-            seg_dir = Path(out_dir) / "segmentation"
+        if out_dir and layer and layer.name:
+            seg_dir = Path(out_dir) / constants.SEGMENTATION_DIR
             seg_dir.mkdir(exist_ok=True, parents=True)
             mask_path = seg_dir / f"{layer.name}.tif"
             tifffile.imwrite(mask_path, layer.data)
