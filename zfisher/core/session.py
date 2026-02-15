@@ -32,11 +32,19 @@ def update_data(key, value):
     _SESSION_DATA[key] = value
     save_session()
 
-def set_processed_file(layer_name, path):
-    """Registers a processed file path and saves the session."""
+def set_processed_file(layer_name, path, layer_type: str, metadata: dict = None):
+    """Registers a processed file path and its type, then saves the session."""
     if "processed_files" not in _SESSION_DATA:
         _SESSION_DATA["processed_files"] = {}
-    _SESSION_DATA["processed_files"][layer_name] = str(path)
+    
+    file_info = {
+        'path': str(path),
+        'type': layer_type, # e.g., 'points', 'labels', 'image', 'vectors', 'report'
+    }
+    if metadata:
+        file_info.update(metadata)
+
+    _SESSION_DATA["processed_files"][layer_name] = file_info
     save_session()
 
 def clear_session():

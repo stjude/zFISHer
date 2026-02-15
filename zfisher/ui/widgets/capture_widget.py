@@ -26,7 +26,7 @@ class ArrowDrawer:
                 seg_dir.mkdir(exist_ok=True, parents=True)
                 arrows_path = seg_dir / f"{self.arrows_layer.name}.npy"
                 np.save(arrows_path, self.arrows_layer.data)
-                session.set_processed_file(self.arrows_layer.name, str(arrows_path))
+                session.set_processed_file(self.arrows_layer.name, str(arrows_path), layer_type='vectors')
         return _save_arrows_data
 
     def _get_or_create_layer(self):

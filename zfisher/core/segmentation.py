@@ -127,6 +127,35 @@ def segment_nuclei_classical(image_data, progress_callback=None):
     if progress_callback: progress_callback(100, "Done.")
     return labels, centroids
 
+def _detect_spots_local_maxima(image_data, min_distance, threshold_rel, sigma):
+    """Finds spots using the local maxima method."""
+    if sigma > 0:
+        image_data = gaussian(image_data, sigma=sigma, preserve_range=True)
+    
+    return peak_local_max(
+        image_data,
+        min_distance=min_distance,
+        threshold_rel=threshold_rel,
+        exclude_border=False
+    )
+
+def _detect_spots_log(image_data, threshold_rel, sigma):
+    """Finds spots using the Laplacian of Gaussian method."""
+    s = sigma if sigma > 0 else 1.0
+    abs_threshold = threshold_rel * np.max(image_data)
+    
+    blobs = blob_log(
+        image_data,
+        min_sigma=s,
+        max_sigma=s * 1.5,
+        num_sigma=2,
+        threshold=abs_threshold
+    )
+    
+    if len(blobs) > 0:
+        return blobs[:, :3].astype(int)
+    return np.empty((0, 3))
+
 def detect_spots_3d(image_data, min_distance=2, threshold_rel=0.05, sigma=0.0, method="Local Maxima"):
     """
     Detects diffraction-limited spots (puncta) in a 3D image.
@@ -137,46 +166,35 @@ def detect_spots_3d(image_data, min_distance=2, threshold_rel=0.05, sigma=0.0, m
         threshold_rel: Relative intensity threshold (0.0 to 1.0)
         sigma: Standard deviation for Gaussian kernel (smoothing). 0 to disable.
         method: "Local Maxima" (fast) or "Laplacian of Gaussian" (robust but slower).
-        
+
     Returns:
         coords: (N, 3) array of (Z, Y, X) coordinates
     """
-    coords = np.empty((0, 3))
-    
     if method == "Local Maxima":
-        # Smooth image to enhance spots of expected size and reduce noise
-        if sigma > 0:
-            image_data = gaussian(image_data, sigma=sigma, preserve_range=True)
-
-        # Find peaks in the image
-        coords = peak_local_max(
-            image_data, 
-            min_distance=min_distance, 
-            threshold_rel=threshold_rel,
-            exclude_border=False
-        )
-        
+        return _detect_spots_local_maxima(image_data, min_distance, threshold_rel, sigma)
     elif method == "Laplacian of Gaussian":
-        # LoG requires a sigma range. If sigma is 0 (off), we default to 1.0.
-        s = sigma if sigma > 0 else 1.0
+        return _detect_spots_log(image_data, threshold_rel, sigma)
+    else:
+        raise ValueError(f"Unknown spot detection method: {method}")
+
+def merge_puncta(existing_coords, new_coords):
+    """
+    Combines new puncta coordinates with existing ones and removes duplicates.
+    
+    Args:
+        existing_coords (np.ndarray): Array of existing (N, D) coordinates.
+        new_coords (np.ndarray): Array of new (M, D) coordinates to add.
         
-        # blob_log uses absolute threshold. We estimate it from the relative threshold.
-        # Note: This is an approximation.
-        abs_threshold = threshold_rel * np.max(image_data)
+    Returns:
+        np.ndarray: A new array of unique combined coordinates.
+    """
+    if new_coords is None or len(new_coords) == 0:
+        return existing_coords
+    if existing_coords is None or len(existing_coords) == 0:
+        return new_coords
         
-        blobs = blob_log(
-            image_data,
-            min_sigma=s,
-            max_sigma=s * 1.5, # Small range to target specific spot size
-            num_sigma=2,
-            threshold=abs_threshold
-        )
-        
-        if len(blobs) > 0:
-            # blob_log returns (z, y, x, sigma), we only need coordinates
-            coords = blobs[:, :3].astype(int)
-            
-    return coords
+    combined = np.vstack((existing_coords, new_coords))
+    return np.unique(combined, axis=0)
 
 def match_nuclei_labels(mask1, mask2, threshold=20, progress_callback=None):
     """

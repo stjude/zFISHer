@@ -4,7 +4,7 @@ from magicgui import magicgui
 
 import zfisher.core.session as session
 from .. import popups
-from ..decorators import require_active_session, error_handler
+from ..decorators import require_active_session
 from zfisher.core.report import calculate_distances, export_report
 
 @magicgui(
@@ -12,7 +12,6 @@ from zfisher.core.report import calculate_distances, export_report
     output_filename={"label": "Filename (.xlsx)", "value": "puncta_distances.xlsx"}
 )
 @require_active_session("Please start or load a session before calculating distances.")
-@error_handler("Distance Calculation Failed")
 def distance_widget(output_filename: str = "puncta_distances.xlsx"):
     """Calculates nearest neighbor distances between all puncta layers."""
     viewer = napari.current_viewer()
@@ -20,22 +19,22 @@ def distance_widget(output_filename: str = "puncta_distances.xlsx"):
     points_layers = [l for l in viewer.layers if isinstance(l, napari.layers.Points)]
     
     if len(points_layers) < 2:
-        raise ValueError("Need at least 2 points layers to calculate distances.")
+        viewer.status = "Need at least 2 points layers."
+        print("Error: Not enough points layers found.")
+        return
 
-    with popups.ProgressDialog(viewer.window._qt_window, "Calculating Distances...") as dialog:
-        viewer.status = "Calculating distances..."
-        dialog.update_progress(10, "Extracting points data...")
+    viewer.status = "Calculating distances..."
+    dialog = popups.ProgressDialog(viewer.window._qt_window, "Calculating Distances...")
+    
+    try:
         points_data = [{'name': l.name, 'data': l.data, 'scale': l.scale} for l in points_layers]
-
-        dialog.update_progress(30, "Calculating nearest neighbors...")
         df = calculate_distances(points_data)
                     
         if df.empty:
             viewer.status = "No distances calculated."
             return
             
-        dialog.update_progress(70, "Exporting report...")
-        save_path = Path(session.get_data("output_dir", default=Path.home())) / output_filename
+        save_path = Path(session.get_data("output_dir", Path.home())) / output_filename
             
         final_path = export_report(
             df, 
@@ -45,13 +44,25 @@ def distance_widget(output_filename: str = "puncta_distances.xlsx"):
             output_dir=session.get_data("output_dir")
         )
         
+        print(f"Saved distances to {final_path}")
+        viewer.status = f"Exported: {final_path.name}"
+        
         if session.get_data("output_dir"):
-             session.set_processed_file("Distance_Report", str(final_path))
+             session.set_processed_file("Distance_Report", str(final_path), layer_type='report')
         
         popups.show_info_popup(
             viewer.window._qt_window,
             "Export Complete",
             f"Analysis exported successfully.\n\nFile: {final_path.name}\nPath: {final_path}"
         )
-        viewer.status = f"Exported: {final_path.name}"
-        dialog.update_progress(100, "Done.")
+                 
+    except Exception as e:
+        print(f"Export failed: {e}")
+        viewer.status = "Export failed (check console)."
+        popups.show_error_popup(
+            viewer.window._qt_window,
+            "Export Failed",
+            f"An error occurred during export.\n\nError: {e}"
+        )
+    finally:
+        dialog.close()

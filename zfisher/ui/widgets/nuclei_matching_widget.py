@@ -61,7 +61,7 @@ def nuclei_matching_widget(
                 # Save mask
                 mask_save_path = seg_dir / f"{layer_name}.tif"
                 tifffile.imwrite(mask_save_path, merged_mask)
-                session.set_processed_file(layer_name, str(mask_save_path))
+                session.set_processed_file(layer_name, str(mask_save_path), layer_type='labels', metadata={'subtype': 'consensus_mask'})
                 print(f"Saved consensus mask to {mask_save_path}")
 
                 # Save IDs/points
@@ -74,7 +74,7 @@ def nuclei_matching_widget(
                     structured_pts = np.array([(p['coord'], p['label']) for p in pts1], dtype=dtype)
                     
                     np.save(ids_save_path, structured_pts)
-                    session.set_processed_file(ids_layer_name, str(ids_save_path))
+                    session.set_processed_file(ids_layer_name, str(ids_save_path), layer_type='points', metadata={'subtype': 'structured_ids'})
                     print(f"Saved consensus IDs to {ids_save_path}")
 
             except Exception as e:

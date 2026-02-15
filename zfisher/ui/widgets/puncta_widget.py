@@ -5,7 +5,7 @@ from magicgui import magicgui, widgets
 import zfisher.core.session as session
 from .. import popups
 from ..decorators import require_active_session, error_handler
-from zfisher.core.segmentation import detect_spots_3d
+from zfisher.core.segmentation import detect_spots_3d, merge_puncta
 
 @magicgui(
     call_button="Detect Puncta",
@@ -41,13 +41,7 @@ def puncta_widget(
         
         if layer_name in viewer.layers:
             pts_layer = viewer.layers[layer_name]
-            if len(coords) > 0:
-                if len(pts_layer.data) > 0:
-                    combined = np.vstack((pts_layer.data, coords))
-                    pts_layer.data = np.unique(combined, axis=0)
-                else:
-                    pts_layer.data = coords
-            
+            pts_layer.data = merge_puncta(pts_layer.data, coords)
             pts_layer.properties = {'id': np.arange(len(pts_layer.data)) + 1}
             pts_layer.text = {'string': '{id}', 'size': 8, 'color': 'white', 'translation': np.array([0, 5, 5])}
         else:

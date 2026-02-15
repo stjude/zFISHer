@@ -7,7 +7,7 @@ from zfisher.core.registration import (
     calculate_deformable_transform,
     apply_deformable_transform
 )
-from zfisher.core.session import set_processed_file, save_session
+from zfisher.core.session import set_processed_file
 
 def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, apply_warp=True):
     """
@@ -59,8 +59,8 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
                 out_name_r2 = output_dir / f"{r2_name_prefix}_R2_{channel_name}.tif"
                 tifffile.imwrite(out_name_r1, r1_data)
                 tifffile.imwrite(out_name_r2, final_r2)
-                set_processed_file(f"Aligned R1 - {channel_name}", str(out_name_r1))
-                set_processed_file(f"{r2_name_prefix} R2 - {channel_name}", str(out_name_r2))
+                set_processed_file(f"Aligned R1 - {channel_name}", str(out_name_r1), layer_type='labels' if is_label else 'image')
+                set_processed_file(f"{r2_name_prefix} R2 - {channel_name}", str(out_name_r2), layer_type='labels' if is_label else 'image')
             except OSError as e:
                 print(f"Error saving {channel_name}: {e}. Check disk space.")
             

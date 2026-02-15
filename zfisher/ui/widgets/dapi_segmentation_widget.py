@@ -54,7 +54,7 @@ def dapi_segmentation_widget(
                 if out_dir:
                     mask_path = seg_dir / f"{layer.name}_masks.tif"
                     tifffile.imwrite(mask_path, masks)
-                    session.set_processed_file(f"{layer.name}_masks", str(mask_path))
+                    session.set_processed_file(f"{layer.name}_masks", str(mask_path), layer_type='labels', metadata={'subtype': 'mask'})
                 
             if centroids is not None:
                 ids = np.arange(len(centroids)) + 1
@@ -71,7 +71,7 @@ def dapi_segmentation_widget(
                 if out_dir:
                     cent_path = seg_dir / f"{layer.name}_centroids.npy"
                     np.save(cent_path, centroids)
-                    session.set_processed_file(f"{layer.name}_centroids", str(cent_path))
+                    session.set_processed_file(f"{layer.name}_centroids", str(cent_path), layer_type='points', metadata={'subtype': 'centroids'})
         
         dialog.update_progress(100, "Complete.")
         viewer.status = "Segmentation complete."

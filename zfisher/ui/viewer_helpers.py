@@ -76,68 +76,24 @@ def add_image_session_to_viewer(viewer: napari.Viewer, image_session, prefix: st
     
     update_scale_text()
 
-def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, default_scale: tuple, progress_callback=None):
-    """
-    Loads processed files (masks, points, etc.) from a session into the viewer.
-    """
-    num_files = len(processed_files)
-    if num_files == 0:
-        return
-
-    for i, (name, path_str) in enumerate(processed_files.items()):
-        if progress_callback:
-            progress = int(((i + 1) / num_files) * 100)
-            progress_callback(progress, f"Loading: {name}")
-
-        path = Path(path_str)
-        if not path.exists():
-            print(f"Warning: File not found for layer '{name}': {path_str}")
-            continue
-
-        try:
-            if path.suffix == '.npy':
-                _load_npy_layer(viewer, name, path, default_scale)
-            elif path.suffix in ['.tif', '.tiff']:
-                _load_tif_layer(viewer, name, path, default_scale)
-            print(f"Restored layer: {name}")
-        except Exception as e:
-            print(f"Error restoring layer '{name}': {e}")
-
-def _load_npy_layer(viewer: napari.Viewer, name: str, path: Path, scale: tuple):
-    """Helper to load a .npy file as a napari layer."""
+def _load_points_layer(viewer, name, path, scale, file_info):
     data = np.load(path, allow_pickle=True)
+    subtype = file_info.get('subtype')
 
-    # Handle structured arrays (from nuclei matching IDs)
-    if data.dtype.names:
+    if subtype == 'structured_ids':
         coords = np.vstack(data['coord'])
         properties = {p_name: data[p_name] for p_name in data.dtype.names if p_name != 'coord'}
-        
-        if "consensus_nuclei_masks_ids" in name.lower():
-            text_params = {
-                'string': '{label}', 'size': 10, 'color': '#40b5d8',
-                'translation': np.array([0, -5, 0])
-            }
-            viewer.add_points(
-                coords, name=name, size=0, scale=scale, properties=properties,
-                text=text_params, blending='translucent_no_depth'
-            )
-        else:
-            viewer.add_points(coords, name=name, scale=scale, properties=properties)
-        return
-
-    # Handle simple numpy arrays
-    if name == "Arrows":
-        vector_params = {
-            'data': data, 'name': name, 'opacity': 1.0, 'edge_width': 1,
-            'length': 1, 'edge_color': 'white',
+        text_params = {
+            'string': '{label}', 'size': 10, 'color': '#40b5d8',
+            'translation': np.array([0, -5, 0])
         }
-        if parse_version(napari.__version__) >= parse_version("0.7.0"):
-            vector_params['head_width'] = 4
-            vector_params['head_length'] = 6
-        viewer.add_vectors(**vector_params)
-    elif "centroids" in name.lower():
+        viewer.add_points(
+            coords, name=name, size=0, scale=scale, properties=properties,
+            text=text_params, blending='translucent_no_depth'
+        )
+    elif subtype == 'centroids':
         viewer.add_points(data, name=name, size=5, face_color='orange', scale=scale)
-    else: # Assume it's a puncta layer
+    elif subtype == 'puncta':
         properties = {'id': np.arange(len(data)) + 1}
         text_params = {
             'string': '{id}', 'size': 8, 'color': 'white',
@@ -147,16 +103,78 @@ def _load_npy_layer(viewer: napari.Viewer, name: str, path: Path, scale: tuple):
             data, name=name, size=3, face_color='yellow', scale=scale,
             properties=properties, text=text_params
         )
+    else: # Generic points
+        viewer.add_points(data, name=name, scale=scale)
 
-def _load_tif_layer(viewer: napari.Viewer, name: str, path: Path, scale: tuple):
-    """Helper to load a .tif file as a napari layer."""
+def _load_labels_layer(viewer, name, path, scale, file_info):
     data = tifffile.imread(path)
-    if "masks" in name.lower():
-        viewer.add_labels(data, name=name, opacity=0.3, visible=False, scale=scale)
-    else: # Assume it's a warped/aligned image
-        c_map = 'gray'
-        for ch, color in CHANNEL_COLORS.items():
-            if ch.upper() in name.upper():
-                c_map = color
-                break
-        viewer.add_image(data, name=name, blending='additive', scale=scale, colormap=c_map)
+    viewer.add_labels(data, name=name, opacity=0.3, visible=False, scale=scale)
+
+def _load_image_layer(viewer, name, path, scale, file_info):
+    data = tifffile.imread(path)
+    c_map = 'gray'
+    for ch, color in CHANNEL_COLORS.items():
+        if ch.upper() in name.upper():
+            c_map = color
+            break
+    viewer.add_image(data, name=name, blending='additive', scale=scale, colormap=c_map)
+
+def _load_vectors_layer(viewer, name, path, scale, file_info):
+    data = np.load(path, allow_pickle=True)
+    vector_params = {
+        'data': data, 'name': name, 'opacity': 1.0, 'edge_width': 1,
+        'length': 1, 'edge_color': 'white',
+    }
+    if parse_version(napari.__version__) >= parse_version("0.7.0"):
+        vector_params['head_width'] = 4
+        vector_params['head_length'] = 6
+    viewer.add_vectors(**vector_params)
+
+def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, default_scale: tuple, progress_callback=None):
+    """
+    Loads processed files (masks, points, etc.) from a session into the viewer.
+    """
+    num_files = len(processed_files)
+    if num_files == 0:
+        return
+
+    for i, (name, file_info) in enumerate(processed_files.items()):
+        if progress_callback:
+            progress = int(((i + 1) / num_files) * 100)
+            progress_callback(progress, f"Loading: {name}")
+
+        # Handle old format for backward compatibility, or just ignore non-dict values
+        if not isinstance(file_info, dict):
+            print(f"Skipping layer '{name}' with old/invalid format in session file.")
+            continue
+
+        path_str = file_info.get('path')
+        layer_type = file_info.get('type')
+
+        if layer_type == 'report': # Don't load reports as layers
+            continue
+
+        if not path_str or not layer_type:
+            print(f"Skipping layer '{name}' due to missing path or type information.")
+            continue
+
+        path = Path(path_str)
+        if not path.exists():
+            print(f"Warning: File not found for layer '{name}': {path_str}")
+            continue
+
+        try:
+            if layer_type == 'points':
+                _load_points_layer(viewer, name, path, default_scale, file_info)
+            elif layer_type == 'labels':
+                _load_labels_layer(viewer, name, path, default_scale, file_info)
+            elif layer_type == 'image':
+                _load_image_layer(viewer, name, path, default_scale, file_info)
+            elif layer_type == 'vectors':
+                _load_vectors_layer(viewer, name, path, default_scale, file_info)
+            else:
+                print(f"Warning: Unknown layer type '{layer_type}' for layer '{name}'.")
+
+            print(f"Restored layer: {name}")
+        except Exception as e:
+            print(f"Error restoring layer '{name}': {e}")
