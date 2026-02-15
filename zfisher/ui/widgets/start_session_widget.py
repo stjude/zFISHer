@@ -2,6 +2,7 @@ from magicgui.widgets import Container, PushButton, FileEdit, Label
 from pathlib import Path
 import napari
 import os
+import numpy as np
 
 from ...core import session
 from .. import popups, viewer_helpers
@@ -169,11 +170,23 @@ Please choose a different output directory, or use the 'Load Session' button to 
                 # --- Restore Processed Layers ---
                 processed_files = session.get_data("processed_files", default={})
                 if processed_files:
-                    scale = next((layer.scale for layer in self._viewer.layers if isinstance(layer, napari.layers.Image)), (1, 1, 1))
+                    # Find a raw data layer to get the canonical scale.
+                    # A raw layer does not have "Aligned" or "Warped" in its name.
+                    raw_img_layer = next((
+                        l for l in self._viewer.layers 
+                        if isinstance(l, napari.layers.Image) and 
+                        "Aligned" not in l.name and "Warped" not in l.name
+                    ), None)
+                    
+                    scale = raw_img_layer.scale if raw_img_layer else (1.0, 1.0, 1.0)
+                    
+                    # Sanitize the scale one last time to be safe against zeros or NaNs
+                    sanitized_scale = tuple(s if isinstance(s, (int, float)) and s > 0 and not np.isnan(s) else 1.0 for s in scale)
+
                     def processed_progress(p, text):
                         scaled_progress = 70 + int(p * 0.25)
                         dialog.update_progress(scaled_progress, text)
-                    viewer_helpers.restore_processed_layers(self._viewer, processed_files, scale, progress_callback=processed_progress)
+                    viewer_helpers.restore_processed_layers(self._viewer, processed_files, sanitized_scale, progress_callback=processed_progress)
                 
                 dialog.update_progress(95, "Finalizing...")
                 self._viewer.status = "Session Restored."

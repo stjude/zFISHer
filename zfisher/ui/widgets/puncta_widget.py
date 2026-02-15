@@ -1,11 +1,12 @@
 import napari
 import numpy as np
 from magicgui import magicgui, widgets
+from pathlib import Path
 
 from ...core import session
-from .. import popups
+from .. import popups, viewer_helpers
 from ..decorators import require_active_session, error_handler
-from ...core.segmentation import detect_spots_3d, merge_puncta
+from ...core.segmentation import detect_spots_3d
 from ... import constants
 
 @magicgui(
@@ -49,39 +50,11 @@ def puncta_widget(
             use_tophat=use_tophat,
             tophat_radius=tophat_radius
         )
+        
+        # Pass the results to the UI helper to handle layer creation/update
+        viewer_helpers.add_or_update_puncta_layer(viewer, image_layer, coords)
 
-        layer_name = f"{image_layer.name}{constants.PUNCTA_SUFFIX}"
-
-        if layer_name in viewer.layers:
-            pts_layer = viewer.layers[layer_name]
-            # This assignment triggers the event listener in events.py to save the data
-            pts_layer.data = merge_puncta(pts_layer.data, coords) 
-            pts_layer.properties = {'id': np.arange(len(pts_layer.data)) + 1}
-            pts_layer.text = {'string': '{id}', 'size': 8, 'color': 'white', 'translation': np.array([0, 5, 5])}
-        else:
-            properties = {'id': np.arange(len(coords)) + 1}
-            text_params = {'string': '{id}', 'size': 8, 'color': 'white', 'translation': np.array([0, 5, 5])}
-
-            pts_layer = viewer.add_points(
-                coords,
-                name=layer_name,
-                size=3,
-                face_color="yellow",
-                scale=image_layer.scale,
-                properties=properties,
-                text=text_params
-            )
-            # The event handler in events.py attaches a save-on-edit listener, but it
-            # runs on a timer, creating a race condition for the *initial* save.
-            # We must perform the initial save explicitly here.
-            out_dir = session.get_data("output_dir")
-            if out_dir:
-                seg_dir = Path(out_dir) / constants.SEGMENTATION_DIR
-                puncta_path = seg_dir / f"{layer_name}.npy"
-                np.save(puncta_path, coords)
-                session.set_processed_file(layer_name, str(puncta_path), layer_type='points', metadata={'subtype': 'puncta'})
-
-        msg = f"Found {len(coords)} spots."
+        msg = f"Found {len(coords) if coords is not None else 0} spots."
         print(msg)
         viewer.status = msg
 

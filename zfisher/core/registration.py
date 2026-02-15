@@ -108,7 +108,7 @@ def _calculate_rmsd(src_points, dst_points, model, inliers):
 
     inlier_src = src_points[inliers]
     inlier_dst = dst_points[inliers]
-    transformed_src = model.predict(inlier_src)
+    transformed_src = model(inlier_src)
     squared_distances = np.sum((transformed_src - inlier_dst) ** 2, axis=1)
     return np.sqrt(np.mean(squared_distances))
 
@@ -133,7 +133,7 @@ def _refine_shift_with_ransac(src_points, dst_points, residual_threshold=constan
         The estimated model and a boolean mask of the inliers, or (None, None).
     """
     if len(src_points) < 4:
-        return None
+        return None, None
 
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="No inliers found")

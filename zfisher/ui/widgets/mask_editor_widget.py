@@ -5,9 +5,9 @@ import tifffile
 from pathlib import Path
 
 from ...core import session
-from .. import popups
+from .. import popups, viewer_helpers
 from ..decorators import require_active_session
-from ...core.segmentation import get_mask_centroids
+from ...core import segmentation
 from ... import constants
 
 class MaskHighlighter:
@@ -136,16 +136,13 @@ def mask_editor_widget(
         viewer.status = "Source and Target IDs must be different."
         return
         
-    data = mask_layer.data
-    count = np.sum(data == source_id)
+    count = np.sum(mask_layer.data == source_id)
     
     if count == 0:
         viewer.status = f"ID {source_id} not found."
         return
         
-    new_data = data.copy()
-    new_data[new_data == source_id] = target_id
-    mask_layer.data = new_data
+    mask_layer.data = segmentation.merge_labels(mask_layer.data, source_id, target_id)
     
     viewer.status = f"Merged ID {source_id} into {target_id} ({count} pixels)."
 
@@ -164,8 +161,7 @@ def delete_mask_under_mouse(viewer):
             _highlighter.reset_highlight()
 
             # Now, delete the label from the original data array.
-            layer.data[layer.data == id_to_delete] = 0
-            layer.refresh() # Force a redraw
+            layer.data = segmentation.delete_label(layer.data, id_to_delete)
             
             viewer.status = f"Deleted Nucleus ID {id_to_delete}"
             return
@@ -180,8 +176,7 @@ def delete_mask_under_mouse(viewer):
             world=True
         )
         if val is not None and val > 0:
-            layer.data[layer.data == val] = 0
-            layer.refresh()
+            layer.data = segmentation.delete_label(layer.data, val)
             viewer.status = f"Deleted Nucleus ID {val}"
 
 # Add Tools to Mask Editor
@@ -275,8 +270,7 @@ def _on_extrude():
         viewer.status = f"Label {label_id} not found on current slice {z_idx}."
         return
         
-    layer.data[:, mask] = label_id
-    layer.refresh()
+    layer.data = segmentation.extrude_label(layer.data, z_idx, label_id)
     viewer.status = f"Extruded ID {label_id} through all Z slices."
 
 @require_active_session("Please start or load a session before editing masks.")
@@ -285,11 +279,8 @@ def _on_delete():
     layer = mask_editor_widget.mask_layer.value
     src = mask_editor_widget.source_id.value
     if layer and src > 0:
-        data = layer.data
-        if np.sum(data == src) > 0:
-            new_data = data.copy()
-            new_data[new_data == src] = 0
-            layer.data = new_data
+        if np.sum(layer.data == src) > 0:
+            layer.data = segmentation.delete_label(layer.data, src)
             viewer.status = f"Deleted ID {src}."
         else:
             viewer.status = f"ID {src} not found."
@@ -312,28 +303,7 @@ def _on_hover_mode(value: bool):
 def _on_refresh_ids():
     viewer = napari.current_viewer()
     layer = mask_editor_widget.mask_layer.value
-    if not layer: return
-    
-    pts_data = get_mask_centroids(layer.data)
-    
-    name = f"{layer.name}_IDs"
-    coords = np.array([p['coord'] for p in pts_data]) if pts_data else np.empty((0, 3))
-    labels = np.array([p['label'] for p in pts_data]) if pts_data else np.empty(0)
-    
-    if name in viewer.layers:
-        viewer.layers.remove(name)
-        
-    if len(coords) > 0:
-        viewer.add_points(
-            coords,
-            name=name,
-            size=0,
-            scale=layer.scale,
-            properties={'label': labels},
-            text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
-            blending='translucent_no_depth'
-        )
-    viewer.status = f"Refreshed IDs for {layer.name}"
+    viewer_helpers.add_or_update_label_ids(viewer, layer)
 
 # Connect signals after defining functions
 paint_chk.changed.connect(_on_paint)

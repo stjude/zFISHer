@@ -428,3 +428,80 @@ def get_mask_centroids(mask):
     """
     props = regionprops(mask)
     return [{'coord': p.centroid, 'label': p.label} for p in props]
+
+def merge_labels(mask_data, source_id, target_id):
+    """
+    Merges one label ID into another within a mask array.
+
+    Parameters
+    ----------
+    mask_data : np.ndarray
+        The label mask data.
+    source_id : int
+        The label ID to be replaced.
+    target_id : int
+        The label ID to replace with.
+
+    Returns
+    -------
+    np.ndarray
+        A new mask array with the labels merged.
+    """
+    if source_id == target_id:
+        return mask_data
+    new_data = mask_data.copy()
+    new_data[new_data == source_id] = target_id
+    return new_data
+
+def delete_label(mask_data, label_id):
+    """
+    Deletes a label from a mask by setting its pixels to 0.
+
+    Parameters
+    ----------
+    mask_data : np.ndarray
+        The label mask data.
+    label_id : int
+        The ID of the label to delete.
+
+    Returns
+    -------
+    np.ndarray
+        A new mask array with the label removed.
+    """
+    if label_id == 0:
+        return mask_data
+    new_data = mask_data.copy()
+    new_data[new_data == label_id] = 0
+    return new_data
+
+def extrude_label(mask_data, z_index, label_id):
+    """
+    Extrudes a 2D label mask on a given Z-slice through all other Z-slices.
+
+    Parameters
+    ----------
+    mask_data : np.ndarray
+        The 3D label mask data.
+    z_index : int
+        The index of the Z-slice containing the 2D mask to extrude.
+    label_id : int
+        The ID of the label to extrude.
+
+    Returns
+    -------
+    np.ndarray
+        A new 3D mask array with the label extruded.
+    """
+    if mask_data.ndim != 3 or label_id == 0:
+        return mask_data
+    
+    current_slice = mask_data[z_index]
+    mask_2d = (current_slice == label_id)
+    
+    if not np.any(mask_2d):
+        return mask_data
+        
+    new_data = mask_data.copy()
+    new_data[:, mask_2d] = label_id
+    return new_data

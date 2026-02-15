@@ -129,7 +129,12 @@ def load_nd2_session(path: str) -> FISHSession:
         img = np.transpose(img, current_indices)
 
         # Voxel size handling
-        v_size = (f.voxel_size().z, f.voxel_size().y, f.voxel_size().x)
+        v_size_raw = (f.voxel_size().z, f.voxel_size().y, f.voxel_size().x)
+        # Sanitize voxel sizes: replace None, zero, negative, or NaN with 1.0
+        v_size = tuple(
+            s if isinstance(s, (int, float)) and not np.isnan(s) and s > 0 else 1.0 
+            for s in v_size_raw
+        )
         try:
             ch_names = [c.channel.name for c in f.metadata.channels]
         except (AttributeError, TypeError):

@@ -1,11 +1,10 @@
 import napari
 import numpy as np
-import tifffile
 from pathlib import Path
 from magicgui import magicgui
 
 from ...core import session
-from .. import popups
+from .. import popups, viewer_helpers
 from ..decorators import require_active_session, error_handler
 from ...core.segmentation import (
     match_nuclei_labels,
@@ -40,68 +39,13 @@ def nuclei_matching_widget(
         
     with popups.ProgressDialog(viewer.window._qt_window, "Matching Nuclei...") as dialog:
         viewer.status = "Matching nuclei..."
-        output_dir = session.get_data("output_dir")
-        # Run matching
-        new_mask2, pts1, pts2 = match_nuclei_labels(r1_mask_layer.data, r2_mask_layer.data, threshold=threshold)
         
-        # Merge into a single consensus mask
+        # 1. Call core segmentation functions
+        new_mask2, pts1, pts2 = match_nuclei_labels(r1_mask_layer.data, r2_mask_layer.data, threshold=threshold)
         merged_mask = merge_labeled_masks(r1_mask_layer.data, new_mask2)
         
-        layer_name = constants.CONSENSUS_MASKS_NAME
+        # 2. Pass results to UI helper to handle layer creation and saving
+        viewer_helpers.add_consensus_nuclei_to_viewer(viewer, r1_mask_layer, merged_mask, pts1)
         
-        # Add merged layer
-        viewer.add_labels(
-            merged_mask,
-            name=layer_name,
-            scale=r1_mask_layer.scale,
-            opacity=0.5
-        )
-        
-        # Save to disk
-        if output_dir:
-            try:
-                seg_dir = Path(output_dir) / constants.SEGMENTATION_DIR
-                seg_dir.mkdir(exist_ok=True, parents=True)
-                
-                # Save mask
-                mask_save_path = seg_dir / f"{layer_name}.tif"
-                tifffile.imwrite(mask_save_path, merged_mask)
-                session.set_processed_file(layer_name, str(mask_save_path), layer_type='labels', metadata={'subtype': 'consensus_mask'})
-                print(f"Saved consensus mask to {mask_save_path}")
-
-                # Save IDs/points
-                if pts1:
-                    ids_layer_name = f"{layer_name}{constants.CONSENSUS_IDS_SUFFIX}"
-                    ids_save_path = seg_dir / f"{ids_layer_name}.npy"
-                    
-                    # Convert to structured array
-                    dtype = [('coord', 'f4', 3), ('label', 'i4')]
-                    structured_pts = np.array([(p['coord'], p['label']) for p in pts1], dtype=dtype)
-                    
-                    np.save(ids_save_path, structured_pts)
-                    session.set_processed_file(ids_layer_name, str(ids_save_path), layer_type='points', metadata={'subtype': 'structured_ids'})
-                    print(f"Saved consensus IDs to {ids_save_path}")
-
-            except Exception as e:
-                print(f"Failed to save consensus data: {e}")
-        
-        # Helper to add ID labels
-        def add_id_points(pts_data, name, scale):
-            if not pts_data: return
-            coords = np.array([p['coord'] for p in pts_data])
-            labels = np.array([p['label'] for p in pts_data])
-            
-            viewer.add_points(
-                coords,
-                name=name,
-                size=0, # Invisible points, just text
-                scale=scale,
-                properties={'label': labels},
-                text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
-                blending='translucent_no_depth'
-            )
-
-        add_id_points(pts1, f"{layer_name}{constants.CONSENSUS_IDS_SUFFIX}", r1_mask_layer.scale)
-        
-        viewer.status = f"Matched {len(pts1)} nuclei."
+        viewer.status = f"Matched {len(pts1) if pts1 else 0} nuclei."
         dialog.update_progress(100, "Done.")
