@@ -48,6 +48,32 @@ def clear_session():
         "processed_files": {}
     })
 
+def initialize_new_session(output_dir, r1_path, r2_path):
+    """
+    Clears the current session, sets up a new one, and creates directories.
+    Returns True on success, False if a session already exists in the directory.
+    """
+    output_dir = Path(output_dir)
+    session_file = output_dir / "zfisher_session.json"
+    if session_file.exists():
+        return False
+
+    # Create all necessary subdirectories
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "segmentation").mkdir(exist_ok=True)
+    (output_dir / "aligned").mkdir(exist_ok=True)
+    (output_dir / "captures").mkdir(exist_ok=True)
+    (output_dir / "input").mkdir(exist_ok=True)
+    (output_dir / "reports").mkdir(exist_ok=True)
+
+    # Reset and update session state
+    clear_session()
+    update_data("output_dir", str(output_dir))
+    update_data("r1_path", str(r1_path))
+    update_data("r2_path", str(r2_path))
+    save_session()
+    return True
+
 def save_session():
     """Saves the current session state to JSON."""
     out_dir = _SESSION_DATA.get("output_dir")

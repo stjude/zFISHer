@@ -71,8 +71,7 @@ class StartSessionWidget(Container):
         round2_path = self._round2_path.value
         output_dir = self._output_dir.value
 
-        session_file = output_dir / "zfisher_session.json"
-        if session_file.exists():
+        if not session.initialize_new_session(output_dir, round1_path, round2_path):
             popups.show_error_popup(
                 self._viewer.window._qt_window,
                 "Session Already Exists",
@@ -84,17 +83,7 @@ Please choose a different output directory, or use the 'Load Session' button to 
             )
             return
 
-        if not output_dir.exists():
-            output_dir.mkdir(parents=True)
-        (output_dir / "segmentation").mkdir(exist_ok=True)
-        (output_dir / "aligned").mkdir(exist_ok=True)
-
         self._viewer.layers.clear()
-        session.clear_session()
-        session.update_data("output_dir", str(output_dir))
-        session.update_data("r1_path", str(round1_path))
-        session.update_data("r2_path", str(round2_path))
-        session.save_session()
 
         with popups.ProgressDialog(self._viewer.window._qt_window, title="Loading Data...") as dialog:
             load_raw_data_into_viewer(
