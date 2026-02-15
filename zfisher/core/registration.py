@@ -1,133 +1,59 @@
 import numpy as np
-import logging
-from skimage.measure import ransac, regionprops
-from skimage.transform import AffineTransform, rescale, resize
+from skimage.measure import ransac
+from skimage.transform import AffineTransform
 from scipy.spatial import cKDTree
 from scipy import ndimage as ndi
 import SimpleITK as sitk
 import warnings
-from skimage.filters import gaussian, threshold_otsu
-from skimage.segmentation import watershed
-from skimage.feature import peak_local_max
-from skimage.morphology import remove_small_objects
-from cellpose import models, core
 
-# Set logging to see the progress bar in terminal
-logging.basicConfig(level=logging.INFO)
+def _find_rough_shift_vector_voting(fixed_points, moving_points, n_limit=2000, bin_size=5.0):
+    """Finds a rough alignment shift using brute-force vector voting."""
+    fp = fixed_points
+    mp = moving_points
+    
+    if len(fp) > n_limit:
+        fp = fp[np.random.choice(len(fp), n_limit, replace=False)]
+    if len(mp) > n_limit:
+        mp = mp[np.random.choice(len(mp), n_limit, replace=False)]
+        
+    if len(fp) < 1 or len(mp) < 1:
+        return np.array([0.0, 0.0, 0.0])
 
-def segment_nuclei_3d(image_data, gpu=True):
-    # 1. SETUP
-    use_gpu = core.use_gpu() if gpu else False
-    model = models.CellposeModel(gpu=use_gpu, model_type='nuclei')
+    diffs = fp[:, np.newaxis, :] - mp[np.newaxis, :, :]
+    diffs = diffs.reshape(-1, 3)
+    
+    binned_diffs = np.round(diffs / bin_size).astype(int)
+    
+    unique_bins, counts = np.unique(binned_diffs, axis=0, return_counts=True)
+    best_bin = unique_bins[np.argmax(counts)]
+    return best_bin * bin_size
 
-    # 2. SUBSAMPLE Z
-    z_step = 2
-    subsampled_data = image_data[::z_step, :, :]
+def _get_nearest_neighbor_pairs(fixed_points, moving_points, rough_shift, search_radius=100.0):
+    """Matches points based on nearest neighbors after applying a rough shift."""
+    moving_shifted = moving_points + rough_shift
     
-    # 3. DOWNSAMPLE X/Y
-    scale_factor = 0.25
-    small_data = rescale(
-        subsampled_data, 
-        (1, scale_factor, scale_factor), 
-        preserve_range=True, 
-        anti_aliasing=True
-    ).astype(np.float32) # Cellpose prefers float32
+    tree = cKDTree(fixed_points)
+    distances, indices = tree.query(moving_shifted, distance_upper_bound=search_radius)
+    
+    valid_mask = distances < float('inf')
+    src = moving_points[valid_mask]
+    dst = fixed_points[indices[valid_mask]]
+    
+    return src, dst
 
-    # 4. EVALUATE (Fixing the ValueError)
-    masks_small, flows, styles = model.eval(
-        small_data,
-        channels=[0,0],      # Grayscale DAPI
-        diameter=None,       # We already handled scaling manually
-        rescale=1.0,         # <--- CRITICAL: Prevents internal resizing
-        do_3D=True,
-        stitch_threshold=0.5,       
-        z_axis=0,
-        batch_size=16,               
-        progress=True,
-        resample=False       # <--- CRITICAL: Prevents internal resampling
-    )
+def _refine_shift_with_ransac(src_points, dst_points, residual_threshold=50, max_trials=2000):
+    """Refines the transformation using RANSAC."""
+    if len(src_points) < 4:
+        return None
 
-    # 5. SCALE CENTROIDS
-    props = regionprops(masks_small)
-    centroids = np.array([
-        [p.centroid[0] * z_step, 
-         p.centroid[1] / scale_factor, 
-         p.centroid[2] / scale_factor] 
-        for p in props
-    ])
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="No inliers found")
+        model, inliers = ransac(
+            (src_points, dst_points), AffineTransform, min_samples=4, 
+            residual_threshold=residual_threshold, max_trials=max_trials
+        )
     
-    # Resize masks back to original shape
-    masks = resize(
-        masks_small, 
-        image_data.shape, 
-        order=0, 
-        preserve_range=True, 
-        anti_aliasing=False
-    ).astype(np.uint32)
-    
-    return masks, centroids
-
-def segment_nuclei_classical(image_data, progress_callback=None):
-    """
-    Fast 3D nuclei segmentation using classical image processing.
-    Much faster than Cellpose, suitable for registration landmarks.
-    """
-    # 1. Downsample for speed
-    if progress_callback: progress_callback(0, "Downsampling...")
-    z_step = 2
-    scale_factor = 0.25
-    
-    small_data = rescale(
-        image_data[::z_step], 
-        (1, scale_factor, scale_factor), 
-        preserve_range=True,
-        anti_aliasing=False
-    )
-
-    # 2. Smooth to reduce noise
-    if progress_callback: progress_callback(20, "Smoothing...")
-    smoothed = gaussian(small_data, sigma=3)
-    
-    # 3. Threshold (Otsu)
-    if progress_callback: progress_callback(40, "Thresholding...")
-    try:
-        thresh = threshold_otsu(smoothed)
-        binary = smoothed > thresh
-        binary = remove_small_objects(binary, min_size=50)
-    except ValueError:
-        return None, None # Handle empty images
-
-    # 4. Distance Transform & Peak Finding (Separates touching nuclei)
-    if progress_callback: progress_callback(60, "Finding nuclei centers...")
-    distance = ndi.distance_transform_edt(binary)
-    # min_distance=7 corresponds to ~28 pixels in original image (7 / 0.25)
-    coords = peak_local_max(distance, min_distance=7, labels=binary)
-    
-    # 5. Extract Centroids directly from peaks
-    centroids = np.array([
-        [c[0] * z_step, c[1] / scale_factor, c[2] / scale_factor] 
-        for c in coords
-    ])
-
-    # Generate markers for watershed
-    if progress_callback: progress_callback(80, "Expanding centers (Watershed)...")
-    markers = np.zeros(distance.shape, dtype=int)
-    markers[tuple(coords.T)] = np.arange(len(coords)) + 1
-    
-    # Watershed to get labeled regions
-    labels_small = watershed(-distance, markers, mask=binary)
-    
-    # Resize labels back to original shape
-    labels = resize(
-        labels_small, 
-        image_data.shape, 
-        order=0, 
-        preserve_range=True, 
-        anti_aliasing=False
-    ).astype(np.uint32)
-    
-    if progress_callback: progress_callback(100, "Done.")
-    return labels, centroids
+    return model.translation if model else None
 
 def align_centroids_ransac(fixed_points, moving_points, max_distance=None, progress_callback=None):
     """
@@ -145,73 +71,32 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, progr
     """
     # 1. Brute-force Vector Voting to find rough shift
     if progress_callback: progress_callback(10, "Finding rough alignment...")
-    n_limit = 2000
-    fp = fixed_points
-    mp = moving_points
-    
-    if len(fp) > n_limit:
-        fp = fp[np.random.choice(len(fp), n_limit, replace=False)]
-    if len(mp) > n_limit:
-        mp = mp[np.random.choice(len(mp), n_limit, replace=False)]
-        
-    if len(fp) < 1 or len(mp) < 1:
-        return np.array([0.0, 0.0, 0.0])
-
-    diffs = fp[:, np.newaxis, :] - mp[np.newaxis, :, :]
-    diffs = diffs.reshape(-1, 3)
-    
-    bin_size = 5.0
-    binned_diffs = np.round(diffs / bin_size).astype(int)
-    
-    unique_bins, counts = np.unique(binned_diffs, axis=0, return_counts=True)
-    best_bin = unique_bins[np.argmax(counts)]
-    rough_shift = best_bin * bin_size
+    rough_shift = _find_rough_shift_vector_voting(fixed_points, moving_points)
     
     # 2. Refine using Nearest Neighbors
     if progress_callback: progress_callback(40, "Matching nearest neighbors...")
-    moving_shifted = moving_points + rough_shift
-    
-    search_radius = 100.0
-    tree = cKDTree(fixed_points)
-    distances, indices = tree.query(moving_shifted, distance_upper_bound=search_radius)
-    
-    valid_mask = distances < float('inf')
-    src = moving_points[valid_mask]
-    dst = fixed_points[indices[valid_mask]]
+    src, dst = _get_nearest_neighbor_pairs(fixed_points, moving_points, rough_shift)
     
     if len(src) < 4:
-        if progress_callback: progress_callback(100, "Done.")
+        if progress_callback: progress_callback(100, "Done (not enough matches for RANSAC).")
         return rough_shift
 
     # 3. Run RANSAC to refine the fit
     if progress_callback: progress_callback(70, "Running RANSAC to find best fit...")
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message="No inliers found")
-        model, inliers = ransac(
-            (src, dst), 
-            AffineTransform, 
-            min_samples=4, 
-            residual_threshold=50,
-            max_trials=2000
-        )
+    refined_shift = _refine_shift_with_ransac(src, dst)
     
-    if model is None:
-        if progress_callback: progress_callback(100, "Done.")
+    if refined_shift is None:
+        if progress_callback: progress_callback(100, "Done (RANSAC failed, using rough shift).")
         return rough_shift
 
-    shift = model.translation
-    
-    deviation = np.linalg.norm(shift - rough_shift)
-    if deviation > 500.0:
-        if progress_callback: progress_callback(100, "Done (reverted to rough shift).")
-        return rough_shift
-    
-    if np.any(np.isnan(shift)):
-        if progress_callback: progress_callback(100, "Done (reverted to rough shift).")
+    # Sanity checks on the refined shift
+    deviation = np.linalg.norm(refined_shift - rough_shift)
+    if deviation > 500.0 or np.any(np.isnan(refined_shift)):
+        if progress_callback: progress_callback(100, "Done (RANSAC result invalid, reverted to rough shift).")
         return rough_shift
         
     if progress_callback: progress_callback(100, "Done.")
-    return shift
+    return refined_shift
 
 def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
     """

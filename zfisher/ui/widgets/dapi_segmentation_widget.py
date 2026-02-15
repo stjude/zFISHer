@@ -7,7 +7,7 @@ from magicgui import magicgui
 import zfisher.core.session as session
 from .. import popups
 from ..decorators import require_active_session
-from zfisher.core.registration import segment_nuclei_classical
+from zfisher.core.segmentation import segment_nuclei_classical
 
 @magicgui(
     call_button="Run DAPI Mapping",

@@ -25,7 +25,8 @@ def canvas_widget(
     shift_list = session.get_data("shift")
     shift = np.array(shift_list) if shift_list else None
     
-    output_dir = Path(output_dir) / "aligned"
+    base_output_dir = session.get_data("output_dir")
+    output_dir = Path(base_output_dir) / "aligned"
     output_dir.mkdir(exist_ok=True, parents=True)
     
     if shift is None:

@@ -9,7 +9,8 @@ from qtpy.QtCore import Qt
 import zfisher.core.session as session
 from .. import popups
 from ..decorators import require_active_session
-from zfisher.core.registration import segment_nuclei_classical, align_centroids_ransac
+from zfisher.core.registration import align_centroids_ransac
+from zfisher.core.segmentation import segment_nuclei_classical
 from zfisher.core.pipeline import generate_global_canvas
 from zfisher.core.segmentation import match_nuclei_labels, merge_labeled_masks
 
@@ -44,6 +45,7 @@ def _automated_preprocessing_magic_widget(
 
     with popups.ProgressDialog(viewer.window._qt_window, "Automated Preprocessing...") as dialog:
         try:
+            output_dir = session.get_data("output_dir")
             # === STEP 1: DAPI SEGMENTATION ===
             dialog.update_progress(5, "Segmenting R1 DAPI...")
             r1_masks, r1_centroids = segment_nuclei_classical(r1_dapi_layer.data, progress_callback=lambda p, m: dialog.update_progress(5 + int(p*0.15), f"Segmenting R1: {m}"))
