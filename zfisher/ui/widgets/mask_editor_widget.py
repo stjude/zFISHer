@@ -359,7 +359,6 @@ def _create_save_callback(layer):
             mask_path = seg_dir / f"{layer.name}.tif"
             tifffile.imwrite(mask_path, layer.data)
             session.set_processed_file(layer.name, str(mask_path))
-            session.save_session()
     return _save_mask_data
 
 @mask_editor_widget.mask_layer.changed.connect

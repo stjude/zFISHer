@@ -142,7 +142,7 @@ Please choose a different output directory, or use the 'Load Session' button to 
                 )
 
             # --- Restore Processed Layers ---
-            processed_files = session.get_data("processed_files", {})
+            processed_files = session.get_data("processed_files", default={})
             if processed_files:
                 scale = next((layer.scale for layer in self._viewer.layers if isinstance(layer, napari.layers.Image)), (1, 1, 1))
                 def processed_progress(p, text):

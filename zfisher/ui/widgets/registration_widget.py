@@ -36,7 +36,6 @@ def registration_widget(
         shift = align_centroids_ransac(p1, p2, progress_callback=on_progress)
         
         session.update_data("shift", shift.tolist())
-        session.save_session()
         
         msg = f"Calculated Shift: Z={shift[0]:.2f}, Y={shift[1]:.2f}, X={shift[2]:.2f}"
         print(msg)

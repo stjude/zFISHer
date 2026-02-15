@@ -72,6 +72,5 @@ def dapi_segmentation_widget(
                     np.save(cent_path, centroids)
                     session.set_processed_file(f"{layer.name}_centroids", str(cent_path))
         
-        session.save_session()
         dialog.update_progress(100, "Complete.")
         viewer.status = "Segmentation complete."

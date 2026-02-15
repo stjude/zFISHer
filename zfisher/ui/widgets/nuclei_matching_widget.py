@@ -78,8 +78,6 @@ def nuclei_matching_widget(
                     session.set_processed_file(ids_layer_name, str(ids_save_path))
                     print(f"Saved consensus IDs to {ids_save_path}")
 
-                session.save_session()
-
             except Exception as e:
                 print(f"Failed to save consensus data: {e}")
         

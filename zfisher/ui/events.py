@@ -14,7 +14,6 @@ def attach_puncta_listener(layer, name):
             puncta_path = seg_dir / f"{name}.npy"
             np.save(puncta_path, layer.data)
             session.set_processed_file(name, str(puncta_path))
-            session.save_session()
             
     def sync_color(event=None):
         # Auto-update all points when layer color properties change

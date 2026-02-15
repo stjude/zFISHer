@@ -49,7 +49,6 @@ def distance_widget(output_filename: str = "puncta_distances.xlsx"):
         
         if session.get_data("output_dir"):
              session.set_processed_file("Distance_Report", str(final_path))
-             session.save_session()
         
         popups.show_info_popup(
             viewer.window._qt_window,

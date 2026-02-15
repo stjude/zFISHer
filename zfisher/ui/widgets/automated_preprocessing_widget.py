@@ -65,7 +65,6 @@ def _automated_preprocessing_magic_widget(
             dialog.update_progress(35, "Registering rounds...")
             shift = align_centroids_ransac(r1_centroids, r2_centroids, progress_callback=lambda p, m: dialog.update_progress(35 + int(p*0.15), f"Registering: {m}"))
             session.set_data("shift", shift.tolist())
-            session.save_session()
             viewer.status = f"Calculated Shift: {np.round(shift, 2)}"
 
             # === STEP 3: GENERATE GLOBAL CANVAS ===
@@ -117,7 +116,6 @@ def _automated_preprocessing_magic_widget(
                 mask_save_path = seg_dir / f"{layer_name}.tif"
                 tifffile.imwrite(mask_save_path, merged_mask)
                 session.set_processed_file(layer_name, str(mask_save_path))
-                session.save_session()
 
             dialog.update_progress(95, "Cleaning up...")
             if hide_raw:

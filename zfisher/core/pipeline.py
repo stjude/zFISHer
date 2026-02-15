@@ -91,7 +91,4 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
             
             gc.collect()
         
-    if output_dir:
-        save_session()
-        
     yield 100, "Canvas generation complete.", None

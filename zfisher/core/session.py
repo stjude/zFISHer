@@ -21,21 +21,23 @@ def is_loading():
     """Checks if a session is currently being loaded."""
     return _is_loading
 
-def get_data(key=None):
+def get_data(key=None, default=None):
     """Retrieves a value from the session data."""
     if key:
-        return _SESSION_DATA.get(key)
+        return _SESSION_DATA.get(key, default)
     return _SESSION_DATA
 
 def update_data(key, value):
-    """Updates a value in the session data."""
+    """Updates a value in the session data and saves the session."""
     _SESSION_DATA[key] = value
+    save_session()
 
 def set_processed_file(layer_name, path):
-    """Registers a processed file path."""
+    """Registers a processed file path and saves the session."""
     if "processed_files" not in _SESSION_DATA:
         _SESSION_DATA["processed_files"] = {}
     _SESSION_DATA["processed_files"][layer_name] = str(path)
+    save_session()
 
 def clear_session():
     """Resets the session data to defaults."""
