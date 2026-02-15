@@ -6,6 +6,7 @@ from packaging.version import parse as parse_version
 
 import zfisher.core.session as session
 from .. import popups
+from ..decorators import require_active_session
 
 # --- Arrow Drawing ---
 
@@ -150,6 +151,7 @@ def _get_next_filename():
             return filename
         capture_count += 1
 
+@require_active_session("Please start or load a session to enable captures.")
 def _capture_view(viewer: napari.Viewer, output_filename: str):
     """Core logic to capture the view."""
     
@@ -158,15 +160,7 @@ def _capture_view(viewer: napari.Viewer, output_filename: str):
         return
 
     try:
-        output_dir = session.get_data("output_dir")
-        if not output_dir:
-            popups.show_error_popup(
-                viewer.window._qt_window,
-                "No Active Session",
-                "Please start or load a session to enable captures."
-            )
-            return
-            
+        output_dir = session.get_data("output_dir") # We know this exists due to the decorator
         captures_dir = Path(output_dir) / "captures"
         captures_dir.mkdir(parents=True, exist_ok=True)
             

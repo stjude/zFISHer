@@ -5,8 +5,9 @@ from pathlib import Path
 from magicgui import magicgui
 
 import zfisher.core.session as session
-from zfisher.core.segmentation import match_nuclei_labels, merge_labeled_masks, get_mask_centroids
 from .. import popups
+from ..decorators import require_active_session
+from zfisher.core.segmentation import match_nuclei_labels, merge_labeled_masks, get_mask_centroids
 
 @magicgui(
     call_button="Match & Merge Nuclei",
@@ -14,6 +15,7 @@ from .. import popups
     r2_mask_layer={"label": "R2 Mask (Warped)"},
     threshold={"label": "Max Distance (px)", "min": 0, "max": 100, "step": 1}
 )
+@require_active_session("Please start or load a session before matching nuclei.")
 def nuclei_matching_widget(
     r1_mask_layer: "napari.layers.Labels",
     r2_mask_layer: "napari.layers.Labels",
@@ -21,16 +23,6 @@ def nuclei_matching_widget(
 ):
     """Matches nuclei between two aligned mask layers and syncs their IDs."""
     viewer = napari.current_viewer()
-    
-    # --- Session Check ---
-    output_dir = session.get_data("output_dir")
-    if not output_dir:
-        popups.show_error_popup(
-            viewer.window._qt_window,
-            "No Active Session",
-            "Please start or load a session before matching nuclei."
-        )
-        return
 
     if not r1_mask_layer or not r2_mask_layer:
         viewer.status = "Please select both mask layers."
@@ -42,6 +34,7 @@ def nuclei_matching_widget(
         
     viewer.status = "Matching nuclei..."
     dialog = popups.ProgressDialog(viewer.window._qt_window, "Matching Nuclei...")
+    output_dir = session.get_data("output_dir")
     
     try:
         # Run matching

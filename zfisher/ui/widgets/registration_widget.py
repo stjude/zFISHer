@@ -2,30 +2,22 @@ import napari
 from magicgui import magicgui, widgets
 
 import zfisher.core.session as session
-from zfisher.core.registration import align_centroids_ransac
 from .. import popups
+from ..decorators import require_active_session
+from zfisher.core.registration import align_centroids_ransac
 
 @magicgui(
     call_button="Calculate Shift (RANSAC)",
     r1_points={"label": "R1 Centroids"},
     r2_points={"label": "R2 Centroids"}
 )
+@require_active_session("Please start or load a session before running registration.")
 def registration_widget(
     r1_points: "napari.layers.Points",
     r2_points: "napari.layers.Points"
 ):
     """Calculates the XYZ shift between two point clouds."""
     viewer = napari.current_viewer()
-    
-    # --- Session Check ---
-    output_dir = session.get_data("output_dir")
-    if not output_dir:
-        popups.show_error_popup(
-            viewer.window._qt_window,
-            "No Active Session",
-            "Please start or load a session before running registration."
-        )
-        return
 
     if r1_points is None or r2_points is None:
         viewer.status = "Please select both centroid layers."

@@ -3,8 +3,9 @@ from pathlib import Path
 from magicgui import magicgui, widgets
 
 import zfisher.core.session as session
-from zfisher.core.report import calculate_distances, export_report
 from .. import popups
+from ..decorators import require_active_session
+from zfisher.core.report import calculate_distances, export_report
 
 @magicgui(
     call_button="Add Rule",
@@ -12,6 +13,7 @@ from .. import popups
     target_layer={"label": "Target Layer"},
     cutoff={"label": "Cutoff (um)", "min": 0.1, "step": 0.1}
 )
+@require_active_session("Please start or load a session before adding rules.")
 def colocalization_widget(
     source_layer: "napari.layers.Points", 
     target_layer: "napari.layers.Points", 
@@ -19,16 +21,6 @@ def colocalization_widget(
 ):
     """Defines colocalization rules and exports report."""
     viewer = napari.current_viewer()
-    
-    # --- Session Check ---
-    output_dir = session.get_data("output_dir")
-    if not output_dir:
-        popups.show_error_popup(
-            viewer.window._qt_window,
-            "No Active Session",
-            "Please start or load a session before adding rules."
-        )
-        return
 
     if not source_layer or not target_layer:
         return
@@ -62,38 +54,18 @@ colocalization_widget.append(widgets.Label(value="<b>Export:</b>"))
 colocalization_widget.append(colocalization_widget.filename)
 colocalization_widget.append(colocalization_widget.export_btn)
 
-@colocalization_widget.clear_btn.clicked.connect
+@require_active_session("Please start or load a session before clearing rules.")
 def _on_clear_rules():
     viewer = napari.current_viewer()
-    
-    # --- Session Check ---
-    output_dir = session.get_data("output_dir")
-    if not output_dir:
-        popups.show_error_popup(
-            viewer.window._qt_window,
-            "No Active Session",
-            "Please start or load a session before clearing rules."
-        )
-        return
 
     if hasattr(colocalization_widget, 'rules'):
         colocalization_widget.rules = []
     colocalization_widget.rules_display.value = ""
     napari.current_viewer().status = "Rules cleared."
 
-@colocalization_widget.export_btn.clicked.connect
+@require_active_session("Please start or load a session before exporting.")
 def _on_coloc_export():
     viewer = napari.current_viewer()
-    
-    # --- Session Check ---
-    output_dir = session.get_data("output_dir")
-    if not output_dir:
-        popups.show_error_popup(
-            viewer.window._qt_window,
-            "No Active Session",
-            "Please start or load a session before exporting."
-        )
-        return
 
     rules = getattr(colocalization_widget, 'rules', [])
     
@@ -144,3 +116,6 @@ def _on_coloc_export():
         )
     finally:
         dialog.close()
+
+colocalization_widget.clear_btn.clicked.connect(_on_clear_rules)
+colocalization_widget.export_btn.clicked.connect(_on_coloc_export)

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import zfisher.core.session as session
 from .. import popups
+from ..decorators import require_active_session
 from zfisher.core.segmentation import get_mask_centroids
 
 class MaskHighlighter:
@@ -117,6 +118,7 @@ _highlighter = None
     source_id={"label": "Source ID"},
     target_id={"label": "Target ID"}
 )
+@require_active_session("Please start or load a session before editing masks.")
 def mask_editor_widget(
     mask_layer: "napari.layers.Labels",
     source_id: int = 0,
@@ -124,16 +126,6 @@ def mask_editor_widget(
 ):
     """Merges two labels in the selected mask layer."""
     viewer = napari.current_viewer()
-
-    # --- Session Check ---
-    output_dir = session.get_data("output_dir")
-    if not output_dir:
-        popups.show_error_popup(
-            viewer.window._qt_window,
-            "No Active Session",
-            "Please start or load a session before editing masks."
-        )
-        return
 
     if mask_layer is None:
         viewer.status = "No mask layer selected."
@@ -211,21 +203,12 @@ mask_editor_widget.append(extrude_btn)
 mask_editor_widget.append(delete_btn)
 mask_editor_widget.append(refresh_ids_btn)
 
-@paint_chk.changed.connect
+@require_active_session("Please start or load a session before editing masks.")
 def _on_paint(value: bool):
-    viewer = napari.current_viewer()
-    
-    # --- Session Check ---
-    output_dir = session.get_data("output_dir")
-    if not output_dir:
-        popups.show_error_popup(
-            viewer.window._qt_window,
-            "No Active Session",
-            "Please start or load a session before editing masks."
-        )
+    if not session.get_data("output_dir"): # Check again in case session was closed
         paint_chk.value = False
         return
-
+    viewer = napari.current_viewer()
     layer = mask_editor_widget.mask_layer.value
     if layer:
         if value:
@@ -240,21 +223,12 @@ def _on_paint(value: bool):
             layer.mode = 'pan_zoom'
             viewer.status = "Painting Mode Off."
 
-@erase_chk.changed.connect
+@require_active_session("Please start or load a session before editing masks.")
 def _on_erase(value: bool):
-    viewer = napari.current_viewer()
-    
-    # --- Session Check ---
-    output_dir = session.get_data("output_dir")
-    if not output_dir:
-        popups.show_error_popup(
-            viewer.window._qt_window,
-            "No Active Session",
-            "Please start or load a session before editing masks."
-        )
+    if not session.get_data("output_dir"): # Check again in case session was closed
         erase_chk.value = False
         return
-
+    viewer = napari.current_viewer()
     layer = mask_editor_widget.mask_layer.value
     if layer:
         if value:
@@ -266,20 +240,9 @@ def _on_erase(value: bool):
             layer.mode = 'pan_zoom'
             viewer.status = "Erase Mode Off."
 
-@pick_btn.clicked.connect
+@require_active_session("Please start or load a session before editing masks.")
 def _on_pick():
     viewer = napari.current_viewer()
-    
-    # --- Session Check ---
-    output_dir = session.get_data("output_dir")
-    if not output_dir:
-        popups.show_error_popup(
-            viewer.window._qt_window,
-            "No Active Session",
-            "Please start or load a session before editing masks."
-        )
-        return
-
     layer = mask_editor_widget.mask_layer.value
     if layer:
         viewer.layers.selection.active = layer
@@ -288,20 +251,9 @@ def _on_pick():
         erase_chk.value = False
         viewer.status = "Pick Mode. Click a label to select its ID."
 
-@extrude_btn.clicked.connect
+@require_active_session("Please start or load a session before editing masks.")
 def _on_extrude():
     viewer = napari.current_viewer()
-    
-    # --- Session Check ---
-    output_dir = session.get_data("output_dir")
-    if not output_dir:
-        popups.show_error_popup(
-            viewer.window._qt_window,
-            "No Active Session",
-            "Please start or load a session before editing masks."
-        )
-        return
-
     layer = mask_editor_widget.mask_layer.value
     if not layer: return
     
@@ -326,20 +278,9 @@ def _on_extrude():
     layer.refresh()
     viewer.status = f"Extruded ID {label_id} through all Z slices."
 
-@delete_btn.clicked.connect
+@require_active_session("Please start or load a session before editing masks.")
 def _on_delete():
     viewer = napari.current_viewer()
-    
-    # --- Session Check ---
-    output_dir = session.get_data("output_dir")
-    if not output_dir:
-        popups.show_error_popup(
-            viewer.window._qt_window,
-            "No Active Session",
-            "Please start or load a session before editing masks."
-        )
-        return
-
     layer = mask_editor_widget.mask_layer.value
     src = mask_editor_widget.source_id.value
     if layer and src > 0:
@@ -366,20 +307,9 @@ def _on_hover_mode(value: bool):
         _highlighter.disable()
         viewer.status = "Hover Edit Mode OFF."
 
-@refresh_ids_btn.clicked.connect
+@require_active_session("Please start or load a session before refreshing IDs.")
 def _on_refresh_ids():
     viewer = napari.current_viewer()
-    
-    # --- Session Check ---
-    output_dir = session.get_data("output_dir")
-    if not output_dir:
-        popups.show_error_popup(
-            viewer.window._qt_window,
-            "No Active Session",
-            "Please start or load a session before refreshing IDs."
-        )
-        return
-
     layer = mask_editor_widget.mask_layer.value
     if not layer: return
     
@@ -403,6 +333,15 @@ def _on_refresh_ids():
             blending='translucent_no_depth'
         )
     viewer.status = f"Refreshed IDs for {layer.name}"
+
+# Connect signals after defining functions
+paint_chk.changed.connect(_on_paint)
+erase_chk.changed.connect(_on_erase)
+pick_btn.clicked.connect(_on_pick)
+extrude_btn.clicked.connect(_on_extrude)
+delete_btn.clicked.connect(_on_delete)
+hover_chk.changed.connect(_on_hover_mode)
+refresh_ids_btn.clicked.connect(_on_refresh_ids)
 
 # --- Auto-saving for selected mask layer ---
 

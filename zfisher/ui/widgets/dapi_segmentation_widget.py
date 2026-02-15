@@ -4,9 +4,10 @@ import tifffile
 from pathlib import Path
 from magicgui import magicgui
 
-from zfisher.core.registration import segment_nuclei_classical
 import zfisher.core.session as session
 from .. import popups
+from ..decorators import require_active_session
+from zfisher.core.registration import segment_nuclei_classical
 
 @magicgui(
     call_button="Run DAPI Mapping",
@@ -14,22 +15,13 @@ from .. import popups
     r2_layer={"label": "Round 2 (DAPI)"},
     auto_call=False,
 )
+@require_active_session("Please start or load a session before running segmentation.")
 def dapi_segmentation_widget(
     r1_layer: "napari.layers.Image",
     r2_layer: "napari.layers.Image"
 ):
     """Runs segmentation on selected DAPI channels."""
     viewer = napari.current_viewer()
-
-    # --- Session Check ---
-    output_dir = session.get_data("output_dir")
-    if not output_dir:
-        popups.show_error_popup(
-            viewer.window._qt_window,
-            "No Active Session",
-            "Please start or load a session before running segmentation."
-        )
-        return
 
     layers_to_process = [l for l in [r1_layer, r2_layer] if l is not None]
     

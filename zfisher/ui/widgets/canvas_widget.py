@@ -5,30 +5,22 @@ from magicgui import magicgui
 from qtpy.QtWidgets import QApplication
 
 import zfisher.core.session as session
-from zfisher.core.pipeline import generate_global_canvas
 from .. import popups
+from ..decorators import require_active_session
+from zfisher.core.pipeline import generate_global_canvas
 
 @magicgui(
     call_button="Generate Global Canvas",
     apply_warp={"label": "Apply Deformable Warping?"},
     hide_raw={"label": "Hide Raw Layers?"}
 )
+@require_active_session("Please start or load a session before generating the canvas.")
 def canvas_widget(
     apply_warp: bool = True,
     hide_raw: bool = True
 ):
     """Applies the calculated shift to all layers and creates a global canvas."""
     viewer = napari.current_viewer()
-
-    # --- Session Check ---
-    output_dir = session.get_data("output_dir")
-    if not output_dir:
-        popups.show_error_popup(
-            viewer.window._qt_window,
-            "No Active Session",
-            "Please start or load a session before generating the canvas."
-        )
-        return
 
     shift_list = session.get_data("shift")
     shift = np.array(shift_list) if shift_list else None

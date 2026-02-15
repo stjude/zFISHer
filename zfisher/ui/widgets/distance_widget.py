@@ -3,26 +3,18 @@ from pathlib import Path
 from magicgui import magicgui
 
 import zfisher.core.session as session
-from zfisher.core.report import calculate_distances, export_report
 from .. import popups
+from ..decorators import require_active_session
+from zfisher.core.report import calculate_distances, export_report
 
 @magicgui(
     call_button="Calculate & Export Distances",
     output_filename={"label": "Filename (.xlsx)", "value": "puncta_distances.xlsx"}
 )
+@require_active_session("Please start or load a session before calculating distances.")
 def distance_widget(output_filename: str = "puncta_distances.xlsx"):
     """Calculates nearest neighbor distances between all puncta layers."""
     viewer = napari.current_viewer()
-    
-    # --- Session Check ---
-    output_dir = session.get_data("output_dir")
-    if not output_dir:
-        popups.show_error_popup(
-            viewer.window._qt_window,
-            "No Active Session",
-            "Please start or load a session before calculating distances."
-        )
-        return
 
     points_layers = [l for l in viewer.layers if isinstance(l, napari.layers.Points)]
     
