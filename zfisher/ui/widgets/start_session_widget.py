@@ -67,17 +67,18 @@ class StartSessionWidget(Container):
         self._load_session_btn.clicked.connect(self._on_load_session)
 
     def _on_new_session(self):
-        round1_path = self._round1_path.value
-        round2_path = self._round2_path.value
-        output_dir = self._output_dir.value
+        # Get paths from widgets to initialize the session
+        round1_path_val = self._round1_path.value
+        round2_path_val = self._round2_path.value
+        output_dir_val = self._output_dir.value
 
-        if not session.initialize_new_session(output_dir, round1_path, round2_path):
+        if not session.initialize_new_session(output_dir_val, round1_path_val, round2_path_val):
             popups.show_error_popup(
                 self._viewer.window._qt_window,
                 "Session Already Exists",
                 f"""A session already exists in this directory.
 
-{output_dir}
+{output_dir_val}
 
 Please choose a different output directory, or use the 'Load Session' button to continue your previous analysis."""
             )
@@ -85,11 +86,16 @@ Please choose a different output directory, or use the 'Load Session' button to 
 
         self._viewer.layers.clear()
 
+        # Now that session is initialized, get paths from the session (single source of truth)
+        r1_path = session.get_data("r1_path")
+        r2_path = session.get_data("r2_path")
+        output_dir = session.get_data("output_dir")
+
         with popups.ProgressDialog(self._viewer.window._qt_window, title="Loading Data...") as dialog:
             load_raw_data_into_viewer(
                 self._viewer,
-                round1_path,
-                round2_path,
+                r1_path,
+                r2_path,
                 output_dir=output_dir,
                 progress_callback=lambda p, t: dialog.update_progress(p, t)
             )
@@ -112,15 +118,16 @@ Please choose a different output directory, or use the 'Load Session' button to 
             self._viewer.layers.clear()
             
             dialog.update_progress(10, "Loading session file...")
-            session_data = session.load_session_file(session_file)
+            session.load_session_file(session_file)
             
-            shift = session_data.get("shift")
+            shift = session.get_data("shift")
             if shift:
                 print(f"Restored Shift: {shift}")
 
             # --- Load Raw Data ---
-            r1_path = session_data.get("r1_path")
-            r2_path = session_data.get("r2_path")
+            r1_path = session.get_data("r1_path")
+            r2_path = session.get_data("r2_path")
+            output_dir = session.get_data("output_dir")
             if r1_path and r2_path:
                 def raw_progress(p, text):
                     scaled_progress = 10 + int(p * 0.6) 
@@ -130,11 +137,12 @@ Please choose a different output directory, or use the 'Load Session' button to 
                     self._viewer, 
                     r1_path, 
                     r2_path,
+                    output_dir=output_dir,
                     progress_callback=raw_progress
                 )
 
             # --- Restore Processed Layers ---
-            processed_files = session_data.get("processed_files", {})
+            processed_files = session.get_data("processed_files", {})
             if processed_files:
                 scale = next((layer.scale for layer in self._viewer.layers if isinstance(layer, napari.layers.Image)), (1, 1, 1))
                 def processed_progress(p, text):
