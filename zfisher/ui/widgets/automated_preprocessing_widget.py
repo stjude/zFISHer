@@ -5,13 +5,16 @@ from pathlib import Path
 from magicgui import magicgui
 from magicgui.widgets import Container, Label
 
-import zfisher.core.session as session
+from ...core import session
 from .. import popups
 from ..decorators import require_active_session, error_handler
-from zfisher.core.registration import align_centroids_ransac
-from zfisher.core.segmentation import segment_nuclei_classical
-from zfisher.core.pipeline import generate_global_canvas
-from zfisher.core.segmentation import match_nuclei_labels, merge_labeled_masks
+from ...core.registration import align_centroids_ransac
+from ...core.segmentation import (
+    segment_nuclei_classical,
+    match_nuclei_labels,
+    merge_labeled_masks,
+)
+from ...core.pipeline import generate_global_canvas
 
 @magicgui(
     call_button="Run Automated Preprocessing",

@@ -2,7 +2,7 @@ import napari
 import numpy as np
 from pathlib import Path
 from qtpy.QtCore import QTimer
-import zfisher.core.session as session
+from ..core import session
 
 def attach_puncta_listener(layer, name):
     """Attaches listeners to a points layer for auto-saving and color syncing."""

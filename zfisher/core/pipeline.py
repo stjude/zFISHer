@@ -2,12 +2,12 @@ import numpy as np
 import tifffile
 from pathlib import Path
 import gc
-from zfisher.core.registration import (
+from .registration import (
     align_and_pad_images,
     calculate_deformable_transform,
     apply_deformable_transform
 )
-from zfisher.core.session import set_processed_file
+from .session import set_processed_file
 
 def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, apply_warp=True):
     """

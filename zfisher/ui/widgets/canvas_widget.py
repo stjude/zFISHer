@@ -3,10 +3,10 @@ import numpy as np
 from pathlib import Path
 from magicgui import magicgui
 
-import zfisher.core.session as session
+from ...core import session
 from .. import popups
 from ..decorators import require_active_session, error_handler
-from zfisher.core.pipeline import generate_global_canvas
+from ...core.pipeline import generate_global_canvas
 
 @magicgui(
     call_button="Generate Global Canvas",

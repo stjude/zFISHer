@@ -2,10 +2,10 @@ import napari
 import numpy as np
 from magicgui import magicgui, widgets
 
-import zfisher.core.session as session
+from ...core import session
 from .. import popups
 from ..decorators import require_active_session, error_handler
-from zfisher.core.segmentation import detect_spots_3d, merge_puncta
+from ...core.segmentation import detect_spots_3d, merge_puncta
 
 @magicgui(
     call_button="Detect Puncta",

@@ -1,6 +1,6 @@
 from functools import wraps
 import napari
-from zfisher.core import session
+from ..core import session
 from . import popups
 
 def require_active_session(message="Please start or load a session first."):

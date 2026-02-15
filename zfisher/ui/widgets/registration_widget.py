@@ -1,10 +1,10 @@
 import napari
 from magicgui import magicgui, widgets
 
-import zfisher.core.session as session
+from ...core import session
 from .. import popups
 from ..decorators import require_active_session, error_handler
-from zfisher.core.registration import align_centroids_ransac
+from ...core.registration import align_centroids_ransac
 
 @magicgui(
     call_button="Calculate Shift (RANSAC)",

@@ -3,7 +3,7 @@ from pathlib import Path
 import napari
 import os
 
-from zfisher.core import session
+from ...core import session
 from .. import popups, viewer_helpers
 from ..decorators import error_handler
 from ._shared import load_raw_data_into_viewer

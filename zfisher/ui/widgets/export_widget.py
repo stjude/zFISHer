@@ -4,10 +4,10 @@ from napari.layers import Points
 import napari
 from pathlib import Path
 
-import zfisher.core.session as session
+from ...core import session
 from .. import popups
 from ..decorators import require_active_session
-from zfisher.core.report import calculate_distances, export_report
+from ...core.report import calculate_distances, export_report
 
 @magicgui(
     call_button="Export",

@@ -1,7 +1,7 @@
 import napari
 from pathlib import Path
 
-from zfisher.core import io
+from ...core import io
 from .. import viewer_helpers
 
 def load_raw_data_into_viewer(viewer, round1_path, round2_path, output_dir=None, progress_callback=None):

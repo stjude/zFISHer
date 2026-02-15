@@ -4,10 +4,10 @@ from magicgui import magicgui, widgets
 import tifffile
 from pathlib import Path
 
-import zfisher.core.session as session
+from ...core import session
 from .. import popups
 from ..decorators import require_active_session
-from zfisher.core.segmentation import get_mask_centroids
+from ...core.segmentation import get_mask_centroids
 
 class MaskHighlighter:
     """Helper class to highlight labels in red under the mouse cursor."""

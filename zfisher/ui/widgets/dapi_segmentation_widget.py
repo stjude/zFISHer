@@ -4,10 +4,10 @@ import tifffile
 from pathlib import Path
 from magicgui import magicgui
 
-import zfisher.core.session as session
+from ...core import session
 from .. import popups
 from ..decorators import require_active_session, error_handler
-from zfisher.core.segmentation import segment_nuclei_classical
+from ...core.segmentation import segment_nuclei_classical
 
 @magicgui(
     call_button="Run DAPI Mapping",

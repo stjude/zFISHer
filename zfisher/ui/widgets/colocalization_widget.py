@@ -2,10 +2,10 @@ import napari
 from pathlib import Path
 from magicgui import magicgui, widgets
 
-import zfisher.core.session as session
+from ...core import session
 from .. import popups
 from ..decorators import require_active_session, error_handler
-from zfisher.core.report import calculate_distances, export_report
+from ...core.report import calculate_distances, export_report
 
 @magicgui(
     call_button="Add Rule",

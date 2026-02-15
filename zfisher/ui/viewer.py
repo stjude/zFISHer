@@ -9,7 +9,7 @@ from qtpy.QtWidgets import QApplication, QToolBox, QToolButton, QWidget, QLabel,
 from qtpy.QtGui import QIcon, QPainter, QPalette
 from qtpy.QtCore import Qt, QPoint, QTimer
 from magicgui import widgets
-import zfisher.core.session as session
+from ..core import session
 
 # --- RESTORED IMPORTS ---
 # Import all the individual widgets from their own scripts
