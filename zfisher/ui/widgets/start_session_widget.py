@@ -89,47 +89,34 @@ class StartSessionWidget(Container):
 
     @error_handler("New Session Failed")
     def _on_new_session(self):
-        # Get paths from widgets to initialize the session
-        round1_path_val = self._round1_path.value
-        round2_path_val = self._round2_path.value
-        output_dir_val = self._output_dir.value
+        r1_val = self._round1_path.value
+        r2_val = self._round2_path.value
+        out_val = self._output_dir.value
 
-        if not self._validate_input_files(round1_path_val, round2_path_val):
+        if not self._validate_input_files(r1_val, r2_val):
             return
 
-        if not session.initialize_new_session(output_dir_val, round1_path_val, round2_path_val):
-            popups.show_error_popup(
-                self._viewer.window._qt_window,
-                "Session Already Exists",
-                f"""A session already exists in this directory.
-
-{output_dir_val}
-
-Please choose a different output directory, or use the 'Load Session' button to continue your previous analysis."""
-            )
-            return
-
-        self._viewer.layers.clear()
-
-        # Now that session is initialized, get paths from the session (single source of truth)
-        r1_path = session.get_data("r1_path")
-        r2_path = session.get_data("r2_path")
-        output_dir = session.get_data("output_dir")
-
-        with popups.ProgressDialog(self._viewer.window._qt_window, title="Loading Data...") as dialog:
-            load_raw_data_into_viewer(
-                self._viewer,
-                r1_path,
-                r2_path,
-                output_dir=output_dir,
+        # Use a progress dialog to wrap the core call
+        with popups.ProgressDialog(self._viewer.window._qt_window, title="Initializing...") as dialog:
+            # Call the refactored core function
+            success = session.initialize_new_session(
+                out_val, r1_val, r2_val, 
                 progress_callback=lambda p, t: dialog.update_progress(p, t)
             )
-            dialog.update_progress(100, "Done.")
+            
+            if not success:
+                popups.show_error_popup(self._viewer.window._qt_window, "Session Exists", "...")
+                return
 
-        if hasattr(self._viewer.window, 'custom_scale_bar'):
-            self._viewer.window.custom_scale_bar.show()
-            self._viewer.window.custom_scale_bar.move_to_bottom_right()
-
+            # UI-Specific Task: Only load into viewer if we are in the UI
+            self._viewer.layers.clear()
+            load_raw_data_into_viewer(
+                self._viewer, 
+                session.get_data("r1_path"), 
+                session.get_data("r2_path"),
+                output_dir=session.get_data("output_dir"),
+                progress_callback=lambda p, t: dialog.update_progress(p, t)
+            )
     @error_handler("Load Session Failed")
     def _on_load_session(self):
         session_file = self._load_session_file.value

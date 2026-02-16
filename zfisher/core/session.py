@@ -116,45 +116,39 @@ def clear_session():
         "processed_files": {}
     })
 
-def initialize_new_session(output_dir, r1_path, r2_path):
+def initialize_new_session(output_dir, r1_path, r2_path, progress_callback=None):
     """
-    Initializes a new session.
-
-    This function clears any existing session data, creates the required
-    directory structure, and saves a new session file.
-
-    Parameters
-    ----------
-    output_dir : str or Path
-        The root directory for the new session.
-    r1_path, r2_path : str or Path
-        Paths to the input files for Round 1 and Round 2.
-
-    Returns
-    -------
-    bool
-        True on success, False if a session file already exists in the
-        target directory.
+    Core Logic: Initializes directories and prepares files for processing.
+    This can be called by the Widget OR a headless script.
     """
     output_dir = Path(output_dir)
     session_file = output_dir / constants.SESSION_FILENAME
     if session_file.exists():
         return False
 
-    # Create all necessary subdirectories
+    # 1. Create directory structure
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / constants.SEGMENTATION_DIR).mkdir(exist_ok=True)
-    (output_dir / constants.ALIGNED_DIR).mkdir(exist_ok=True)
-    (output_dir / constants.CAPTURES_DIR).mkdir(exist_ok=True)
-    (output_dir / constants.INPUT_DIR).mkdir(exist_ok=True)
-    (output_dir / constants.REPORTS_DIR).mkdir(exist_ok=True)
+    for folder in [constants.SEGMENTATION_DIR, constants.ALIGNED_DIR, 
+                   constants.CAPTURES_DIR, constants.INPUT_DIR, constants.REPORTS_DIR]:
+        (output_dir / folder).mkdir(exist_ok=True)
 
-    # Reset and update session state
+    # 2. Reset global state
     clear_session()
     update_data("output_dir", str(output_dir))
     update_data("r1_path", str(r1_path))
     update_data("r2_path", str(r2_path))
-    # No need to call save_session() here, as update_data does it automatically
+
+    # 3. Headless-Ready Conversion
+    # We move the conversion logic here so it happens even without napari
+    from .io import load_image_session, convert_nd2_to_ome
+    
+    for prefix, path in [("R1", r1_path), ("R2", r2_path)]:
+        if Path(path).suffix.lower() == '.nd2':
+            if progress_callback:
+                progress_callback(0, f"Converting {prefix} ND2...")
+            img_session = load_image_session(Path(path))
+            convert_nd2_to_ome(img_session, output_dir / constants.INPUT_DIR, prefix)
+
     return True
 
 def save_session():
