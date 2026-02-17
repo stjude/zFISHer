@@ -1,10 +1,14 @@
 import numpy as np
+from pathlib import Path
 from skimage.measure import ransac
 from skimage.transform import AffineTransform
 from scipy.spatial import cKDTree
 from scipy import ndimage as ndi
 import SimpleITK as sitk
 import warnings
+import gc
+import tifffile
+from .session import set_processed_file
 
 from . import session
 from .. import constants
@@ -394,3 +398,90 @@ def apply_deformable_transform(moving_data, transform, fixed_reference_data, is_
             return result.astype(np.uint32)
         
     return result
+
+# zfisher/core/registration.py
+
+# ... (existing imports)
+
+def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, apply_warp=True, progress_callback=None):
+    """
+    Core Orchestrator: Aligns, warps, and saves all channels.
+    Headless-ready (uses callback instead of yield).
+    """
+    def update(val, msg):
+        if progress_callback:
+            progress_callback(val, msg)
+
+    # 1. Rigid Alignment
+    update(0, "Matching and aligning channels...")
+    aligned_pairs = _match_and_align_channels(r1_layers_data, r2_layers_data, shift)
+
+    # 2. Deformable Transform Calculation
+    transform = None
+    has_dapi = constants.DAPI_CHANNEL_NAME in aligned_pairs
+    
+    if apply_warp and has_dapi:
+        update(10, "Calculating deformable registration on DAPI...")
+        dapi_pair = aligned_pairs[constants.DAPI_CHANNEL_NAME]
+        transform = calculate_deformable_transform(dapi_pair['r1_data'], dapi_pair['r2_data'])
+        update(40, "Deformable registration complete.")
+    
+    # 3. Per-channel Warping and Saving
+    results = []
+    num_channels = len(aligned_pairs)
+    start_progress = 40 if (apply_warp and has_dapi) else 10
+
+    for i, (channel_name, pair_data) in enumerate(aligned_pairs.items()):
+        prog = start_progress + int((i / num_channels) * (100 - start_progress))
+        update(prog, f"Warping {channel_name}...")
+
+        # Process the pair (Math + Save)
+        result = _process_channel_pair(channel_name, pair_data, transform, output_dir)
+        results.append(result)
+        gc.collect()
+        
+    update(100, "Canvas generation complete.")
+    return results
+
+def _match_and_align_channels(r1_layers_data, r2_layers_data, shift):
+    """Pure math/logic: matches R1/R2 channels and performs initial rigid shift."""
+    aligned_pairs = {}
+    for r1 in r1_layers_data:
+        channel_name = r1['name'].split("-")[-1].strip()
+        r2 = next((l for l in r2_layers_data if channel_name in l['name']), None)
+        if r2:
+            is_label = r1.get('is_label', False)
+            aligned_r1, aligned_r2 = align_and_pad_images(r1['data'], r2['data'], shift, is_label=is_label)
+            aligned_pairs[channel_name] = {
+                'r1_data': aligned_r1, 'r2_data': aligned_r2,
+                'r1_meta': r1, 'r2_meta': r2, 'is_label': is_label
+            }
+    return aligned_pairs
+
+def _process_channel_pair(channel_name, pair_data, transform, output_dir):
+    """Applies deformable warp if needed and triggers the save."""
+    r1_data, r2_data = pair_data['r1_data'], pair_data['r2_data']
+    is_label = pair_data['is_label']
+    
+    final_r2 = r2_data
+    r2_prefix = constants.ALIGNED_PREFIX
+    if transform:
+        final_r2 = apply_deformable_transform(r2_data, transform, r1_data, is_label=is_label)
+        r2_prefix = constants.WARPED_PREFIX
+        
+    # Trigger the Save logic (The I/O part)
+    _save_aligned_layer(r1_data, constants.ALIGNED_PREFIX, "R1", channel_name, output_dir, is_label)
+    _save_aligned_layer(final_r2, r2_prefix, "R2", channel_name, output_dir, is_label)
+        
+    return {
+        'r1': {'data': r1_data, 'name': f"{constants.ALIGNED_PREFIX} R1 - {channel_name}", 'meta': pair_data['r1_meta']},
+        'r2': {'data': final_r2, 'name': f"{r2_prefix} R2 - {channel_name}", 'meta': pair_data['r2_meta']}
+    }
+
+def _save_aligned_layer(data, prefix, round_id, channel_name, output_dir, is_label):
+    """Internal helper to write warped files to disk and track in session."""
+    if not output_dir: return
+    layer_name = f"{prefix} {round_id} - {channel_name}"
+    out_path = Path(output_dir) / f"{prefix}_{round_id}_{channel_name}.tif"
+    tifffile.imwrite(out_path, data, compression='zlib')
+    set_processed_file(layer_name, str(out_path), layer_type='labels' if is_label else 'image')
