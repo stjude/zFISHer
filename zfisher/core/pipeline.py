@@ -22,10 +22,28 @@ def run_full_zfisher_pipeline(input_path: Path, output_dir: Path, params: dict):
     # Handles .nd2 to .tif conversion and directory setup
     session_data = io.initialize_session(input_path, output_dir)
     
-    # 2. DAPI Mapping (Segmentation)
-    # Generates the reference nuclei masks
-    masks, centroids = segmentation.process_dapi(session_data['r1_path'])
+    # Load raw data
+    r1_session = io.load_image_session(session_data['r1_path'])
+    r2_session = io.load_image_session(session_data['r2_path'])
     
+    # 2. DAPI Mapping (Segmentation)
+    # This ensures the science steps only receive 3D arrays
+    r1_dapi = io.get_channel_data(r1_session, constants.DAPI_CHANNEL_NAME)
+    r2_dapi = io.get_channel_data(r2_session, constants.DAPI_CHANNEL_NAME)
+
+    seg_results = segmentation.process_session_dapi(
+        r1_data=r1_dapi, 
+        r2_data=r2_dapi, 
+        output_dir=output_dir
+    )
+    
+    # 3. Run the DAPI orchestrator with the 3D data
+    seg_results = segmentation.process_session_dapi(
+        r1_data=r1_dapi, 
+        r2_data=r2_dapi, 
+        output_dir=output_dir,
+        progress_callback=lambda p, t: print(f"[{p}%] {t}")
+    )
     # 3. Registration
     # Calculates shifts between imaging rounds
     shifts = registration.calculate_all_shifts(session_data['round_paths'])

@@ -9,6 +9,8 @@ from scipy import ndimage as ndi
 from skimage.segmentation import watershed
 from skimage.morphology import remove_small_objects, white_tophat, disk
 from cellpose import models, core
+from pathlib import Path
+import tifffile
 
 from .. import constants
 
@@ -429,6 +431,16 @@ def get_mask_centroids(mask):
     props = regionprops(mask)
     return [{'coord': p.centroid, 'label': p.label} for p in props]
 
+def prepare_id_points(mask_data):
+    """Calculates centroids and prepares arrays for ID visualization."""
+    pts_data = get_mask_centroids(mask_data)
+    if not pts_data:
+        return np.empty((0, mask_data.ndim)), np.empty(0)
+        
+    coords = np.array([p['coord'] for p in pts_data])
+    labels = np.array([p['label'] for p in pts_data])
+    return coords, labels
+
 def merge_labels(mask_data, source_id, target_id):
     """
     Merges one label ID into another within a mask array.
@@ -505,3 +517,40 @@ def extrude_label(mask_data, z_index, label_id):
     new_data = mask_data.copy()
     new_data[:, mask_2d] = label_id
     return new_data
+
+
+# zfisher/core/segmentation.py
+
+def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callback=None):
+    """
+    Core Orchestrator: Runs segmentation on one or both rounds and saves results.
+    """
+    results = {}
+    data_map = [("R1", r1_data)]
+    if r2_data is not None:
+        data_map.append(("R2", r2_data))
+        
+    for i, (prefix, data) in enumerate(data_map):
+        if data is None: continue
+        
+        # Define a per-round progress wrapper
+        def on_step_progress(val, text):
+            if progress_callback:
+                base = (i / len(data_map)) * 100
+                progress_callback(int(base + (val / len(data_map))), f"{prefix}: {text}")
+
+        # 1. Execute the heavy lifting (Classical Watershed)
+        masks, centroids = segment_nuclei_classical(data, progress_callback=on_step_progress)
+        results[prefix] = (masks, centroids)
+        
+        # 2. Headless Save: Save to the segmentation folder if output_dir exists
+        if output_dir:
+            from . import io  # Keep import local to avoid circularity
+            mask_path = Path(output_dir) / constants.SEGMENTATION_DIR / f"{prefix}_masks.tif"
+            csv_path = Path(output_dir) / constants.SEGMENTATION_DIR / f"{prefix}_centroids.csv"
+            
+            # Use your io helpers to save
+            tifffile.imwrite(mask_path, masks.astype(np.uint32), compression='zlib')
+            np.savetxt(csv_path, centroids, delimiter=",", header="Z,Y,X", comments='')
+            
+    return results

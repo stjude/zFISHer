@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import tifffile
 import json
 from pathlib import Path
+from .. import constants
 
 @dataclass
 class FISHSession:
@@ -163,7 +164,17 @@ def load_image_session(path: Path):
         return load_nd2_session(str(path))
     else:
         return TiffSession(path)
-
+    
+def get_channel_data(session, target_name=constants.DAPI_CHANNEL_NAME):
+    """Finds a channel by name in the session metadata and returns the 3D array."""
+    try:
+        # session.channels is populated by load_nd2_session
+        idx = session.channels.index(target_name)
+        return session.data[:, idx, :, :]
+    except ValueError:
+        print(f"Warning: {target_name} not found. Defaulting to index 0.")
+        return session.data[:, 0, :, :]
+    
 def convert_nd2_to_ome(
     nd2_session: FISHSession,
     output_dir: Path,
