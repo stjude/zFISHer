@@ -19,6 +19,37 @@ logging.basicConfig(level=logging.INFO)
 
 
 # zfisher/core/segmentation.py
+# zfisher/core/segmentation.py
+
+def process_puncta_headless(image_data, mask_data, params, output_path=None):
+    """
+    Orchestrator for Step 6: Detects spots and assigns them to nucleus IDs.
+    """
+    # 1. Detect raw coordinates
+    coords = detect_spots_3d(
+        image_data, 
+        threshold_rel=params.get('threshold', 0.1),
+        min_distance=params.get('min_distance', 2),
+        sigma=params.get('sigma', 1.0),
+        method=params.get('method', "Local Maxima")
+    )
+
+    if len(coords) == 0:
+        return np.empty((0, 4)) # Z, Y, X, ID
+
+    # 2. Assign to Nucleus IDs
+    # We sample the consensus mask at each spot's coordinate
+    indices = tuple(coords.astype(int).T)
+    assigned_ids = mask_data[indices]
+
+    # Combine into a single table: [Z, Y, X, Nucleus_ID]
+    results = np.column_stack([coords, assigned_ids])
+
+    # 3. Persistence
+    if output_path:
+        np.savetxt(output_path, results, delimiter=",", header="Z,Y,X,Nucleus_ID", comments='')
+
+    return results
 
 def process_consensus_nuclei(mask1, mask2, output_dir, threshold=20.0, method="Union", progress_callback=None):
     """

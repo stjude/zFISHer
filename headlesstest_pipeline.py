@@ -2,13 +2,13 @@ import numpy as np
 from pathlib import Path
 import gc
 import tifffile
-from zfisher.core import session, io, segmentation, registration
+from zfisher.core import session, io, segmentation, registration, puncta # Added puncta
 from zfisher import constants
 
 def run_headless_alignment_test():
     """
-    Validates Steps 1 through 5 of the zFISHer pipeline in a headless environment.
-    Updated to handle rigid/deformable fallback and underscore naming.
+    Validates Steps 1 through 6 of the zFISHer pipeline in a headless environment.
+    Automates conversion, alignment, nuclei matching, and puncta detection.
     """
     # --- STEP 1: SETUP & SESSION INITIALIZATION ---
     input_r1 = Path("/Users/sstaller/Desktop/ND2_FILE_INPUTS/1-19-24Fdecon.nd2")
@@ -74,7 +74,7 @@ def run_headless_alignment_test():
         mask_path = seg_dir / f"{prefix}_masks.tif"
         if mask_path.exists():
             layer_list.append({
-                'name': "DAPI_masks", # Simplified to match observed output underscores
+                'name': "DAPI_masks", 
                 'data': tifffile.imread(mask_path), 
                 'scale': r1_session.voxels, 
                 'is_label': True
@@ -94,32 +94,65 @@ def run_headless_alignment_test():
 
     # --- STEP 5: MATCH NUCLEI (CONSENSUS) ---
     print(f"\n--- STEP 5: Match Nuclei (Headless Consensus) ---")
+    r1_aligned_mask_path = aligned_dir / "Aligned_R1_DAPI_masks.tif"
+    r2_warped_mask_path = aligned_dir / "Warped_R2_DAPI_masks.tif"
     
-    # Using underscores to match the actual folder output
-    r1_aligned_mask = aligned_dir / "Aligned_R1_DAPI_masks.tif"
-    
-    # Robust fallback: Try Warped first, then Aligned if RANSAC used rigid shift
-    r2_warped_mask = aligned_dir / "Warped_R2_DAPI_masks.tif"
-    if not r2_warped_mask.exists():
-        r2_warped_mask = aligned_dir / "Aligned_R2_DAPI_masks.tif"
+    # Fallback to Aligned if RANSAC used rigid shift
+    if not r2_warped_mask_path.exists():
+        r2_warped_mask_path = aligned_dir / "Aligned_R2_DAPI_masks.tif"
 
-    if r1_aligned_mask.exists() and r2_warped_mask.exists():
-        print(f"Loading: {r1_aligned_mask.name} and {r2_warped_mask.name}")
+    if r1_aligned_mask_path.exists() and r2_warped_mask_path.exists():
         merged_mask, pts1 = segmentation.process_consensus_nuclei(
-            mask1=tifffile.imread(r1_aligned_mask),
-            mask2=tifffile.imread(r2_warped_mask),
+            mask1=tifffile.imread(r1_aligned_mask_path),
+            mask2=tifffile.imread(r2_warped_mask_path),
             output_dir=output_dir,
             threshold=20.0,
-            method="Intersection", # Defaulted to Intersection
+            method="Intersection",
             progress_callback=lambda p, t: print(f"[{p}%] {t}")
         )
         print(f"✅ SUCCESS: Consensus generated with {len(pts1)} matched nuclei.")
     else:
-        print(f"❌ FAILED: File search failed.")
-        print(f"Missing: {[f.name for f in [r1_aligned_mask, r2_warped_mask] if not f.exists()]}")
+        print("❌ FAILED: Aligned masks not found.")
+        return
+
+    # --- STEP 6: PUNCTA DETECTION (HEADLESS) ---
+    print(f"\n--- STEP 6: Puncta Detection (Headless) ---")
+    
+    # Standard parameters for mammalian cell transcripts
+    puncta_params = {
+        'threshold_rel': 0.15, 
+        'min_distance': 3, 
+        'method': "Local Maxima"
+    }
+    
+    # Process imaging rounds and channels
+    for rnd in ["R1", "R2"]:
+        prefix = "Aligned" if rnd == "R1" else "Warped"
+        
+        # Adjust these channel names to match your ND2 metadata
+        for ch in ["Ch1", "Ch2", "Ch3"]:
+            ch_filename = f"{prefix}_{rnd}_{ch}.tif"
+            ch_path = aligned_dir / ch_filename
+            
+            # Rigid shift fallback check
+            if not ch_path.exists():
+                ch_path = aligned_dir / f"Aligned_{rnd}_{ch}.tif"
+
+            if ch_path.exists():
+                print(f"Detecting spots in {rnd} - {ch}...")
+                csv_out = output_dir / constants.REPORTS_DIR / f"{rnd}_{ch}_puncta.csv"
+                
+                # Execute unified orchestrator
+                results = puncta.process_puncta_detection(
+                    image_data=tifffile.imread(ch_path),
+                    mask_data=merged_mask, # Assign spots to Consensus IDs
+                    params=puncta_params,
+                    output_path=csv_out
+                )
+                print(f"✅ Found {len(results)} spots assigned to nuclei.")
 
     print(f"\n--- ALL STEPS COMPLETE ---")
-    print(f"Results saved to: {output_dir}")
+    print(f"Final results in: {output_dir}")
     gc.collect()
 
 if __name__ == "__main__":
