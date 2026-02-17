@@ -17,6 +17,41 @@ from .. import constants
 # Set logging to see the progress bar in terminal
 logging.basicConfig(level=logging.INFO)
 
+
+# zfisher/core/segmentation.py
+
+def process_consensus_nuclei(mask1, mask2, output_dir, threshold=20.0, method="Union", progress_callback=None):
+    """
+    Updated Core Orchestrator to support Union vs Intersection.
+    """
+    if progress_callback: 
+        progress_callback(10, f"Matching nuclei labels ({method})...")
+    
+    new_mask2, pts1, pts2 = match_nuclei_labels(mask1, mask2, threshold=threshold)
+    
+    # Pass the method selection to the merge function
+    merged_mask = merge_labeled_masks(mask1, new_mask2, method=method)
+    
+    # 2. Handle Data Persistence (Moved out of the UI)
+    if output_dir:
+        from . import session # Local import to prevent circularity
+        seg_dir = Path(output_dir) / constants.SEGMENTATION_DIR
+        seg_dir.mkdir(exist_ok=True, parents=True)
+        
+        # Save the .tif mask
+        mask_path = seg_dir / f"{constants.CONSENSUS_MASKS_NAME}.tif"
+        tifffile.imwrite(mask_path, merged_mask.astype(np.uint32), compression='zlib')
+        session.set_processed_file(constants.CONSENSUS_MASKS_NAME, str(mask_path), 'labels')
+        
+        # Save the structured .npy IDs
+        ids_path = seg_dir / f"{constants.CONSENSUS_MASKS_NAME}{constants.CONSENSUS_IDS_SUFFIX}.npy"
+        dtype = [('coord', 'f4', 3), ('label', 'i4')]
+        structured_pts = np.array([(p['coord'], p['label']) for p in pts1], dtype=dtype)
+        np.save(ids_path, structured_pts)
+        session.set_processed_file(f"{constants.CONSENSUS_MASKS_NAME}_IDs", str(ids_path), 'points')
+
+    return merged_mask, pts1
+
 def segment_nuclei_3d(image_data, gpu=True):
     """
     Segments 3D nuclei using the Cellpose model.
@@ -390,26 +425,28 @@ def match_nuclei_labels(mask1, mask2, threshold=20, progress_callback=None):
     if progress_callback: progress_callback(100, "Done.")
     return new_mask2, points1_data, points2_data
 
-def merge_labeled_masks(mask1, mask2):
+def merge_labeled_masks(mask1, mask2, method="Intersection"):
     """
-    Merges two labeled masks, prioritizing mask1.
-
-    Assumes that the label IDs in both masks have already been synchronized.
-    This function fills in the background of `mask1` with labeled regions
-    from `mask2`.
-
+    Merges two labeled masks based on the specified spatial method.
+    
     Parameters
     ----------
     mask1, mask2 : np.ndarray
-        The two (Z, Y, X) label arrays to merge.
-
-    Returns
-    -------
-    np.ndarray
-        The merged label mask.
+        The two (Z, Y, X) label arrays to merge (assumed synced IDs).
+    method : {"Union", "Intersection"}
+        'Union': Keeps all labels from both rounds.
+        'Intersection': Keeps only pixels where both masks overlap.
     """
+    if method == "Intersection":
+        # Only keep pixels where BOTH masks are non-zero
+        overlap_mask = (mask1 > 0) & (mask2 > 0)
+        merged = np.zeros_like(mask1)
+        # Prioritize mask1 labels in the overlapping region
+        merged[overlap_mask] = mask1[overlap_mask]
+        return merged
+    
+    # Default: Union (Existing logic)
     merged = mask1.copy()
-    # Where mask1 is 0 (background) and mask2 has a label, use mask2
     fill_indices = (merged == 0) & (mask2 > 0)
     merged[fill_indices] = mask2[fill_indices]
     return merged
