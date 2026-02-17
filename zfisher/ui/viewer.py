@@ -20,7 +20,6 @@ from .widgets.canvas_widget import canvas_widget
 from .widgets.nuclei_matching_widget import nuclei_matching_widget
 from .widgets.puncta_widget import puncta_widget
 from .widgets.colocalization_widget import colocalization_widget
-from .widgets.distance_widget import distance_widget
 from .widgets.mask_editor_widget import mask_editor_widget, delete_mask_under_mouse
 from .widgets.puncta_editor_widget import puncta_editor_widget, delete_point_under_mouse
 from .widgets.capture_widget import capture_widget, capture_with_hotkey
@@ -257,7 +256,6 @@ def launch_zfisher():
         "capture": capture_widget,
         "start_session": StartSessionWidget(viewer),
         "canvas": canvas_widget,
-        "distance": distance_widget,
     }
 
     widgets_to_add = [
@@ -270,7 +268,6 @@ def launch_zfisher():
         (mask_editor_widget, "Mask Editor"),
         (puncta_widget, "6. Puncta Detection"),
         (puncta_editor_widget, "Puncta Editor"),
-        (distance_widget, "7. Simple Export"),
         (colocalization_widget, "8. Colocalization & Export"),
         (capture_widget, "Capture View")
     ]

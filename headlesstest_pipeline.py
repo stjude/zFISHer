@@ -2,13 +2,13 @@ import numpy as np
 from pathlib import Path
 import gc
 import tifffile
-from zfisher.core import session, io, segmentation, registration, puncta # Added puncta
+from zfisher.core import session, io, segmentation, registration, puncta, analysis # Added analysis
 from zfisher import constants
 
-def run_headless_alignment_test():
+def run_headless_full_pipeline():
     """
-    Validates Steps 1 through 6 of the zFISHer pipeline in a headless environment.
-    Automates conversion, alignment, nuclei matching, and puncta detection.
+    Validates the complete 7-step zFISHer automated backbone.
+    Conversion -> Segmentation -> Registration -> Warping -> Consensus -> Puncta -> Analysis.
     """
     # --- STEP 1: SETUP & SESSION INITIALIZATION ---
     input_r1 = Path("/Users/sstaller/Desktop/ND2_FILE_INPUTS/1-19-24Fdecon.nd2")
@@ -97,7 +97,6 @@ def run_headless_alignment_test():
     r1_aligned_mask_path = aligned_dir / "Aligned_R1_DAPI_masks.tif"
     r2_warped_mask_path = aligned_dir / "Warped_R2_DAPI_masks.tif"
     
-    # Fallback to Aligned if RANSAC used rigid shift
     if not r2_warped_mask_path.exists():
         r2_warped_mask_path = aligned_dir / "Aligned_R2_DAPI_masks.tif"
 
@@ -117,24 +116,16 @@ def run_headless_alignment_test():
 
     # --- STEP 6: PUNCTA DETECTION (HEADLESS) ---
     print(f"\n--- STEP 6: Puncta Detection (Headless) ---")
+    puncta_layers_for_analysis = [] # Used to store coordinates for Step 7
+    puncta_params = {'threshold_rel': 0.15, 'min_distance': 3, 'method': "Local Maxima"}
     
-    # Standard parameters for mammalian cell transcripts
-    puncta_params = {
-        'threshold_rel': 0.15, 
-        'min_distance': 3, 
-        'method': "Local Maxima"
-    }
-    
-    # Process imaging rounds and channels
+    # Analyze image channels
     for rnd in ["R1", "R2"]:
         prefix = "Aligned" if rnd == "R1" else "Warped"
-        
-        # Adjust these channel names to match your ND2 metadata
-        for ch in ["Ch1", "Ch2", "Ch3"]:
+        for ch in ["Ch1", "Ch2"]: # Adjust channel names as needed
             ch_filename = f"{prefix}_{rnd}_{ch}.tif"
             ch_path = aligned_dir / ch_filename
             
-            # Rigid shift fallback check
             if not ch_path.exists():
                 ch_path = aligned_dir / f"Aligned_{rnd}_{ch}.tif"
 
@@ -142,14 +133,40 @@ def run_headless_alignment_test():
                 print(f"Detecting spots in {rnd} - {ch}...")
                 csv_out = output_dir / constants.REPORTS_DIR / f"{rnd}_{ch}_puncta.csv"
                 
-                # Execute unified orchestrator
                 results = puncta.process_puncta_detection(
                     image_data=tifffile.imread(ch_path),
-                    mask_data=merged_mask, # Assign spots to Consensus IDs
+                    mask_data=merged_mask,
                     params=puncta_params,
                     output_path=csv_out
                 )
-                print(f"✅ Found {len(results)} spots assigned to nuclei.")
+                
+                # Format data for the analysis orchestrator
+                puncta_layers_for_analysis.append({
+                    'name': f"{rnd}_{ch}",
+                    'data': results[:, :3], # Just ZYX coords
+                    'scale': r1_session.voxels
+                })
+                print(f"✅ Found {len(results)} spots.")
+
+    # --- STEP 7: ANALYSIS & EXPORT (HEADLESS) ---
+    print(f"\n--- STEP 7: Analysis & Export (Headless) ---")
+    
+    # Define colocalization rules (e.g., Round 1 Ch1 vs Round 2 Ch1)
+    rules = [
+        {'source': 'R1_Ch1', 'target': 'R2_Ch1', 'threshold': 1.0}, # 1 micron cutoff
+    ]
+
+    final_report = analysis.run_colocalization_analysis(
+        layers_data=puncta_layers_for_analysis,
+        rules=rules,
+        filename="Headless_Final_Analysis.xlsx",
+        r1_path=input_r1,
+        r2_path=input_r2,
+        output_dir=output_dir / constants.REPORTS_DIR
+    )
+
+    if final_report:
+        print(f"✅ SUCCESS: Master Report generated: {final_report.name}")
 
     print(f"\n--- ALL STEPS COMPLETE ---")
     print(f"Final results in: {output_dir}")
@@ -157,6 +174,6 @@ def run_headless_alignment_test():
 
 if __name__ == "__main__":
     try:
-        run_headless_alignment_test()
+        run_headless_full_pipeline()
     except Exception as e:
         print(f"\n❌ FATAL ERROR: {e}")
