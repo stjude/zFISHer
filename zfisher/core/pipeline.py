@@ -99,19 +99,24 @@ def batch_process_directory(input_dir: Path, output_base_dir: Path, params: dict
             
     return results
 
-def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, apply_warp=True):
-
-
+def _match_and_align_channels(r1_layers_data, r2_layers_data, shift):
     """
-    Orchestrates the alignment and warping of multiple channels, yielding progress.
-    
-    Yields:
-    ------
-    tuple
-        A tuple containing (progress_int, message_str, result_dict_or_None).
-        The result dictionary contains the processed layer data for napari.
+    Matches channels between R1 and R2 and performs rigid alignment.
+
+    Parameters
+    ----------
+    r1_layers_data : list
+        List of layer data dictionaries for Round 1.
+    r2_layers_data : list
+        List of layer data dictionaries for Round 2.
+    shift : np.ndarray
+        The rigid shift vector to apply.
+
+    Returns
+    -------
+    dict
+        A dictionary of rigidly aligned pairs, keyed by channel name.
     """
-    yield 0, "Matching channels...", None
     aligned_pairs = {}
     for r1 in r1_layers_data:
         channel_name = r1['name'].split("-")[-1].strip()
@@ -120,80 +125,103 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
         if r2:
             is_label = r1.get('is_label', False)
             aligned_r1, aligned_r2 = align_and_pad_images(r1['data'], r2['data'], shift, is_label=is_label)
-            aligned_pairs[channel_name] = (aligned_r1, aligned_r2, r1, r2)
+            aligned_pairs[channel_name] = {
+                'r1_data': aligned_r1,
+                'r2_data': aligned_r2,
+                'r1_meta': r1,
+                'r2_meta': r2,
+                'is_label': is_label
+            }
+    return aligned_pairs
 
+def _save_aligned_layer(data, prefix, round_id, channel_name, output_dir, is_label):
+    """
+    Saves a single aligned/warped layer to disk and updates the session.
+    """
+    if not output_dir:
+        return
+    try:
+        layer_name = f"{prefix} {round_id} - {channel_name}"
+        out_path = output_dir / f"{prefix}_{round_id}_{channel_name}.tif"
+        tifffile.imwrite(out_path, data)
+        set_processed_file(layer_name, str(out_path), layer_type='labels' if is_label else 'image')
+    except OSError as e:
+        print(f"Error saving {layer_name}: {e}. Check disk space.")
+
+def _process_channel_pair(channel_name, pair_data, transform, output_dir):
+    """
+    Applies warping to a single channel pair, saves data, and prepares the result dict.
+    """
+    r1_data = pair_data['r1_data']
+    r2_data = pair_data['r2_data']
+    r1_meta = pair_data['r1_meta']
+    r2_meta = pair_data['r2_meta']
+    is_label = pair_data['is_label']
+
+    final_r2 = r2_data
+    r2_name_prefix = constants.ALIGNED_PREFIX
+    
+    if transform:
+        final_r2 = apply_deformable_transform(r2_data, transform, r1_data, is_label=is_label)
+        r2_name_prefix = constants.WARPED_PREFIX
+        
+    _save_aligned_layer(r1_data, constants.ALIGNED_PREFIX, "R1", channel_name, output_dir, is_label)
+    _save_aligned_layer(final_r2, r2_name_prefix, "R2", channel_name, output_dir, is_label)
+        
+    return {
+        'r1': {'data': r1_data, 'name': f"{constants.ALIGNED_PREFIX} R1 - {channel_name}", 'colormap': r1_meta['colormap'], 'scale': r1_meta['scale'], 'is_label': is_label},
+        'r2': {'data': final_r2, 'name': f"{r2_name_prefix} R2 - {channel_name}", 'colormap': r2_meta['colormap'], 'scale': r2_meta['scale'], 'is_label': is_label}
+    }
+
+def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, apply_warp=True):
+    """
+    Orchestrates the alignment and warping of multiple channels, yielding progress.
+    
+    Yields
+    ------
+    tuple
+        A tuple containing (progress_int, message_str, result_dict_or_None).
+        The result dictionary contains the processed layer data for napari.
+    """
+    # 1. Rigid Alignment
+    yield 0, "Matching and aligning channels...", None
+    aligned_pairs = _match_and_align_channels(r1_layers_data, r2_layers_data, shift)
+
+    # 2. Deformable Transform Calculation
     transform = None
     has_dapi = constants.DAPI_CHANNEL_NAME in aligned_pairs
     
     if apply_warp and has_dapi:
         yield 10, "Calculating deformable registration on DAPI...", None
         yield 11, "(This may take several minutes for large images)", None
-        dapi_r1, dapi_r2, _, _ = aligned_pairs[constants.DAPI_CHANNEL_NAME]
-        transform = calculate_deformable_transform(dapi_r1, dapi_r2)
+        dapi_pair = aligned_pairs[constants.DAPI_CHANNEL_NAME]
+        transform = calculate_deformable_transform(dapi_pair['r1_data'], dapi_pair['r2_data'])
         yield 40, "Deformable registration complete.", None
     elif apply_warp and not has_dapi:
         print("Warning: No DAPI channel found. Skipping deformable registration.")
         yield 10, "No DAPI channel; skipping deformable warp.", None
 
-    def warp_worker(item):
-        channel_name, (r1_data, r2_data, r1_meta, r2_meta) = item
-        final_r2 = r2_data
-        r2_name_prefix = constants.ALIGNED_PREFIX
-        is_label = r1_meta.get('is_label', False)
-        
-        if transform:
-            final_r2 = apply_deformable_transform(r2_data, transform, r1_data, is_label=is_label)
-            r2_name_prefix = constants.WARPED_PREFIX
-            
-        if output_dir:
-            try:
-                out_name_r1 = output_dir / f"{constants.ALIGNED_PREFIX}_R1_{channel_name}.tif"
-                out_name_r2 = output_dir / f"{r2_name_prefix}_R2_{channel_name}.tif"
-                tifffile.imwrite(out_name_r1, r1_data)
-                tifffile.imwrite(out_name_r2, final_r2)
-                set_processed_file(f"{constants.ALIGNED_PREFIX} R1 - {channel_name}", str(out_name_r1), layer_type='labels' if is_label else 'image')
-                set_processed_file(f"{r2_name_prefix} R2 - {channel_name}", str(out_name_r2), layer_type='labels' if is_label else 'image')
-            except OSError as e:
-                print(f"Error saving {channel_name}: {e}. Check disk space.")
-            
-        return {
-            'r1': {'data': r1_data, 'name': f"{constants.ALIGNED_PREFIX} R1 - {channel_name}", 'colormap': r1_meta['colormap'], 'scale': r1_meta['scale'], 'is_label': is_label},
-            'r2': {'data': final_r2, 'name': f"{r2_name_prefix} R2 - {channel_name}", 'colormap': r2_meta['colormap'], 'scale': r2_meta['scale'], 'is_label': is_label}
-        }
-
+    # 3. Per-channel Warping and Saving
     num_channels = len(aligned_pairs)
     start_progress = 40 if (apply_warp and has_dapi) else 10
     
-    if num_channels > 0:
-        for i, item in enumerate(aligned_pairs.items()):
-            channel_name, _ = item
-            
-            # Progress at the START of this channel's processing
-            base_progress = start_progress + int((i / num_channels) * (100 - start_progress))
-            yield base_progress, f"Processing {channel_name} ({i+1}/{num_channels})...", None
+    if num_channels == 0:
+        yield 100, "No matching channels found to process.", None
+        return
 
-            if transform:
-                yield base_progress, f"Applying warp to {channel_name} (can be slow)...", None
+    for i, (channel_name, pair_data) in enumerate(aligned_pairs.items()):
+        base_progress = start_progress + int((i / num_channels) * (100 - start_progress))
+        
+        message = f"Processing {channel_name} ({i+1}/{num_channels})..."
+        if transform:
+            message = f"Applying warp to {channel_name} (can be slow)..."
+        yield base_progress, message, None
 
-            result = warp_worker(item)
-            
-            # Progress at the END of this channel's processing
-            end_progress = start_progress + int(((i + 1) / num_channels) * (100 - start_progress))
-            yield end_progress, f"Finished {channel_name}", result
-            
-            gc.collect()
+        result = _process_channel_pair(channel_name, pair_data, transform, output_dir)
+        
+        end_progress = start_progress + int(((i + 1) / num_channels) * (100 - start_progress))
+        yield end_progress, f"Finished {channel_name}", result
+        
+        gc.collect()
         
     yield 100, "Canvas generation complete.", None
-
-def generate_aligned_data(fixed_stacks, moving_stacks, shift, deformable=False):
-    """
-    PURE COMPUTE: Aligns and warps images. 
-    Use this for both the UI and the Batch Pipeline.
-    """
-    results = []
-    
-    # 1. Rigged alignment/padding
-    # 2. If deformable, calculate/apply transform
-    # 3. Return the processed arrays
-    
-    return results
