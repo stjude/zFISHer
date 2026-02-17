@@ -3,7 +3,7 @@ import tifffile
 from pathlib import Path
 import gc
 import logging
-from . import io, registration, segmentation, analysis
+from . import io, registration, segmentation
 from .. import constants
 
 from .registration import (
@@ -36,7 +36,7 @@ def run_full_zfisher_pipeline(input_path: Path, output_dir: Path, params: dict):
         r2_data=r2_dapi, 
         output_dir=output_dir
     )
-    
+
     # 3. Run the DAPI orchestrator with the 3D data
     seg_results = segmentation.process_session_dapi(
         r1_data=r1_dapi, 

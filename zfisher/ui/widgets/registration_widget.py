@@ -1,10 +1,9 @@
 import napari
 from magicgui import magicgui, widgets
 
-from ...core import session
+from ...core import session, registration #
 from .. import popups
 from ..decorators import require_active_session, error_handler
-from ...core.registration import align_centroids_ransac
 
 @magicgui(
     call_button="Calculate Shift (RANSAC)",
@@ -17,35 +16,33 @@ def registration_widget(
     r1_points: "napari.layers.Points",
     r2_points: "napari.layers.Points"
 ):
-    """Calculates the XYZ shift between two point clouds."""
+    """Calculates the XYZ shift between two point clouds via the core orchestrator."""
     viewer = napari.current_viewer()
 
     if r1_points is None or r2_points is None:
         viewer.status = "Please select both centroid layers."
         return
 
-    p1 = r1_points.data
-    p2 = r2_points.data
-    
-    viewer.status = "Running RANSAC..."
-    
+    # Use a progress dialog to wrap the core call
     with popups.ProgressDialog(viewer.window._qt_window, title="Calculating Registration (RANSAC)...") as dialog:
         
-        def on_progress(value, text):
-            dialog.update_progress(value, text)
-
-        shift, rmsd = align_centroids_ransac(p1, p2, progress_callback=on_progress)
+        # Call the Refactored Core Orchestrator
+        # We pass .data (NumPy) so the core remains headless-compatible
+        shift, rmsd = registration.calculate_session_registration(
+            r1_points.data, 
+            r2_points.data, 
+            progress_callback=dialog.update_progress
+        )
         
-        session.update_data("shift", shift.tolist())
-        session.update_data("registration_rmsd", rmsd)
-        
+        # UI Feedback
         msg = f"Calculated Shift: Z={shift[0]:.2f}, Y={shift[1]:.2f}, X={shift[2]:.2f}"
         rmsd_msg = f"RMSD: {rmsd:.4f} px"
-        print(msg)
-        viewer.status = f"{msg}, {rmsd_msg}"
         
+        viewer.status = f"{msg}, {rmsd_msg}"
         registration_widget.result_label.value = f"<b>{msg}</b><br>{rmsd_msg}"
+        
         dialog.update_progress(100, "Done.")
 
+# Persistence for result display
 registration_widget.result_label = widgets.Label(value="")
 registration_widget.append(registration_widget.result_label)

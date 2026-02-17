@@ -6,7 +6,30 @@ from scipy import ndimage as ndi
 import SimpleITK as sitk
 import warnings
 
+from . import session
 from .. import constants
+
+def calculate_session_registration(r1_centroids, r2_centroids, progress_callback=None):
+    """
+    Headless Orchestrator for Step 3.
+    Calculates the shift and updates the global session data.
+    """
+    if r1_centroids is None or r2_centroids is None:
+        return None, 0.0
+
+    # 1. Execute the RANSAC math (already pure compute!)
+    shift, rmsd = align_centroids_ransac(
+        r1_centroids, 
+        r2_centroids, 
+        progress_callback=progress_callback
+    )
+
+    # 2. Update Session State
+    # Note: Using .tolist() because JSON doesn't support numpy arrays
+    session.update_data("shift", shift.tolist())
+    session.update_data("registration_rmsd", float(rmsd))
+
+    return shift, rmsd
 
 def _find_rough_shift_vector_voting(fixed_points, moving_points, n_limit=constants.RANSAC_N_LIMIT, bin_size=constants.RANSAC_BIN_SIZE):
     """
