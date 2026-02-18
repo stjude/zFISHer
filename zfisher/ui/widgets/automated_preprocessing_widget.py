@@ -14,7 +14,7 @@ from ...core.segmentation import (
     match_nuclei_labels,
     merge_labeled_masks,
 )
-from ...core.pipeline import generate_global_canvas
+#from ...core.pipeline import generate_global_canvas
 from ... import constants
 
 @magicgui(
