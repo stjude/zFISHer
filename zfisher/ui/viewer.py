@@ -249,31 +249,29 @@ def launch_zfisher():
     alignment_consensus_widget = AlignmentConsensusWidget(viewer)
     
     widget_map = {
-        "dapi_segmentation": dapi_segmentation_widget,
-        "registration": registration_widget,
-        "nuclei_matching": nuclei_matching_widget,
-        "mask_editor": mask_editor_widget,
+        # Child widgets are now accessed via the parent composite widget
+        "dapi_segmentation": alignment_consensus_widget.dapi_widget,
+        "registration": alignment_consensus_widget.registration_widget,
+        "canvas": alignment_consensus_widget.canvas_widget,
+        "nuclei_matching": alignment_consensus_widget.nuclei_matching_widget,
+        "mask_editor": alignment_consensus_widget.mask_editor_widget,
+        "automated_preprocessing": alignment_consensus_widget.automated_widget,
+        # Other top-level widgets
         "puncta_detection": puncta_widget,
         "puncta_editor": puncta_editor_widget,
         "colocalization": colocalization_widget,
         "capture": capture_widget,
         "start_session": StartSessionWidget(viewer),
-        "alignment_consensus": alignment_consensus_widget,
-        "canvas": canvas_widget,
+        "alignment_consensus": alignment_consensus_widget, # The parent itself
     }
 
     widgets_to_add = [
         (create_welcome_widget(viewer), "zFISHer Home"),
-        (StartSessionWidget(viewer), "1. Start Session"),
-        (alignment_consensus_widget, "2. Alignment + Consensus"),
-        (dapi_segmentation_widget, "3. DAPI Mapping"),
-        (registration_widget, "4. Registration"),
-        (canvas_widget, "5. Global Canvas"),
-        (nuclei_matching_widget, "6. Match Nuclei"),
-        (mask_editor_widget, "Mask Editor"),
-        (puncta_widget, "7. Puncta Detection"),
+        (StartSessionWidget(viewer), "1. Session && I/O"),
+        (alignment_consensus_widget, "2. Alignment && Consensus"),
+        (puncta_widget, "3. Puncta Detection"),
         (puncta_editor_widget, "Puncta Editor"),
-        (colocalization_widget, "9. Colocalization & Export"),
+        (colocalization_widget, "4. Colocalization & Export"),
         (capture_widget, "Capture View")
     ]
 
