@@ -11,6 +11,8 @@ COLORS = {
     'text': 'white',
     'toolbox_tab_bg': '#251f2e',
     'toolbox_tab_selected_bg': '#352c42',
+    'nested_toolbox_tab_bg': '#2c2538',
+    'nested_toolbox_tab_selected_bg': '#4d4464',
     'separator_color': '#555',
 }
 
@@ -41,6 +43,19 @@ TOOLBOX_STYLESHEET = f"""
     }}
     QToolBox::tab:selected {{
         background: {COLORS['toolbox_tab_selected_bg']};
+        border: 1px solid {COLORS['primary']};
+    }}
+"""
+
+NESTED_TOOLBOX_STYLESHEET = f"""
+    QToolBox::tab {{
+        color: {COLORS['primary']};
+        background: {COLORS['nested_toolbox_tab_bg']};
+        font-weight: bold;
+        border-radius: 4px;
+    }}
+    QToolBox::tab:selected {{
+        background: {COLORS['nested_toolbox_tab_selected_bg']};
         border: 1px solid {COLORS['primary']};
     }}
 """

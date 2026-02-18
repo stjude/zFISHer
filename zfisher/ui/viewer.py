@@ -14,6 +14,7 @@ from ..core import session
 # --- RESTORED IMPORTS ---
 # Import all the individual widgets from their own scripts
 from .widgets.start_session_widget import StartSessionWidget
+from .widgets.alignment_consensus_widget import AlignmentConsensusWidget
 from .widgets.dapi_segmentation_widget import dapi_segmentation_widget
 from .widgets.registration_widget import registration_widget
 from .widgets.canvas_widget import canvas_widget
@@ -245,6 +246,8 @@ def launch_zfisher():
     scale_bar_widget = DraggableScaleBar(viewer, parent=viewer_canvas_native)
     viewer.window.custom_scale_bar = scale_bar_widget
     
+    alignment_consensus_widget = AlignmentConsensusWidget(viewer)
+    
     widget_map = {
         "dapi_segmentation": dapi_segmentation_widget,
         "registration": registration_widget,
@@ -255,20 +258,22 @@ def launch_zfisher():
         "colocalization": colocalization_widget,
         "capture": capture_widget,
         "start_session": StartSessionWidget(viewer),
+        "alignment_consensus": alignment_consensus_widget,
         "canvas": canvas_widget,
     }
 
     widgets_to_add = [
         (create_welcome_widget(viewer), "zFISHer Home"),
         (StartSessionWidget(viewer), "1. Start Session"),
-        (dapi_segmentation_widget, "2. DAPI Mapping"),
-        (registration_widget, "3. Registration"),
-        (canvas_widget, "4. Global Canvas"),
-        (nuclei_matching_widget, "5. Match Nuclei"),
+        (alignment_consensus_widget, "2. Alignment + Consensus"),
+        (dapi_segmentation_widget, "3. DAPI Mapping"),
+        (registration_widget, "4. Registration"),
+        (canvas_widget, "5. Global Canvas"),
+        (nuclei_matching_widget, "6. Match Nuclei"),
         (mask_editor_widget, "Mask Editor"),
-        (puncta_widget, "6. Puncta Detection"),
+        (puncta_widget, "7. Puncta Detection"),
         (puncta_editor_widget, "Puncta Editor"),
-        (colocalization_widget, "8. Colocalization & Export"),
+        (colocalization_widget, "9. Colocalization & Export"),
         (capture_widget, "Capture View")
     ]
 
