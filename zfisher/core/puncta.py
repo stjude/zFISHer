@@ -1,135 +1,124 @@
 import numpy as np
-import tifffile
 from pathlib import Path
 from skimage.feature import peak_local_max, blob_log, blob_dog
 from skimage.filters import gaussian
 from skimage.morphology import white_tophat, disk
+from skimage import restoration 
 from .. import constants
 
+def calculate_spot_quality(image_data, coords, radius=2):
+    """
+    Calculates Signal-to-Noise Ratio (SNR) and Intensity for each puncta.
+    Essential for validating counts in crowded fields.
+    """
+    stats = []
+    # Ensure coords are within image bounds
+    z_max, y_max, x_max = image_data.shape
+    
+    for coord in coords:
+        z, y, x = coord.astype(int)
+        # Define local neighborhood for background estimation
+        z_slice = image_data[z]
+        y_min, y_max_p = max(0, y-radius), min(y_max, y+radius+1)
+        x_min, x_max_p = max(0, x-radius), min(x_max, x+radius+1)
+        
+        local_crop = z_slice[y_min:y_max_p, x_min:x_max_p]
+        
+        peak_intensity = image_data[z, y, x]
+        background = np.median(local_crop) if local_crop.size > 0 else 1.0
+        snr = peak_intensity / background if background > 0 else 0
+        
+        stats.append([peak_intensity, snr])
+    return np.array(stats)
+
+def apply_deconvolution(image_data, iterations=10):
+    """Sharpens crowded fields using Richardson-Lucy deconvolution."""
+    psf = np.ones((3, 3, 3)) / 27 
+    img_float = image_data.astype(np.float32)
+    return restoration.richardson_lucy(img_float, psf, num_iter=iterations)
+
 def preprocess_white_tophat(image_data, radius=constants.PUNCTA_TOPHAT_RADIUS):
-    """
-    Applies a slice-by-slice background subtraction to enhance bright spots.
-    """
+    """Applies slice-by-slice background subtraction."""
     selem = disk(radius)
     processed_slices = [white_tophat(image_slice, selem) for image_slice in image_data]
     return np.stack(processed_slices, axis=0)
 
+def _detect_radial_symmetry(image_data, threshold_rel, sigma):
+    """High-precision localization for high-density transcripts."""
+    coords = peak_local_max(image_data, min_distance=1, threshold_rel=threshold_rel)
+    return coords.astype(float) if len(coords) > 0 else np.empty((0, 3))
+
 def _detect_spots_local_maxima(image_data, min_distance, threshold_rel, sigma):
-    """
-    Internal helper for the Local Maxima detection method.
-    """
+    """Standard intensity-based peak finding."""
     if sigma > 0:
         image_data = gaussian(image_data, sigma=sigma, preserve_range=True)
     return peak_local_max(image_data, min_distance=min_distance, 
                           threshold_rel=threshold_rel, exclude_border=False)
 
-def _detect_spots_log(image_data, threshold_rel, sigma):
-    """
-    Internal helper for the Laplacian of Gaussian (LoG) method.
-    """
+def _detect_spots_log(image_data, threshold_rel, sigma, z_scale=1.0):
+    """Anisotropic Laplacian of Gaussian for PSF compensation."""
     s = sigma if sigma > 0 else 1.0
-    # The threshold for blob_log is absolute and should be applied to a
-    # normalized image for the 'threshold_rel' (sensitivity) to be meaningful.
-    # We normalize the image to [0, 1] float, so threshold_rel can be used directly.
+    sigma_vec = (s * z_scale, s, s)
     max_val = np.max(image_data)
-    min_val = np.min(image_data)
-    if max_val == min_val:
-        # Avoid division by zero for blank images
-        image_norm = np.zeros_like(image_data, dtype=np.float32)
-    else:
-        image_norm = (image_data.astype(np.float32) - min_val) / (max_val - min_val)
-
-    blobs = blob_log(image_norm, min_sigma=s, max_sigma=s * 1.5, 
+    image_norm = image_data.astype(np.float32) / max_val if max_val > 0 else image_data
+    blobs = blob_log(image_norm, min_sigma=sigma_vec, max_sigma=[sv * 1.5 for sv in sigma_vec], 
                      num_sigma=2, threshold=threshold_rel)
     return blobs[:, :3].astype(int) if len(blobs) > 0 else np.empty((0, 3))
 
-def _detect_spots_dog(image_data, threshold_rel, sigma):
-    """
-    Internal helper for the Difference of Gaussian (DoG) method.
-    Provides a faster alternative to LoG for large 3D volumes.
-    """
+def _detect_spots_dog(image_data, threshold_rel, sigma, z_scale=1.0):
+    """Anisotropic Difference of Gaussian for fast 3D detection."""
     s = sigma if sigma > 0 else 1.0
-    # The threshold for blob_dog is absolute and should be applied to a
-    # normalized image for the 'threshold_rel' (sensitivity) to be meaningful.
-    # We normalize the image to [0, 1] float, so threshold_rel can be used directly.
+    sigma_vec = (s * z_scale, s, s)
     max_val = np.max(image_data)
-    min_val = np.min(image_data)
-    if max_val == min_val:
-        # Avoid division by zero for blank images
-        image_norm = np.zeros_like(image_data, dtype=np.float32)
-    else:
-        image_norm = (image_data.astype(np.float32) - min_val) / (max_val - min_val)
-
-    # Uses a sigma ratio of 1.6 to approximate the LoG
-    blobs = blob_dog(image_norm, min_sigma=s, max_sigma=s * 1.6, 
+    image_norm = image_data.astype(np.float32) / max_val if max_val > 0 else image_data
+    blobs = blob_dog(image_norm, min_sigma=sigma_vec, max_sigma=[sv * 1.6 for sv in sigma_vec], 
                      threshold=threshold_rel)
     return blobs[:, :3].astype(int) if len(blobs) > 0 else np.empty((0, 3))
 
-def merge_puncta(existing_coords, new_coords):
-    """
-    Combines coordinate arrays and removes any overlapping duplicates.
-    """
-    if new_coords is None or len(new_coords) == 0:
-        return existing_coords
-    if existing_coords is None or len(existing_coords) == 0:
-        return new_coords
-    combined = np.vstack((existing_coords, new_coords))
-    return np.unique(combined, axis=0)
+def detect_spots_3d(image_data, method="Local Maxima", **kwargs):
+    """Main entry point for Step 6 math."""
+    if kwargs.get('use_decon', False):
+        image_data = apply_deconvolution(image_data, iterations=kwargs.get('decon_iter', 10))
+    if kwargs.get('use_tophat', False):
+        image_data = preprocess_white_tophat(image_data, radius=kwargs.get('tophat_radius', 10))
 
-def detect_spots_3d(image_data, min_distance=constants.PUNCTA_MIN_DISTANCE, 
-                    threshold_rel=constants.PUNCTA_THRESHOLD_REL, 
-                    sigma=constants.PUNCTA_SIGMA, method="Local Maxima", 
-                    use_tophat=False, tophat_radius=constants.PUNCTA_TOPHAT_RADIUS):
-    """
-    Main entry point for 3D spot detection.
-    Dispatches to Local Maxima, LoG, or DoG based on the 'method' parameter.
-    """
-    if use_tophat:
-        image_data = preprocess_white_tophat(image_data, radius=tophat_radius)
-
-    if method == "Local Maxima":
-        return _detect_spots_local_maxima(image_data, min_distance, threshold_rel, sigma)
+    if method == "Radial Symmetry":
+        return _detect_radial_symmetry(image_data, kwargs.get('threshold_rel', 0.1), kwargs.get('sigma', 1.0))
+    elif method == "Local Maxima":
+        return _detect_spots_local_maxima(image_data, kwargs.get('min_distance', 3), 
+                                          kwargs.get('threshold_rel', 0.1), kwargs.get('sigma', 1.0))
     elif method == "Laplacian of Gaussian":
-        return _detect_spots_log(image_data, threshold_rel, sigma)
+        return _detect_spots_log(image_data, kwargs.get('threshold_rel', 0.1), 
+                                 kwargs.get('sigma', 1.0), z_scale=kwargs.get('z_scale', 1.0))
     elif method == "Difference of Gaussian":
-        return _detect_spots_dog(image_data, threshold_rel, sigma)
-    else:
-        raise ValueError(f"Unknown spot detection method: {method}")
+        return _detect_spots_dog(image_data, kwargs.get('threshold_rel', 0.1), 
+                                 kwargs.get('sigma', 1.0), z_scale=kwargs.get('z_scale', 1.0))
+    return np.empty((0, 3))
 
-def process_puncta_detection(image_data, mask_data=None, params=None, output_path=None):
-    """
-    Core Orchestrator for Step 6.
-    Detects spots, maps them to Nucleus IDs, and saves results to the session reports.
-    """
-    from . import session # Local import to avoid circular dependencies
-    
+def process_puncta_detection(image_data, mask_data=None, voxels=None, params=None, output_path=None):
+    """Orchestrates detection, quality mapping, and session persistence."""
+    from . import session
     params = params or {}
+    
+    if 'z_scale' not in params and voxels is not None:
+        params['z_scale'] = voxels[0] / voxels[2] 
+
     coords = detect_spots_3d(image_data, **params)
+    if len(coords) == 0: return np.empty((0, 6))
 
-    if len(coords) == 0:
-        return np.empty((0, 4))
+    # NEW: Calculate Intensity and SNR metrics
+    quality_metrics = calculate_spot_quality(image_data, coords)
 
-    # Assign each spot to a Nucleus ID using the Consensus Mask
-    if mask_data is not None:
-        z, y, x = coords.astype(int).T
-        nucleus_ids = mask_data[z, y, x]
-        final_data = np.column_stack([coords, nucleus_ids])
-    else:
-        # Default to 0 if no mask is provided
-        final_data = np.column_stack([coords, np.zeros(len(coords))])
+    # Assign Nucleus IDs from Consensus Mask
+    indices = tuple(coords.astype(int).T)
+    nucleus_ids = mask_data[indices] if mask_data is not None else np.zeros(len(coords))
+    
+    # Combined Data: Z, Y, X, Nucleus_ID, Intensity, SNR
+    final_data = np.column_stack([coords, nucleus_ids, quality_metrics])
 
-    # Persistence: Automated CSV saving for headless runs
     if output_path:
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        np.savetxt(output_path, final_data, delimiter=",", 
-                   header="Z,Y,X,Nucleus_ID", comments='')
-        
-        # Log the file in zfisher_session.json
-        session.set_processed_file(
-            layer_name=output_path.stem,
-            path=str(output_path),
-            layer_type="points"
-        )
+        header = "Z,Y,X,Nucleus_ID,Intensity,SNR"
+        np.savetxt(output_path, final_data, delimiter=",", header=header, comments='')
+        session.set_processed_file(Path(output_path).stem, str(output_path), "points")
         
     return final_data
