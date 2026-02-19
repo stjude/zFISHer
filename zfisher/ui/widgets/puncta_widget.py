@@ -3,7 +3,7 @@ import numpy as np
 from magicgui import magicgui, widgets
 from pathlib import Path
 
-from ...core import session, puncta  # Import the new core orchestrator
+from ...core import session, puncta  
 from .. import popups, viewer_helpers
 from ..decorators import require_active_session, error_handler
 from ... import constants
@@ -13,7 +13,11 @@ from ... import constants
     layout="vertical",
     image_layer={"label": "Target Channel"},
     nuclei_layer={"label": "Nuclei Masks (Consensus)"},
-    method={"label": "Algorithm", "choices": ["Local Maxima", "Laplacian of Gaussian"]},
+    # ADDED: "Difference of Gaussian" to choices
+    method={
+        "label": "Algorithm", 
+        "choices": ["Local Maxima", "Laplacian of Gaussian", "Difference of Gaussian"]
+    },
     threshold={"label": "Sensitivity (0-1)", "min": 0.01, "max": 1.0, "step": 0.01, "value": constants.PUNCTA_THRESHOLD_REL},
     min_distance={"label": "Min Distance (px)", "min": 1, "max": 20, "step": 1, "value": constants.PUNCTA_MIN_DISTANCE},
     sigma={"label": "Spot Radius (Sigma)", "min": 0.0, "max": 5.0, "step": 0.1, "value": constants.PUNCTA_SIGMA},
@@ -56,7 +60,7 @@ def puncta_widget(
             csv_path = Path(output_dir) / constants.REPORTS_DIR / f"{image_layer.name}_puncta.csv"
 
         # 3. Call Core Orchestrator
-        # This handles detection, nucleus mapping, and CSV saving.
+        # This handles detection, nucleus mapping, and automated session logging.
         mask_data = nuclei_layer.data if nuclei_layer else None
         results = puncta.process_puncta_detection(
             image_data=image_layer.data,
@@ -66,7 +70,7 @@ def puncta_widget(
         )
         
         # 4. Update Viewer
-        # We only pass the ZYX coordinates (first 3 columns) to the viewer helper
+        # Pass ZYX coordinates (first 3 columns) to create/update the points layer
         viewer_helpers.add_or_update_puncta_layer(viewer, image_layer, results[:, :3])
 
         viewer.status = f"Found {len(results)} spots in {image_layer.name}."
