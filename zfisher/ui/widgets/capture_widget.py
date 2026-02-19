@@ -233,11 +233,22 @@ capture_widget.append(arrow_container)
 # Add Scale Bar Options
 sb_container = widgets.Container(layout="horizontal", labels=False)
 sb_label = widgets.Label(value="<b>Scalebar:</b>")
+sb_visible = widgets.CheckBox(text="Visible", value=True)
 sb_lock = widgets.CheckBox(text="Lock")
 sb_pixels = widgets.CheckBox(text="Show Pixels")
 
-sb_container.extend([sb_label, sb_lock, sb_pixels])
+sb_container.extend([sb_label, sb_visible, sb_lock, sb_pixels])
 capture_widget.append(sb_container)
+
+@sb_visible.changed.connect
+def _on_sb_visible(state: bool):
+    """Toggles the visibility of the custom scale bar."""
+    viewer = napari.current_viewer()
+    if viewer and hasattr(viewer.window, 'custom_scale_bar'):
+        if state:
+            viewer.window.custom_scale_bar.show()
+        else:
+            viewer.window.custom_scale_bar.hide()
 
 @sb_lock.changed.connect
 def _on_sb_lock(state: bool):
