@@ -261,10 +261,10 @@ def launch_zfisher():
         "mask_editor": alignment_consensus_widget.mask_editor_widget,
         "automated_preprocessing": alignment_consensus_widget.automated_widget,
         # Other top-level widgets
-        "puncta_detection": puncta_widget,
-        "puncta_editor": puncta_editor_widget,
-        "colocalization": colocalization_widget,
-        "capture": capture_widget,
+        "puncta_detection": puncta_picking_widget.algorithmic_widget,
+        "puncta_editor": puncta_picking_widget.manual_widget,
+        "colocalization": export_visualization_widget.export_widget,
+        "capture": export_visualization_widget.capture_widget,
         "start_session": StartSessionWidget(viewer),
         "alignment_consensus": alignment_consensus_widget, # The parent itself
         "puncta_picking": puncta_picking_widget,
@@ -276,11 +276,7 @@ def launch_zfisher():
         (StartSessionWidget(viewer), "1. Session && I/O"),
         (alignment_consensus_widget, "2. Alignment && Consensus"),
         (puncta_picking_widget, "3. Puncta Picking"),
-        (export_visualization_widget, "4. Export && Visualization"),
-        (puncta_widget, "5. Puncta Detection"),
-        (puncta_editor_widget, "Puncta Editor"),
-        (colocalization_widget, "6. Colocalization && Export"),
-        (capture_widget, "Capture View")
+        (export_visualization_widget, "4. Export && Visualization")
     ]
 
     # --- 3. Sidebar Toolbox Styling ---
