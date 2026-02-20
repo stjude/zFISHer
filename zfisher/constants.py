@@ -56,6 +56,7 @@ DEFORMABLE_ITERATIONS = 10
 DEFORMABLE_SAMPLING_PERC = 0.01
 DEFORMATION_GRID_SPACING = 50 # For visualization vector field
 DEFORMATION_FIELD_NAME = "Deformation_Field"
+WARPED_CHECKERBOARD_NAME = "Warped_Checkerboard"
 
 # --- Analysis & Reporting ---
 EXCEL_SUFFIX = ".xlsx"

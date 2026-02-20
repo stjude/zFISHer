@@ -95,9 +95,10 @@ def canvas_widget(
                 viewer.add_image(
                     layer_info['data'], 
                     name=layer_info['name'], 
-                    colormap=meta.get('colormap', 'gray'), 
+                    colormap=meta.get('colormap', 'gray'),
                     scale=meta['scale'], 
-                    blending='additive'
+                    blending=meta.get('blending', 'additive'),
+                    opacity=meta.get('opacity', 1.0)
                 )
             elif layer_type == 'vectors':
                 viewer.add_vectors(

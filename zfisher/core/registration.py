@@ -439,6 +439,29 @@ def create_deformation_field(fixed_image_shape, transform, grid_spacing=50):
     napari_vectors = np.stack([start_points, vectors], axis=1)
     return napari_vectors
 
+def create_checkerboard_image(image_shape, box_size=50):
+    """
+    Creates a 3D checkerboard image.
+
+    Parameters
+    ----------
+    image_shape : tuple
+        The shape (Z, Y, X) of the output image.
+    box_size : int
+        The size of each checkerboard cube in pixels.
+
+    Returns
+    -------
+    np.ndarray
+        A 3D NumPy array with a checkerboard pattern of 0s and 255s.
+    """
+    z, y, x = np.mgrid[0:image_shape[0], 0:image_shape[1], 0:image_shape[2]]
+    
+    # Integer division creates the checkerboard pattern
+    checkerboard = (z // box_size % 2) ^ (y // box_size % 2) ^ (x // box_size % 2)
+    
+    # Scale to image intensity range (e.g., uint8)
+    return (checkerboard * 255).astype(np.uint8)
 # zfisher/core/registration.py
 
 # ... (existing imports)
@@ -465,9 +488,10 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
         update(10, "Calculating deformable registration on DAPI...")
         dapi_pair = aligned_pairs[constants.DAPI_CHANNEL_NAME]
         transform = calculate_deformable_transform(dapi_pair['r1_data'], dapi_pair['r2_data'])
-        update(35, "Deformable registration complete.")
+        update(30, "Deformable registration complete.")
 
-        update(40, "Generating deformation field...")
+        # --- DEFORMATION VISUALIZATION ---
+        update(35, "Generating deformation field...")
         deformation_vectors = create_deformation_field(dapi_pair['r1_data'].shape, transform, grid_spacing=constants.DEFORMATION_GRID_SPACING)
         vector_layer_name = constants.DEFORMATION_FIELD_NAME
         vector_path = output_dir / f"{vector_layer_name}.npy"
@@ -478,10 +502,24 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
         results.append({
             'data': deformation_vectors, 'name': vector_layer_name, 'meta': vector_meta, 'type': 'vectors'
         })
+
+        update(40, "Generating warped checkerboard...")
+        checkerboard_img = create_checkerboard_image(dapi_pair['r1_data'].shape, box_size=constants.DEFORMATION_GRID_SPACING)
+        warped_checkerboard = apply_deformable_transform(checkerboard_img, transform, dapi_pair['r1_data'], is_label=False)
+        
+        checker_layer_name = constants.WARPED_CHECKERBOARD_NAME
+        checker_path = output_dir / f"{checker_layer_name}.tif"
+        tifffile.imwrite(checker_path, warped_checkerboard, compression='zlib')
+        set_processed_file(checker_layer_name, str(checker_path), layer_type='image')
+
+        checker_meta = {'scale': dapi_pair['r1_meta']['scale'], 'colormap': 'gray', 'blending': 'translucent', 'opacity': 0.3}
+        results.append({
+            'data': warped_checkerboard, 'name': checker_layer_name, 'meta': checker_meta, 'type': 'image'
+        })
     
     # 3. Per-channel Warping and Saving
     num_channels = len(aligned_pairs)
-    start_progress = 40 if (apply_warp and has_dapi) else 10
+    start_progress = 45 if (apply_warp and has_dapi) else 10
 
     for i, (channel_name, pair_data) in enumerate(aligned_pairs.items()):
         prog = start_progress + int((i / num_channels) * (100 - start_progress))

@@ -107,7 +107,12 @@ def _automated_preprocessing_magic_widget(
             if layer_type == 'labels':
                 new_l = viewer.add_labels(layer_info['data'].astype(np.uint32), name=layer_info['name'], scale=meta['scale'], opacity=0.6)
             elif layer_type == 'image':
-                new_l = viewer.add_image(layer_info['data'], name=layer_info['name'], colormap=meta.get('colormap', 'gray'), scale=meta['scale'], blending='additive')
+                new_l = viewer.add_image(
+                    layer_info['data'], name=layer_info['name'], 
+                    colormap=meta.get('colormap', 'gray'), 
+                    scale=meta['scale'], 
+                    blending=meta.get('blending', 'additive'),
+                    opacity=meta.get('opacity', 1.0))
             elif layer_type == 'vectors':
                 new_l = viewer.add_vectors(
                     layer_info['data'],
