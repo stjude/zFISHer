@@ -21,36 +21,6 @@ logging.basicConfig(level=logging.INFO)
 # zfisher/core/segmentation.py
 # zfisher/core/segmentation.py
 
-def process_puncta_headless(image_data, mask_data, params, output_path=None):
-    """
-    Orchestrator for Step 6: Detects spots and assigns them to nucleus IDs.
-    """
-    # 1. Detect raw coordinates
-    coords = detect_spots_3d(
-        image_data, 
-        threshold_rel=params.get('threshold', 0.1),
-        min_distance=params.get('min_distance', 2),
-        sigma=params.get('sigma', 1.0),
-        method=params.get('method', "Local Maxima")
-    )
-
-    if len(coords) == 0:
-        return np.empty((0, 4)) # Z, Y, X, ID
-
-    # 2. Assign to Nucleus IDs
-    # We sample the consensus mask at each spot's coordinate
-    indices = tuple(coords.astype(int).T)
-    assigned_ids = mask_data[indices]
-
-    # Combine into a single table: [Z, Y, X, Nucleus_ID]
-    results = np.column_stack([coords, assigned_ids])
-
-    # 3. Persistence
-    if output_path:
-        np.savetxt(output_path, results, delimiter=",", header="Z,Y,X,Nucleus_ID", comments='')
-
-    return results
-
 def process_consensus_nuclei(mask1, mask2, output_dir, threshold=20.0, method="Union", progress_callback=None):
     """
     Updated Core Orchestrator to support Union vs Intersection.
@@ -79,7 +49,7 @@ def process_consensus_nuclei(mask1, mask2, output_dir, threshold=20.0, method="U
         dtype = [('coord', 'f4', 3), ('label', 'i4')]
         structured_pts = np.array([(p['coord'], p['label']) for p in pts1], dtype=dtype)
         np.save(ids_path, structured_pts)
-        session.set_processed_file(f"{constants.CONSENSUS_MASKS_NAME}_IDs", str(ids_path), 'points')
+        session.set_processed_file(f"{constants.CONSENSUS_MASKS_NAME}_IDs", str(ids_path), 'points', metadata={'subtype': 'structured_ids'})
 
     return merged_mask, pts1
 
@@ -235,149 +205,6 @@ def segment_nuclei_classical(image_data, progress_callback=None):
     
     if progress_callback: progress_callback(100, "Done.")
     return labels, centroids
-
-def preprocess_white_tophat(image_data, radius=constants.PUNCTA_TOPHAT_RADIUS):
-    """
-    Applies a white top-hat transform to subtract uneven background.
-
-    This is useful for enhancing bright spots before detection. The operation
-    is applied slice-by-slice in 3D.
-
-    Parameters
-    ----------
-    image_data : np.ndarray
-        The 3D (Z, Y, X) image data.
-    radius : int, optional
-        The radius of the disk-shaped structuring element for the morphological
-        opening. This should be larger than the radius of the spots.
-
-    Returns
-    -------
-    np.ndarray
-        The background-subtracted image.
-    """
-    selem = disk(radius)
-    # Apply to each Z-slice. This is generally faster and effective for spots.
-    processed_slices = [white_tophat(image_slice, selem) for image_slice in image_data]
-    return np.stack(processed_slices, axis=0)
-
-def _detect_spots_local_maxima(image_data, min_distance, threshold_rel, sigma):
-    """
-    Finds spots using the local maxima method.
-
-    Parameters
-    ----------
-    image_data : np.ndarray
-        The 3D image data.
-    min_distance, threshold_rel, sigma :
-        Parameters for `skimage.feature.peak_local_max`.
-
-    Returns
-    -------
-    np.ndarray
-        (N, 3) array of spot coordinates.
-    """
-    if sigma > 0:
-        image_data = gaussian(image_data, sigma=sigma, preserve_range=True)
-    
-    return peak_local_max(
-        image_data,
-        min_distance=min_distance,
-        threshold_rel=threshold_rel,
-        exclude_border=False
-    )
-
-def _detect_spots_log(image_data, threshold_rel, sigma):
-    """
-    Finds spots using the Laplacian of Gaussian (LoG) method.
-
-    Parameters
-    ----------
-    image_data : np.ndarray
-        The 3D image data.
-    threshold_rel, sigma :
-        Parameters for `skimage.feature.blob_log`.
-
-    Returns
-    -------
-    np.ndarray
-        (N, 3) array of spot coordinates.
-    """
-    s = sigma if sigma > 0 else 1.0
-    abs_threshold = threshold_rel * np.max(image_data)
-    
-    blobs = blob_log(
-        image_data,
-        min_sigma=s,
-        max_sigma=s * 1.5,
-        num_sigma=2,
-        threshold=abs_threshold
-    )
-    
-    if len(blobs) > 0:
-        return blobs[:, :3].astype(int)
-    return np.empty((0, 3))
-
-def detect_spots_3d(image_data, min_distance=constants.PUNCTA_MIN_DISTANCE, threshold_rel=constants.PUNCTA_THRESHOLD_REL, sigma=constants.PUNCTA_SIGMA, method="Local Maxima", use_tophat=False, tophat_radius=constants.PUNCTA_TOPHAT_RADIUS):
-    """
-    Detects diffraction-limited spots (puncta) in a 3D image.
-    
-    Parameters
-    ----------
-    image_data : np.ndarray
-        The 3D (Z, Y, X) image data.
-    min_distance : int, optional
-        Minimum pixel distance between spots for the "Local Maxima" method.
-    threshold_rel : float, optional
-        Relative intensity threshold (0.0 to 1.0).
-    sigma : float, optional
-        Standard deviation for Gaussian kernel (smoothing). 0 to disable.
-    method : {"Local Maxima", "Laplacian of Gaussian"}, optional
-        The algorithm to use for spot detection.
-    use_tophat : bool, optional
-        If True, applies a white top-hat filter for background subtraction
-        before spot detection.
-    tophat_radius : int, optional
-        The radius for the white top-hat structuring element.
-
-    Returns
-    -------
-    np.ndarray
-        (N, 3) array of (Z, Y, X) spot coordinates.
-    """
-    if use_tophat:
-        image_data = preprocess_white_tophat(image_data, radius=tophat_radius)
-
-    if method == "Local Maxima":
-        return _detect_spots_local_maxima(image_data, min_distance, threshold_rel, sigma)
-    elif method == "Laplacian of Gaussian":
-        return _detect_spots_log(image_data, threshold_rel, sigma)
-    else:
-        raise ValueError(f"Unknown spot detection method: {method}")
-
-def merge_puncta(existing_coords, new_coords):
-    """
-    Combines new puncta coordinates with existing ones and removes duplicates.
-
-    Parameters
-    ----------
-    existing_coords : np.ndarray
-        Array of existing (N, D) coordinates.
-    new_coords : np.ndarray
-        Array of new (M, D) coordinates to add.
-
-    Returns
-    -------
-    np.ndarray
-        A new array of unique combined coordinates.
-    """
-    if new_coords is None or len(new_coords) == 0:
-        return existing_coords
-    if existing_coords is None or len(existing_coords) == 0:
-        return new_coords
-        
-    combined = np.vstack((existing_coords, new_coords))
-    return np.unique(combined, axis=0)
 
 def match_nuclei_labels(mask1, mask2, threshold=20, progress_callback=None):
     """

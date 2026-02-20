@@ -80,26 +80,34 @@ def canvas_widget(
         )
 
         # 6. Add resulting layers back to napari
-        for entry in results:
-            for key in ['r1', 'r2']:
-                layer = entry[key]
-                meta = layer['meta'] # Retrieve original metadata
-                
-                if meta['is_label']:
-                    viewer.add_labels(
-                        layer['data'], 
-                        name=layer['name'], 
-                        scale=meta['scale'], 
-                        opacity=0.6
-                    )
-                else:
-                    viewer.add_image(
-                        layer['data'], 
-                        name=layer['name'], 
-                        colormap=meta['colormap'], 
-                        scale=meta['scale'], 
-                        blending='additive'
-                    )
+        for layer_info in results:
+            layer_type = layer_info['type']
+            meta = layer_info['meta']
+            
+            if layer_type == 'labels':
+                viewer.add_labels(
+                    layer_info['data'], 
+                    name=layer_info['name'], 
+                    scale=meta['scale'], 
+                    opacity=0.6
+                )
+            elif layer_type == 'image':
+                viewer.add_image(
+                    layer_info['data'], 
+                    name=layer_info['name'], 
+                    colormap=meta.get('colormap', 'gray'), 
+                    scale=meta['scale'], 
+                    blending='additive'
+                )
+            elif layer_type == 'vectors':
+                viewer.add_vectors(
+                    layer_info['data'],
+                    name=layer_info['name'],
+                    scale=meta['scale'],
+                    edge_width=0.2,
+                    length=2.5,
+                    edge_color='cyan'
+                )
 
     # 7. Final UI Tidy Up
     if hide_raw:

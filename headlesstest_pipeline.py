@@ -77,6 +77,7 @@ def run_headless_full_pipeline():
                 'name': "DAPI_masks", 
                 'data': tifffile.imread(mask_path), 
                 'scale': r1_session.voxels, 
+                #'colormap': r1_session.meta['channels'][i]['colormap'], # ADD THIS
                 'is_label': True
             })
 

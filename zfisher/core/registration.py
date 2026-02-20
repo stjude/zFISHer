@@ -399,6 +399,46 @@ def apply_deformable_transform(moving_data, transform, fixed_reference_data, is_
         
     return result
 
+def create_deformation_field(fixed_image_shape, transform, grid_spacing=50):
+    """
+    Generates a vector field representing the deformation.
+
+    Creates a grid of points and transforms them to show the warp.
+
+    Parameters
+    ----------
+    fixed_image_shape : tuple
+        The shape (Z, Y, X) of the reference image space.
+    transform : SimpleITK.Transform
+        The calculated B-spline transform.
+    grid_spacing : int
+        The spacing between points in the grid in pixels.
+
+    Returns
+    -------
+    np.ndarray
+        (N, 2, 3) array for napari's Vectors layer. [start_point, vector]
+    """
+    # Create a grid of points in Z, Y, X order
+    z_coords = np.arange(0, fixed_image_shape[0], grid_spacing)
+    y_coords = np.arange(0, fixed_image_shape[1], grid_spacing)
+    x_coords = np.arange(0, fixed_image_shape[2], grid_spacing)
+    
+    if len(z_coords) == 0: z_coords = [fixed_image_shape[0] // 2]
+    if len(y_coords) == 0: y_coords = [fixed_image_shape[1] // 2]
+    if len(x_coords) == 0: x_coords = [fixed_image_shape[2] // 2]
+
+    zz, yy, xx = np.meshgrid(z_coords, y_coords, x_coords, indexing='ij')
+    start_points = np.vstack([zz.ravel(), yy.ravel(), xx.ravel()]).T
+
+    start_points_sitk = start_points[:, ::-1].astype(float)
+    transformed_points_sitk = [transform.TransformPoint(p) for p in start_points_sitk]
+    end_points = np.array(transformed_points_sitk)[:, ::-1]
+
+    vectors = end_points - start_points
+    napari_vectors = np.stack([start_points, vectors], axis=1)
+    return napari_vectors
+
 # zfisher/core/registration.py
 
 # ... (existing imports)
@@ -412,6 +452,7 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
         if progress_callback:
             progress_callback(val, msg)
 
+    results = []
     # 1. Rigid Alignment
     update(0, "Matching and aligning channels...")
     aligned_pairs = _match_and_align_channels(r1_layers_data, r2_layers_data, shift)
@@ -424,10 +465,21 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
         update(10, "Calculating deformable registration on DAPI...")
         dapi_pair = aligned_pairs[constants.DAPI_CHANNEL_NAME]
         transform = calculate_deformable_transform(dapi_pair['r1_data'], dapi_pair['r2_data'])
-        update(40, "Deformable registration complete.")
+        update(35, "Deformable registration complete.")
+
+        update(40, "Generating deformation field...")
+        deformation_vectors = create_deformation_field(dapi_pair['r1_data'].shape, transform, grid_spacing=constants.DEFORMATION_GRID_SPACING)
+        vector_layer_name = constants.DEFORMATION_FIELD_NAME
+        vector_path = output_dir / f"{vector_layer_name}.npy"
+        np.save(vector_path, deformation_vectors)
+        set_processed_file(vector_layer_name, str(vector_path), layer_type='vectors')
+        
+        vector_meta = {'scale': dapi_pair['r1_meta']['scale']}
+        results.append({
+            'data': deformation_vectors, 'name': vector_layer_name, 'meta': vector_meta, 'type': 'vectors'
+        })
     
     # 3. Per-channel Warping and Saving
-    results = []
     num_channels = len(aligned_pairs)
     start_progress = 40 if (apply_warp and has_dapi) else 10
 
@@ -436,8 +488,8 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
         update(prog, f"Warping {channel_name}...")
 
         # Process the pair (Math + Save)
-        result = _process_channel_pair(channel_name, pair_data, transform, output_dir)
-        results.append(result)
+        result_pair = _process_channel_pair(channel_name, pair_data, transform, output_dir)
+        results.extend(result_pair)
         gc.collect()
         
     update(100, "Canvas generation complete.")
@@ -473,10 +525,9 @@ def _process_channel_pair(channel_name, pair_data, transform, output_dir):
     _save_aligned_layer(r1_data, constants.ALIGNED_PREFIX, "R1", channel_name, output_dir, is_label)
     _save_aligned_layer(final_r2, r2_prefix, "R2", channel_name, output_dir, is_label)
         
-    return {
-        'r1': {'data': r1_data, 'name': f"{constants.ALIGNED_PREFIX} R1 - {channel_name}", 'meta': pair_data['r1_meta']},
-        'r2': {'data': final_r2, 'name': f"{r2_prefix} R2 - {channel_name}", 'meta': pair_data['r2_meta']}
-    }
+    r1_result = {'data': r1_data, 'name': f"{constants.ALIGNED_PREFIX} R1 - {channel_name}", 'meta': pair_data['r1_meta'], 'type': 'labels' if is_label else 'image'}
+    r2_result = {'data': final_r2, 'name': f"{r2_prefix} R2 - {channel_name}", 'meta': pair_data['r2_meta'], 'type': 'labels' if is_label else 'image'}
+    return [r1_result, r2_result]
 
 def _save_aligned_layer(data, prefix, round_id, channel_name, output_dir, is_label):
     """Internal helper to write warped files to disk and track in session."""

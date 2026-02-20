@@ -3,7 +3,11 @@ import numpy as np
 from dataclasses import dataclass
 import tifffile
 import json
+import xml.etree.ElementTree as ET
 from pathlib import Path
+import re
+from collections import defaultdict
+import os
 from .. import constants
 
 @dataclass
@@ -39,9 +43,45 @@ class TiffSession:
         self.path = str(path)
         self.ome_metadata = None
         self.data = self._load_data(self.path)
-        # Default metadata (generic names and 1.0 scale)
+
+        if self.ome_metadata:
+            try:
+                self._parse_ome_metadata()
+            except Exception as e:
+                print(f"Warning: Could not parse OME-XML from {path}. Using defaults. Error: {e}")
+                self._set_default_metadata()
+        else:
+            self._set_default_metadata()
+
+    def _set_default_metadata(self):
+        """Sets default metadata when OME-XML is not available."""
         self.channels = [f"Ch{i+1}" for i in range(self.data.shape[1])]
-        self.voxels = (1.0, 1.0, 1.0) # (dz, dy, dx)
+        self.voxels = (1.0, 1.0, 1.0)
+
+    def _parse_ome_metadata(self):
+        """Parses channel names and voxel sizes from OME-XML string."""
+        root = ET.fromstring(self.ome_metadata)
+        ns = {'ome': 'http://www.openmicroscopy.org/Schemas/OME/2016-06'}
+
+        # Extract Channel Names
+        channels = root.findall('.//ome:Channel', ns)
+        if channels:
+            # Ensure we don't have more channel names than channel data
+            num_ch_data = self.data.shape[1]
+            self.channels = [ch.get('Name', f"Ch{i}") for i, ch in enumerate(channels)][:num_ch_data]
+        else:
+            self._set_default_metadata()
+
+        # Extract Voxel Sizes
+        pixels_element = root.find('.//ome:Pixels', ns)
+        if pixels_element is not None:
+            dz = float(pixels_element.get('PhysicalSizeZ', 1.0))
+            dy = float(pixels_element.get('PhysicalSizeY', 1.0))
+            dx = float(pixels_element.get('PhysicalSizeX', 1.0))
+            self.voxels = tuple(
+                s if isinstance(s, (int, float)) and not np.isnan(s) and s > 0 else 1.0 
+                for s in (dz, dy, dx)
+            )
 
     def _load_data(self, path_str: str):
         """
@@ -237,3 +277,43 @@ def convert_nd2_to_ome(
 
     except Exception as e:
         print(f"Failed to convert ND2 to OME-TIFF: {e}")
+
+def discover_nd2_pairs(input_dir: Path):
+    """
+    Discovers pairs of R1 and R2 .nd2 files in a directory.
+    Assumes a naming convention where files are differentiated by 'R1' and 'R2'.
+    Example: 'FOV1_R1.nd2' and 'FOV1_R2.nd2'.
+    """
+    files = list(input_dir.glob('*.nd2'))
+    groups = defaultdict(dict)
+
+    # Try to group by replacing R1/R2 identifiers
+    for f in files:
+        # Create a base name by removing r1/r2 and common separators
+        base_name = re.sub(r'[._-]?r[12][._-]?', '', f.name, flags=re.IGNORECASE)
+        if 'r1' in f.name.lower():
+            groups[base_name]['r1'] = f
+        elif 'r2' in f.name.lower():
+            groups[base_name]['r2'] = f
+
+    paired_list = []
+    for base, paths in groups.items():
+        if 'r1' in paths and 'r2' in paths:
+            # Create a clean FOV name from the R1 file
+            fov_name = re.sub(r'[._-]?r1[._-]?', '', paths['r1'].stem, flags=re.IGNORECASE)
+            paired_list.append({'name': fov_name, 'r1': paths['r1'], 'r2': paths['r2']})
+
+    # Fallback for non-standard names: pair by sorted order
+    if not paired_list and len(files) >= 2:
+        print("Warning: No R1/R2 pairs found by name. Assuming sorted file order represents pairs.")
+        sorted_files = sorted(files)
+        # If odd number of files, the last one is ignored
+        for i in range(0, (len(sorted_files) // 2) * 2, 2):
+            r1_path = sorted_files[i]
+            r2_path = sorted_files[i+1]
+            common_prefix = os.path.commonprefix([r1_path.stem, r2_path.stem]).strip('-_')
+            fov_name = common_prefix if common_prefix else r1_path.stem
+            paired_list.append({'name': fov_name, 'r1': r1_path, 'r2': r2_path})
+
+    print(f"Discovered {len(paired_list)} file pairs for batch processing.")
+    return paired_list

@@ -119,6 +119,6 @@ def process_puncta_detection(image_data, mask_data=None, voxels=None, params=Non
     if output_path:
         header = "Z,Y,X,Nucleus_ID,Intensity,SNR"
         np.savetxt(output_path, final_data, delimiter=",", header=header, comments='')
-        session.set_processed_file(Path(output_path).stem, str(output_path), "points")
+        session.set_processed_file(Path(output_path).stem, str(output_path), "points", metadata={'subtype': 'puncta'})
         
     return final_data

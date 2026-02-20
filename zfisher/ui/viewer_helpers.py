@@ -2,6 +2,7 @@ import napari
 import numpy as np
 import tifffile
 from pathlib import Path
+import pandas as pd
 from packaging.version import parse as parse_version
 from ..core import session, segmentation
 
@@ -78,7 +79,16 @@ def add_image_session_to_viewer(viewer: napari.Viewer, image_session, prefix: st
     update_scale_text()
 
 def _load_points_layer(viewer, name, path, scale, file_info):
-    data = np.load(path, allow_pickle=True)
+    if path.suffix.lower() == '.csv':
+        try:
+            # Puncta are saved as CSV with header: Z,Y,X,...
+            df = pd.read_csv(path)
+            data = df[['Z', 'Y', 'X']].to_numpy()
+        except (pd.errors.EmptyDataError, KeyError, FileNotFoundError):
+            data = np.empty((0, 3)) # Return empty array if file is empty or has wrong columns
+    else: # Assume .npy
+        data = np.load(path, allow_pickle=True)
+
     subtype = file_info.get('subtype')
 
     if subtype == 'structured_ids':
