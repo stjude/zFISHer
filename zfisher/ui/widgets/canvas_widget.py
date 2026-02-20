@@ -85,12 +85,14 @@ def canvas_widget(
             meta = layer_info['meta']
             
             if layer_type == 'labels':
-                viewer.add_labels(
+                layer = viewer.add_labels(
                     layer_info['data'], 
                     name=layer_info['name'], 
                     scale=meta['scale'], 
                     opacity=0.6
                 )
+                # Use iso_categorical for better 3D rendering of masks alongside points
+                layer.rendering = 'iso_categorical'
             elif layer_type == 'image':
                 viewer.add_image(
                     layer_info['data'], 

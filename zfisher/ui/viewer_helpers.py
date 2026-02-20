@@ -98,10 +98,12 @@ def _load_points_layer(viewer, name, path, scale, file_info):
             'string': '{label}', 'size': 10, 'color': '#40b5d8',
             'translation': np.array([0, -5, 0])
         }
-        viewer.add_points(
+        layer = viewer.add_points(
             coords, name=name, size=0, scale=scale, properties=properties,
             text=text_params, blending='translucent_no_depth'
         )
+        # Show points from all Z-slices in 2D view
+        layer.out_of_slice_display = True
     elif subtype == 'centroids':
         viewer.add_points(data, name=name, size=5, face_color='orange', scale=scale)
     elif subtype == 'puncta':
@@ -119,7 +121,9 @@ def _load_points_layer(viewer, name, path, scale, file_info):
 
 def _load_labels_layer(viewer, name, path, scale, file_info):
     data = tifffile.imread(path)
-    viewer.add_labels(data, name=name, opacity=0.3, visible=False, scale=scale)
+    layer = viewer.add_labels(data, name=name, opacity=0.3, visible=False, scale=scale)
+    # Use iso_categorical for better 3D rendering of masks alongside points
+    layer.rendering = 'iso_categorical'
 
 def _load_image_layer(viewer, name, path, scale, file_info):
     data = tifffile.imread(path)
@@ -259,7 +263,9 @@ def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napa
 
     if masks is not None:
         mask_layer_name = f"{source_layer.name}{constants.MASKS_SUFFIX}"
-        viewer.add_labels(masks, name=mask_layer_name, opacity=0.3, visible=False, scale=source_layer.scale)
+        layer = viewer.add_labels(masks, name=mask_layer_name, opacity=0.3, visible=False, scale=source_layer.scale)
+        # Use iso_categorical for better 3D rendering of masks alongside points
+        layer.rendering = 'iso_categorical'
         if seg_dir:
             mask_path = seg_dir / f"{mask_layer_name}.tif"
             tifffile.imwrite(mask_path, masks)
@@ -304,12 +310,14 @@ def add_consensus_nuclei_to_viewer(viewer: napari.Viewer, r1_mask_layer: napari.
     layer_name = constants.CONSENSUS_MASKS_NAME
 
     # Add merged mask layer
-    viewer.add_labels(
+    layer = viewer.add_labels(
         merged_mask,
         name=layer_name,
         scale=r1_mask_layer.scale,
         opacity=0.5
     )
+    # Use iso_categorical for better 3D rendering of masks alongside points
+    layer.rendering = 'iso_categorical'
 
     # Save mask to disk and session
     if output_dir:
@@ -329,12 +337,14 @@ def add_consensus_nuclei_to_viewer(viewer: napari.Viewer, r1_mask_layer: napari.
         coords = np.array([p['coord'] for p in pts1])
         labels = np.array([p['label'] for p in pts1])
 
-        viewer.add_points(
+        points_layer = viewer.add_points(
             coords, name=ids_layer_name, size=0, scale=r1_mask_layer.scale,
             properties={'label': labels},
             text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
             blending='translucent_no_depth'
         )
+        # Show points from all Z-slices in 2D view
+        points_layer.out_of_slice_display = True
 
         # Save points to disk and session
         if output_dir:
@@ -375,11 +385,14 @@ def add_or_update_label_ids(viewer: napari.Viewer, labels_layer: napari.layers.L
     if name in viewer.layers:
         viewer.layers[name].data = coords
         viewer.layers[name].properties = {'label': labels}
+        viewer.layers[name].out_of_slice_display = True
     elif len(coords) > 0:
-        viewer.add_points(
+        layer = viewer.add_points(
             coords, name=name, size=0, scale=labels_layer.scale,
             properties={'label': labels},
             text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
             blending='translucent_no_depth'
         )
+        # Show points from all Z-slices in 2D view
+        layer.out_of_slice_display = True
     viewer.status = f"Refreshed IDs for {labels_layer.name}"

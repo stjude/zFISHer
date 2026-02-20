@@ -106,6 +106,8 @@ def _automated_preprocessing_magic_widget(
 
             if layer_type == 'labels':
                 new_l = viewer.add_labels(layer_info['data'].astype(np.uint32), name=layer_info['name'], scale=meta['scale'], opacity=0.6)
+                # Use iso_categorical for better 3D rendering of masks alongside points
+                new_l.rendering = 'iso_categorical'
             elif layer_type == 'image':
                 new_l = viewer.add_image(
                     layer_info['data'], name=layer_info['name'], 
@@ -141,7 +143,23 @@ def _automated_preprocessing_magic_widget(
                 threshold=match_threshold, method="Union", 
                 progress_callback=lambda p, m: dialog.update_progress(90 + int(p*0.1), m)
             )
-            viewer.add_labels(merged_mask, name=constants.CONSENSUS_MASKS_NAME, scale=aligned_r1_dapi.scale, opacity=0.5)
+            layer = viewer.add_labels(merged_mask, name=constants.CONSENSUS_MASKS_NAME, scale=aligned_r1_dapi.scale, opacity=0.5)
+            # Use iso_categorical for better 3D rendering of masks alongside points
+            layer.rendering = 'iso_categorical'
+            
+            # Add the corresponding ID points layer
+            if pts1:
+                ids_layer_name = f"{constants.CONSENSUS_MASKS_NAME}{constants.CONSENSUS_IDS_SUFFIX}"
+                coords = np.array([p['coord'] for p in pts1])
+                labels = np.array([p['label'] for p in pts1])
+
+                points_layer = viewer.add_points(
+                    coords, name=ids_layer_name, size=0, scale=aligned_r1_dapi.scale,
+                    properties={'label': labels},
+                    text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
+                    blending='translucent_no_depth'
+                )
+                points_layer.out_of_slice_display = True
 
         if hide_raw:
             for layer in viewer.layers:

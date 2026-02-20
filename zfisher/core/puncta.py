@@ -96,7 +96,7 @@ def detect_spots_3d(image_data, method="Local Maxima", **kwargs):
     return np.empty((0, 3))
 
 def process_puncta_detection(image_data, mask_data=None, voxels=None, params=None, output_path=None):
-    """Orchestrates detection, quality mapping, and session persistence."""
+    """Orchestrates detection, quality mapping, and session persistence with CSV tags."""
     from . import session
     params = params or {}
     
@@ -106,10 +106,8 @@ def process_puncta_detection(image_data, mask_data=None, voxels=None, params=Non
     coords = detect_spots_3d(image_data, **params)
     if len(coords) == 0: return np.empty((0, 6))
 
-    # NEW: Calculate Intensity and SNR metrics
     quality_metrics = calculate_spot_quality(image_data, coords)
 
-    # Assign Nucleus IDs from Consensus Mask
     indices = tuple(coords.astype(int).T)
     nucleus_ids = mask_data[indices] if mask_data is not None else np.zeros(len(coords))
     
@@ -119,6 +117,16 @@ def process_puncta_detection(image_data, mask_data=None, voxels=None, params=Non
     if output_path:
         header = "Z,Y,X,Nucleus_ID,Intensity,SNR"
         np.savetxt(output_path, final_data, delimiter=",", header=header, comments='')
-        session.set_processed_file(Path(output_path).stem, str(output_path), "points", metadata={'subtype': 'puncta'})
+        
+        # FIX: Pass format metadata so UI knows this is a text CSV, not a pickle
+        session.set_processed_file(
+            Path(output_path).stem, 
+            str(output_path), 
+            "points", 
+            metadata={
+                'format': 'csv', 
+                'subtype': 'puncta_csv'
+            }
+        )
         
     return final_data

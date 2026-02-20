@@ -21,21 +21,19 @@ logging.basicConfig(level=logging.INFO)
 # zfisher/core/segmentation.py
 # zfisher/core/segmentation.py
 
+# zfisher/core/segmentation.py (Partial: focus on process_consensus_nuclei)
 def process_consensus_nuclei(mask1, mask2, output_dir, threshold=20.0, method="Union", progress_callback=None):
     """
-    Updated Core Orchestrator to support Union vs Intersection.
+    Updated Core Orchestrator to support Union vs Intersection and 3D coordinate integrity.
     """
     if progress_callback: 
         progress_callback(10, f"Matching nuclei labels ({method})...")
     
     new_mask2, pts1, pts2 = match_nuclei_labels(mask1, mask2, threshold=threshold)
-    
-    # Pass the method selection to the merge function
     merged_mask = merge_labeled_masks(mask1, new_mask2, method=method)
     
-    # 2. Handle Data Persistence (Moved out of the UI)
     if output_dir:
-        from . import session # Local import to prevent circularity
+        from . import session 
         seg_dir = Path(output_dir) / constants.SEGMENTATION_DIR
         seg_dir.mkdir(exist_ok=True, parents=True)
         
@@ -46,13 +44,27 @@ def process_consensus_nuclei(mask1, mask2, output_dir, threshold=20.0, method="U
         
         # Save the structured .npy IDs
         ids_path = seg_dir / f"{constants.CONSENSUS_MASKS_NAME}{constants.CONSENSUS_IDS_SUFFIX}.npy"
+        
+        # FIX: Explicitly enforce 3D coordinates (Z, Y, X) for napari restoration
         dtype = [('coord', 'f4', 3), ('label', 'i4')]
-        structured_pts = np.array([(p['coord'], p['label']) for p in pts1], dtype=dtype)
+        
+        # Ensure coordinates are captured as 3-element arrays
+        structured_pts = np.array([
+            (np.array(p['coord'], dtype='f4'), int(p['label'])) 
+            for p in pts1
+        ], dtype=dtype)
+        
         np.save(ids_path, structured_pts)
-        session.set_processed_file(f"{constants.CONSENSUS_MASKS_NAME}_IDs", str(ids_path), 'points', metadata={'subtype': 'structured_ids'})
+        
+        # Use 'structured_ids' subtype to trigger correct unpacking in viewer_helpers
+        session.set_processed_file(
+            f"{constants.CONSENSUS_MASKS_NAME}_IDs", 
+            str(ids_path), 
+            'points', 
+            metadata={'subtype': 'structured_ids'}
+        )
 
     return merged_mask, pts1
-
 def segment_nuclei_3d(image_data, gpu=True):
     """
     Segments 3D nuclei using the Cellpose model.

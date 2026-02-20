@@ -476,22 +476,39 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
             progress_callback(val, msg)
 
     results = []
+    
     # 1. Rigid Alignment
     update(0, "Matching and aligning channels...")
-    aligned_pairs = _match_and_align_channels(r1_layers_data, r2_layers_data, shift)
+    aligned_pairs = {}
+    num_raw_layers = len(r1_layers_data)
+    if num_raw_layers > 0:
+        for i, r1 in enumerate(r1_layers_data):
+            channel_name = r1['name'].split("-")[-1].strip()
+            
+            prog = int(((i + 1) / num_raw_layers) * 20)  # This part takes up to 20%
+            update(prog, f"Rigidly aligning {channel_name}...")
+
+            r2 = next((l for l in r2_layers_data if channel_name in l['name']), None)
+            if r2:
+                is_label = r1.get('is_label', False)
+                aligned_r1, aligned_r2 = align_and_pad_images(r1['data'], r2['data'], shift, is_label=is_label)
+                aligned_pairs[channel_name] = {
+                    'r1_data': aligned_r1, 'r2_data': aligned_r2,
+                    'r1_meta': r1, 'r2_meta': r2, 'is_label': is_label
+                }
 
     # 2. Deformable Transform Calculation
     transform = None
     has_dapi = constants.DAPI_CHANNEL_NAME in aligned_pairs
     
     if apply_warp and has_dapi:
-        update(10, "Calculating deformable registration on DAPI...")
+        update(20, "Calculating deformable registration on DAPI...")
         dapi_pair = aligned_pairs[constants.DAPI_CHANNEL_NAME]
         transform = calculate_deformable_transform(dapi_pair['r1_data'], dapi_pair['r2_data'])
-        update(30, "Deformable registration complete.")
+        update(50, "Deformable registration complete.")
 
         # --- DEFORMATION VISUALIZATION ---
-        update(35, "Generating deformation field...")
+        update(55, "Generating deformation field...")
         deformation_vectors = create_deformation_field(dapi_pair['r1_data'].shape, transform, grid_spacing=constants.DEFORMATION_GRID_SPACING)
         vector_layer_name = constants.DEFORMATION_FIELD_NAME
         vector_path = output_dir / f"{vector_layer_name}.npy"
@@ -503,7 +520,7 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
             'data': deformation_vectors, 'name': vector_layer_name, 'meta': vector_meta, 'type': 'vectors'
         })
 
-        update(40, "Generating warped checkerboard...")
+        update(60, "Generating warped checkerboard...")
         checkerboard_img = create_checkerboard_image(dapi_pair['r1_data'].shape, box_size=constants.DEFORMATION_GRID_SPACING)
         warped_checkerboard = apply_deformable_transform(checkerboard_img, transform, dapi_pair['r1_data'], is_label=False)
         
@@ -519,34 +536,20 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
     
     # 3. Per-channel Warping and Saving
     num_channels = len(aligned_pairs)
-    start_progress = 45 if (apply_warp and has_dapi) else 10
+    start_progress = 60 if (apply_warp and has_dapi) else 20
 
-    for i, (channel_name, pair_data) in enumerate(aligned_pairs.items()):
-        prog = start_progress + int((i / num_channels) * (100 - start_progress))
-        update(prog, f"Warping {channel_name}...")
+    if num_channels > 0:
+        for i, (channel_name, pair_data) in enumerate(aligned_pairs.items()):
+            prog = start_progress + int(((i + 1) / num_channels) * (100 - start_progress))
+            update(prog, f"Applying warp to {channel_name}...")
 
-        # Process the pair (Math + Save)
-        result_pair = _process_channel_pair(channel_name, pair_data, transform, output_dir)
-        results.extend(result_pair)
-        gc.collect()
+            # Process the pair (Math + Save)
+            result_pair = _process_channel_pair(channel_name, pair_data, transform, output_dir)
+            results.extend(result_pair)
+            gc.collect()
         
     update(100, "Canvas generation complete.")
     return results
-
-def _match_and_align_channels(r1_layers_data, r2_layers_data, shift):
-    """Pure math/logic: matches R1/R2 channels and performs initial rigid shift."""
-    aligned_pairs = {}
-    for r1 in r1_layers_data:
-        channel_name = r1['name'].split("-")[-1].strip()
-        r2 = next((l for l in r2_layers_data if channel_name in l['name']), None)
-        if r2:
-            is_label = r1.get('is_label', False)
-            aligned_r1, aligned_r2 = align_and_pad_images(r1['data'], r2['data'], shift, is_label=is_label)
-            aligned_pairs[channel_name] = {
-                'r1_data': aligned_r1, 'r2_data': aligned_r2,
-                'r1_meta': r1, 'r2_meta': r2, 'is_label': is_label
-            }
-    return aligned_pairs
 
 def _process_channel_pair(channel_name, pair_data, transform, output_dir):
     """Applies deformable warp if needed and triggers the save."""
