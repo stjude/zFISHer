@@ -8,7 +8,7 @@ from ..decorators import require_active_session
 @magicgui(
     call_button="Delete Selected Points",
     points_layer={"label": "Layer to Edit"},
-    point_size={"label": "Display Size", "min": 1, "max": 20, "value": 3},
+    point_size={"label": "Display Size", "min": 0, "max": 20, "value": 3},
     show_all_z={"label": "Project All Z (Out of Slice)"}
 )
 @require_active_session()
@@ -89,11 +89,10 @@ def register_editor_hotkeys(viewer):
 @puncta_editor_widget.points_layer.changed.connect
 def _on_layer_change(new_layer):
     if new_layer:
-        # Use int(np.mean()) to handle potentially non-uniform sizes
-        puncta_editor_widget.point_size.value = int(np.mean(new_layer.size))
+        # Calculate mean size but ensure it's at least 1
+        avg_size = int(np.mean(new_layer.size))
+        puncta_editor_widget.point_size.value = max(1, avg_size) 
         
-        # FIX: Try the new attribute name first, fallback to the old one
+        # Keep the getattr fix for out_of_slice
         oos_val = getattr(new_layer, 'out_of_slice_dist', getattr(new_layer, 'out_of_slice', True))
-        
-        # If it's a distance (float), convert to bool for the checkbox
         puncta_editor_widget.show_all_z.value = bool(oos_val)

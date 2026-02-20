@@ -13,21 +13,7 @@ from .. import constants
 @dataclass
 class FISHSession:
     """
-    A data class to hold information from a single imaging session,
-    typically loaded from an .nd2 file.
-
-    Attributes
-    ----------
-    data : np.ndarray
-        The image data in (Z, C, Y, X) order.
-    voxels : tuple
-        A tuple representing voxel size (dz, dy, dx) in microns.
-    channels : list
-        A list of channel names as strings.
-    path : str
-        The file path to the original image file.
-    metadata : dict, optional
-        A dictionary containing raw metadata from the file.
+    A data class to hold information from a single imaging session.
     """
     data: np.ndarray      # (Z, C, Y, X)
     voxels: tuple        # (dz, dy, dx) in microns
@@ -44,19 +30,40 @@ class TiffSession:
         self.ome_metadata = None
         self.data = self._load_data(self.path)
 
+        # First attempt to parse OME-XML
         if self.ome_metadata:
             try:
                 self._parse_ome_metadata()
             except Exception as e:
-                print(f"Warning: Could not parse OME-XML from {path}. Using defaults. Error: {e}")
+                print(f"Warning: Could not parse OME-XML from {path}. Error: {e}")
                 self._set_default_metadata()
         else:
             self._set_default_metadata()
 
     def _set_default_metadata(self):
-        """Sets default metadata when OME-XML is not available."""
-        self.channels = [f"Ch{i+1}" for i in range(self.data.shape[1])]
+        """
+        Sets default metadata and looks for 'Labels' in ImageJ metadata as a fallback.
+        """
         self.voxels = (1.0, 1.0, 1.0)
+        
+        # Check for ImageJ metadata fallback (Fix for cropper script)
+        try:
+            with tifffile.TiffFile(self.path) as tif:
+                ij_meta = tif.imagej_metadata
+                if ij_meta and 'Labels' in ij_meta:
+                    # 'Labels' is a list of channel names
+                    self.channels = ij_meta['Labels'][:self.data.shape[1]]
+                    print(f"Metadata Fallback: Loaded channel names {self.channels} from ImageJ Labels.")
+                    
+                    # Try to extract Z-spacing if available
+                    if 'spacing' in ij_meta:
+                        self.voxels = (float(ij_meta['spacing']), 1.0, 1.0)
+                    return
+        except Exception:
+            pass
+
+        # Final fallback to generic naming if no labels are found
+        self.channels = [f"Ch{i+1}" for i in range(self.data.shape[1])]
 
     def _parse_ome_metadata(self):
         """Parses channel names and voxel sizes from OME-XML string."""
@@ -66,7 +73,6 @@ class TiffSession:
         # Extract Channel Names
         channels = root.findall('.//ome:Channel', ns)
         if channels:
-            # Ensure we don't have more channel names than channel data
             num_ch_data = self.data.shape[1]
             self.channels = [ch.get('Name', f"Ch{i}") for i, ch in enumerate(channels)][:num_ch_data]
         else:
@@ -84,35 +90,22 @@ class TiffSession:
             )
 
     def _load_data(self, path_str: str):
-        """
-        Loads image data from a TIFF file and normalizes its dimensions.
-
-        Parameters
-        ----------
-        path_str : str
-            The file path to the TIFF image.
-
-        Returns
-        -------
-        np.ndarray
-            The image data normalized to (Z, C, Y, X) order.
-        """
+        """Loads image data and normalizes dimensions to (Z, C, Y, X)."""
         with tifffile.TiffFile(path_str) as tif:
             data = tif.asarray()
             self.ome_metadata = tif.ome_metadata
 
-        # Normalize to (Z, C, Y, X)
         if data.ndim == 2:   # (Y, X) -> (1, 1, Y, X)
             return data[np.newaxis, np.newaxis, :, :]
         elif data.ndim == 3: # (Z, Y, X) -> (Z, 1, Y, X)
             return data[:, np.newaxis, :, :]
         elif data.ndim == 4:
-            # Heuristic: If dim0 < dim1, assume (C, Z, Y, X) and swap to (Z, C, Y, X)
-            if data.shape[0] < data.shape[1]:
+            if data.shape[0] < data.shape[1]: # (C, Z, Y, X) -> (Z, C, Y, X)
                 return np.moveaxis(data, 0, 1)
             return data
         return data
 
+# ... [Remaining functions load_nd2_session, load_image_session, etc. remain unchanged] ...
 def load_nd2_session(path: str) -> FISHSession:
     """
     Loads an ND2 file into a FISHSession object.

@@ -19,8 +19,8 @@ class NewSessionWidget(Container):
 
     def _init_widgets(self):
         """Initializes all UI widgets for the new session functionality."""
-        self._round1_path = FileEdit(label="Round 1", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path("/Users/sstaller/Desktop/ND2_FILE_INPUTS/1-19-24Fdecon.nd2"))
-        self._round2_path = FileEdit(label="Round 2", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path("/Users/sstaller/Desktop/ND2_FILE_INPUTS/1-17-24Adecon.nd2"))
+        self._round1_path = FileEdit(label="Round 1", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path("/Users/sstaller/zFISHer_MicroTests/R1_micro.tif"))
+        self._round2_path = FileEdit(label="Round 2", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path("/Users/sstaller/zFISHer_MicroTests/R2_micro.tif"))
         self._output_dir = FileEdit(label="Output Directory", mode="d", value=Path.home() / "zFISHer_Output")
         self._new_session_btn = PushButton(text="Start New Session")
 
