@@ -297,28 +297,38 @@ def match_nuclei_labels(mask1, mask2, threshold=20, progress_callback=None):
 
 def merge_labeled_masks(mask1, mask2, method="Intersection"):
     """
-    Merges two labeled masks based on the specified spatial method.
-    
-    Parameters
-    ----------
-    mask1, mask2 : np.ndarray
-        The two (Z, Y, X) label arrays to merge (assumed synced IDs).
-    method : {"Union", "Intersection"}
-        'Union': Keeps all labels from both rounds.
-        'Intersection': Keeps only pixels where both masks overlap.
+    Safely merges masks by expanding both to a shared 'Union' shape.
+    This prevents broadcasting errors when stacks have different slice counts.
     """
+    # 1. Determine the largest required dimension in Z, Y, and X
+    max_z = max(mask1.shape[0], mask2.shape[0])
+    max_y = max(mask1.shape[1], mask2.shape[1])
+    max_x = max(mask1.shape[2], mask2.shape[2])
+    union_shape = (max_z, max_y, max_x)
+
+    # 2. Helper to pad a mask to the union shape without shifting its data
+    def pad_to_union(mask, target_shape):
+        if mask.shape == target_shape:
+            return mask
+        padded = np.zeros(target_shape, dtype=mask.dtype)
+        padded[:mask.shape[0], :mask.shape[1], :mask.shape[2]] = mask
+        return padded
+
+    # 3. Align the array sizes (Computational alignment)
+    m1_padded = pad_to_union(mask1, union_shape)
+    m2_padded = pad_to_union(mask2, union_shape)
+
+    # 4. Perform the biological matching
     if method == "Intersection":
-        # Only keep pixels where BOTH masks are non-zero
-        overlap_mask = (mask1 > 0) & (mask2 > 0)
-        merged = np.zeros_like(mask1)
-        # Prioritize mask1 labels in the overlapping region
-        merged[overlap_mask] = mask1[overlap_mask]
+        overlap_mask = (m1_padded > 0) & (m2_padded > 0)
+        merged = np.zeros(union_shape, dtype=mask1.dtype)
+        merged[overlap_mask] = m1_padded[overlap_mask]
         return merged
     
-    # Default: Union (Existing logic)
-    merged = mask1.copy()
-    fill_indices = (merged == 0) & (mask2 > 0)
-    merged[fill_indices] = mask2[fill_indices]
+    # Union Method
+    merged = m1_padded.copy()
+    fill_indices = (merged == 0) & (m2_padded > 0)
+    merged[fill_indices] = m2_padded[fill_indices]
     return merged
 
 def get_mask_centroids(mask):
