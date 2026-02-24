@@ -1,6 +1,7 @@
 import napari
 import numpy as np
 from magicgui import magicgui
+from magicgui.widgets import Container, Label
 
 from ...core import session
 from .. import popups, viewer_helpers
@@ -16,7 +17,7 @@ from ... import constants
 )
 @require_active_session("Please start or load a session before running segmentation.")
 @error_handler("DAPI Segmentation Failed")
-def dapi_segmentation_widget(
+def _dapi_segmentation_widget(
     r1_layer: "napari.layers.Image",
     r2_layer: "napari.layers.Image"
 ):
@@ -50,3 +51,10 @@ def dapi_segmentation_widget(
         
         dialog.update_progress(100, "Complete.")
         viewer.status = "Segmentation complete."
+
+# --- UI Wrapper ---
+dapi_segmentation_widget = Container(labels=False)
+header = Label(value="DAPI Mapping")
+header.native.setObjectName("widgetHeader")
+info = Label(value="<i>Segments nuclei in DAPI channels.</i>")
+dapi_segmentation_widget.extend([header, info, _dapi_segmentation_widget])

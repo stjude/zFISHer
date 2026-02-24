@@ -5,6 +5,13 @@ from ...core import session, registration #
 from .. import popups
 from ..decorators import require_active_session, error_handler
 
+import napari
+from magicgui import magicgui, widgets
+
+from ...core import session, registration #
+from .. import popups
+from ..decorators import require_active_session, error_handler
+
 @magicgui(
     call_button="Calculate Shift (RANSAC)",
     r1_points={"label": "R1 Centroids"},
@@ -12,7 +19,7 @@ from ..decorators import require_active_session, error_handler
 )
 @require_active_session("Please start or load a session before running registration.")
 @error_handler("Registration Failed")
-def registration_widget(
+def _registration_widget(
     r1_points: "napari.layers.Points",
     r2_points: "napari.layers.Points"
 ):
@@ -39,10 +46,17 @@ def registration_widget(
         rmsd_msg = f"RMSD: {rmsd:.4f} px"
         
         viewer.status = f"{msg}, {rmsd_msg}"
-        registration_widget.result_label.value = f"<b>{msg}</b><br>{rmsd_msg}"
+        _registration_widget.result_label.value = f"<b>{msg}</b><br>{rmsd_msg}"
         
         dialog.update_progress(100, "Done.")
 
 # Persistence for result display
-registration_widget.result_label = widgets.Label(value="")
-registration_widget.append(registration_widget.result_label)
+_registration_widget.result_label = widgets.Label(value="")
+_registration_widget.append(_registration_widget.result_label)
+
+# --- UI Wrapper ---
+registration_widget = widgets.Container(labels=False)
+header = widgets.Label(value="Registration")
+header.native.setObjectName("widgetHeader")
+info = widgets.Label(value="<i>Calculates shift between rounds.</i>")
+registration_widget.extend([header, info, _registration_widget])

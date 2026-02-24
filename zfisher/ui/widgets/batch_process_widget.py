@@ -1,4 +1,4 @@
-from magicgui.widgets import Container, PushButton, FileEdit
+from magicgui.widgets import Container, PushButton, FileEdit, Label
 from pathlib import Path
 import napari
 import logging
@@ -10,7 +10,7 @@ from ..decorators import error_handler
 
 class BatchProcessWidget(Container):
     def __init__(self, viewer: napari.Viewer):
-        super().__init__()
+        super().__init__(labels=False)
         self._viewer = viewer
 
         self._init_widgets()
@@ -19,6 +19,9 @@ class BatchProcessWidget(Container):
 
     def _init_widgets(self):
         """Initializes all UI widgets for the batch processing functionality."""
+        self._header = Label(value="Batch Process")
+        self._header.native.setObjectName("widgetHeader")
+        self._info = Label(value="<i>Run the full pipeline on multiple fields of view.</i>")
         self._batch_input_dir = FileEdit(label="Input Directory", mode='d')
         self._batch_output_dir = FileEdit(label="Base Output Dir", mode='d', value=Path.home() / "zFISHer_Batch_Output")
         self._batch_run_btn = PushButton(text="Run Batch Processing")
@@ -26,6 +29,8 @@ class BatchProcessWidget(Container):
     def _init_layout(self):
         """Arranges all widgets in the container."""
         self.extend([
+            self._header,
+            self._info,
             self._batch_input_dir,
             self._batch_output_dir,
             self._batch_run_btn,

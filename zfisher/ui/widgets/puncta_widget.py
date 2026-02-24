@@ -6,6 +6,14 @@ from .. import popups, viewer_helpers
 from ..decorators import require_active_session, error_handler
 from ... import constants
 
+import napari
+from pathlib import Path
+from magicgui import magicgui, widgets
+from ...core import session, puncta
+from .. import popups, viewer_helpers
+from ..decorators import require_active_session, error_handler
+from ... import constants
+
 @magicgui(
     call_button="Detect Puncta",
     layout="vertical",
@@ -26,7 +34,7 @@ from ... import constants
 )
 @require_active_session()
 @error_handler("Puncta Detection Failed")
-def puncta_widget(
+def _puncta_widget(
     image_layer: "napari.layers.Image", 
     nuclei_layer: "napari.layers.Labels", 
     method: str = "Local Maxima", 
@@ -75,7 +83,7 @@ def puncta_widget(
 
 # --- Automated UI Event Listeners ---
 
-@puncta_widget.image_layer.changed.connect
+@_puncta_widget.image_layer.changed.connect
 def _on_image_change(new_layer: "napari.layers.Image"):
     """
     Automatically detects voxel metadata and sets the Z-Anisotropy slider.
@@ -90,5 +98,12 @@ def _on_image_change(new_layer: "napari.layers.Image"):
             auto_z_scale = scale[0] / scale[2]
             
             # Update the slider value in the UI
-            puncta_widget.z_scale.value = round(float(auto_z_scale), 2)
+            _puncta_widget.z_scale.value = round(float(auto_z_scale), 2)
             napari.current_viewer().status = f"Auto-configured Z-Anisotropy: {round(auto_z_scale, 2)}"
+
+# --- UI Wrapper ---
+puncta_widget = widgets.Container(labels=False)
+header = widgets.Label(value="Puncta Detection")
+header.native.setObjectName("widgetHeader")
+info = widgets.Label(value="<i>Algorithmic detection of puncta.</i>")
+puncta_widget.extend([header, info, _puncta_widget])

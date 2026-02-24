@@ -1,4 +1,4 @@
-from magicgui.widgets import Container, PushButton, FileEdit
+from magicgui.widgets import Container, PushButton, FileEdit, Label
 from pathlib import Path
 import napari
 import os
@@ -10,7 +10,7 @@ from ._shared import load_raw_data_into_viewer
 
 class NewSessionWidget(Container):
     def __init__(self, viewer: napari.Viewer):
-        super().__init__()
+        super().__init__(labels=False)
         self._viewer = viewer
 
         self._init_widgets()
@@ -19,6 +19,9 @@ class NewSessionWidget(Container):
 
     def _init_widgets(self):
         """Initializes all UI widgets for the new session functionality."""
+        self._header = Label(value="New Session")
+        self._header.native.setObjectName("widgetHeader")
+        self._info = Label(value="<i>Start a new zFISHer session from raw data.</i>")
         self._round1_path = FileEdit(label="Round 1", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path("/Users/sstaller/Desktop/ND2_FILE_INPUTS/1-19-24Fdecon.nd2"))
         self._round2_path = FileEdit(label="Round 2", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path("/Users/sstaller/Desktop/ND2_FILE_INPUTS/1-17-24Adecon.nd2"))
      #   self._round1_path = FileEdit(label="Round 1", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path("/Users/sstaller/zFISHer_MicroTests/R1_micro.tif"))
@@ -30,6 +33,8 @@ class NewSessionWidget(Container):
     def _init_layout(self):
         """Arranges all widgets in the container."""
         self.extend([
+            self._header,
+            self._info,
             self._round1_path,
             self._round2_path,
             self._output_dir,

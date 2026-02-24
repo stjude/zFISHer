@@ -2,6 +2,7 @@ import napari
 import numpy as np
 from pathlib import Path
 from magicgui import magicgui
+from magicgui.widgets import Container, Label
 from qtpy.QtWidgets import QButtonGroup, QRadioButton # For internal toggle logic if needed
 
 from ...core import session, segmentation 
@@ -25,7 +26,7 @@ from ... import constants
 )
 @require_active_session("Please start or load a session before matching nuclei.")
 @error_handler("Nuclei Matching Failed")
-def nuclei_matching_widget(
+def _nuclei_matching_widget(
     r1_mask_layer: "napari.layers.Labels",
     r2_mask_layer: "napari.layers.Labels",
     method: str = "Intersection", # Intersection is now the default
@@ -72,3 +73,10 @@ def nuclei_matching_widget(
         
         viewer.status = f"Matched {len(pts1) if pts1 else 0} nuclei using {method}."
         dialog.update_progress(100, "Done.")
+
+# --- UI Wrapper ---
+nuclei_matching_widget = Container(labels=False)
+header = Label(value="Match Nuclei")
+header.native.setObjectName("widgetHeader")
+info = Label(value="<i>Matches nuclei between rounds.</i>")
+nuclei_matching_widget.extend([header, info, _nuclei_matching_widget])

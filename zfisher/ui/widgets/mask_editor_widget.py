@@ -120,7 +120,7 @@ _highlighter = None
     target_id={"label": "Target ID"}
 )
 @require_active_session("Please start or load a session before editing masks.")
-def mask_editor_widget(
+def _mask_editor_widget(
     mask_layer: "napari.layers.Labels",
     source_id: int = 0,
     target_id: int = 0
@@ -192,12 +192,12 @@ refresh_ids_btn = widgets.PushButton(text="Show/Refresh IDs")
 
 btn_container.extend([paint_chk, erase_chk, pick_btn])
 
-mask_editor_widget.append(editor_label)
-mask_editor_widget.append(btn_container)
-mask_editor_widget.append(hover_chk)
-mask_editor_widget.append(extrude_btn)
-mask_editor_widget.append(delete_btn)
-mask_editor_widget.append(refresh_ids_btn)
+_mask_editor_widget.append(editor_label)
+_mask_editor_widget.append(btn_container)
+_mask_editor_widget.append(hover_chk)
+_mask_editor_widget.append(extrude_btn)
+_mask_editor_widget.append(delete_btn)
+_mask_editor_widget.append(refresh_ids_btn)
 
 @require_active_session("Please start or load a session before editing masks.")
 def _on_paint(value: bool):
@@ -205,7 +205,7 @@ def _on_paint(value: bool):
         paint_chk.value = False
         return
     viewer = napari.current_viewer()
-    layer = mask_editor_widget.mask_layer.value
+    layer = _mask_editor_widget.mask_layer.value
     if layer:
         if value:
             erase_chk.value = False
@@ -225,7 +225,7 @@ def _on_erase(value: bool):
         erase_chk.value = False
         return
     viewer = napari.current_viewer()
-    layer = mask_editor_widget.mask_layer.value
+    layer = _mask_editor_widget.mask_layer.value
     if layer:
         if value:
             paint_chk.value = False
@@ -239,7 +239,7 @@ def _on_erase(value: bool):
 @require_active_session("Please start or load a session before editing masks.")
 def _on_pick():
     viewer = napari.current_viewer()
-    layer = mask_editor_widget.mask_layer.value
+    layer = _mask_editor_widget.mask_layer.value
     if layer:
         viewer.layers.selection.active = layer
         layer.mode = 'pick'
@@ -250,7 +250,7 @@ def _on_pick():
 @require_active_session("Please start or load a session before editing masks.")
 def _on_extrude():
     viewer = napari.current_viewer()
-    layer = mask_editor_widget.mask_layer.value
+    layer = _mask_editor_widget.mask_layer.value
     if not layer: return
     
     label_id = layer.selected_label
@@ -276,8 +276,8 @@ def _on_extrude():
 @require_active_session("Please start or load a session before editing masks.")
 def _on_delete():
     viewer = napari.current_viewer()
-    layer = mask_editor_widget.mask_layer.value
-    src = mask_editor_widget.source_id.value
+    layer = _mask_editor_widget.mask_layer.value
+    src = _mask_editor_widget.source_id.value
     if layer and src > 0:
         if np.sum(layer.data == src) > 0:
             layer.data = segmentation.delete_label(layer.data, src)
@@ -302,7 +302,7 @@ def _on_hover_mode(value: bool):
 @require_active_session("Please start or load a session before refreshing IDs.")
 def _on_refresh_ids():
     viewer = napari.current_viewer()
-    layer = mask_editor_widget.mask_layer.value
+    layer = _mask_editor_widget.mask_layer.value
     viewer_helpers.add_or_update_label_ids(viewer, layer)
 
 # Connect signals after defining functions
@@ -317,8 +317,8 @@ refresh_ids_btn.clicked.connect(_on_refresh_ids)
 # --- Auto-saving for selected mask layer ---
 
 # Store a reference to the layer and the callback to allow disconnection
-mask_editor_widget._current_layer = None
-mask_editor_widget._current_callback = None
+_mask_editor_widget._current_layer = None
+_mask_editor_widget._current_callback = None
 
 def _create_save_callback(layer):
     """Factory to create a save callback for a specific layer."""
@@ -332,11 +332,11 @@ def _create_save_callback(layer):
             session.set_processed_file(layer.name, str(mask_path), layer_type='labels', metadata={'subtype': 'edited_mask'})
     return _save_mask_data
 
-@mask_editor_widget.mask_layer.changed.connect
+@_mask_editor_widget.mask_layer.changed.connect
 def _on_mask_layer_changed(new_layer: "napari.layers.Labels"):
     """Disconnects the old listener and connects a new one to the selected layer."""
-    old_layer = mask_editor_widget._current_layer
-    old_callback = mask_editor_widget._current_callback
+    old_layer = _mask_editor_widget._current_layer
+    old_callback = _mask_editor_widget._current_callback
 
     if old_layer and old_callback and old_callback in old_layer.events.data.callbacks:
         old_layer.events.data.disconnect(old_callback)
@@ -344,8 +344,15 @@ def _on_mask_layer_changed(new_layer: "napari.layers.Labels"):
     if new_layer:
         new_callback = _create_save_callback(new_layer)
         new_layer.events.data.connect(new_callback)
-        mask_editor_widget._current_layer = new_layer
-        mask_editor_widget._current_callback = new_callback
+        _mask_editor_widget._current_layer = new_layer
+        _mask_editor_widget._current_callback = new_callback
     else:
-        mask_editor_widget._current_layer = None
-        mask_editor_widget._current_callback = None
+        _mask_editor_widget._current_layer = None
+        _mask_editor_widget._current_callback = None
+
+# --- UI Wrapper ---
+mask_editor_widget = widgets.Container(labels=False)
+header = widgets.Label(value="Mask Editor")
+header.native.setObjectName("widgetHeader")
+info = widgets.Label(value="<i>Manual editing of segmentation masks.</i>")
+mask_editor_widget.extend([header, info, _mask_editor_widget])

@@ -2,6 +2,7 @@ import napari
 import numpy as np
 from pathlib import Path
 from magicgui import magicgui
+from magicgui.widgets import Container, Label
 
 from ...core import session, registration # Importing from core
 from .. import popups
@@ -16,7 +17,7 @@ from ... import constants
 )
 @require_active_session("Please start or load a session before generating the canvas.")
 @error_handler("Canvas Generation Failed")
-def canvas_widget(
+def _canvas_widget(
     apply_warp: bool = True,
     hide_raw: bool = True
 ):
@@ -119,3 +120,10 @@ def canvas_widget(
             layer.visible = any(x in layer.name for x in ["Aligned", "Warped", "Consensus"])
 
     viewer.status = "Global Canvas Generation Complete."
+
+# --- UI Wrapper ---
+canvas_widget = Container(labels=False)
+header = Label(value="Global Canvas")
+header.native.setObjectName("widgetHeader")
+info = Label(value="<i>Applies registration and creates aligned layers.</i>")
+canvas_widget.extend([header, info, _canvas_widget])

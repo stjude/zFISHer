@@ -16,7 +16,7 @@ from ..decorators import require_active_session
     opt_radius={"label": "Opt. Radius (um)", "value": "0.1"}
 )
 @require_active_session()
-def puncta_editor_widget(
+def _puncta_editor_widget(
     points_layer: "napari.layers.Points",
     point_size: int = 3,
     show_all_z: bool = True,
@@ -33,13 +33,13 @@ def puncta_editor_widget(
             points_layer.remove_selected()
 
 # --- UI Connections ---
-@puncta_editor_widget.point_size.changed.connect
+@_puncta_editor_widget.point_size.changed.connect
 def _on_size_change(value):
-    if puncta_editor_widget.points_layer.value: puncta_editor_widget.points_layer.value.size = value
+    if _puncta_editor_widget.points_layer.value: _puncta_editor_widget.points_layer.value.size = value
 
-@puncta_editor_widget.show_all_z.changed.connect
+@_puncta_editor_widget.show_all_z.changed.connect
 def _on_projection_change(value):
-    layer = puncta_editor_widget.points_layer.value
+    layer = _puncta_editor_widget.points_layer.value
     if layer:
         layer.out_of_slice = value
         layer.projection_mode = 'all' if value else 'none'
@@ -49,12 +49,12 @@ pe_lbl = widgets.Label(value="<b>Editing Hub:</b>")
 pe_container = widgets.Container(layout="horizontal", labels=False)
 pe_add_chk, pe_select_chk, pe_pan_btn = widgets.CheckBox(text="Add (A)"), widgets.CheckBox(text="Select (S)"), widgets.PushButton(text="Pan/Zoom (Z)")
 pe_container.extend([pe_add_chk, pe_select_chk, pe_pan_btn])
-puncta_editor_widget.insert(0, pe_lbl)
-puncta_editor_widget.insert(1, pe_container)
+_puncta_editor_widget.insert(0, pe_lbl)
+_puncta_editor_widget.insert(1, pe_container)
 
 # --- Mouse & Hotkey Logic ---
 def delete_point_under_mouse(viewer):
-    layer = puncta_editor_widget.points_layer.value
+    layer = _puncta_editor_widget.points_layer.value
     if not layer or not layer.visible: return
     val = layer.get_value(viewer.cursor.position, view_direction=viewer.camera.view_direction, dims_displayed=list(viewer.dims.displayed), world=True)
     if val is not None:
@@ -69,14 +69,14 @@ def register_editor_hotkeys(viewer):
     @viewer.bind_key('s', overwrite=True)
     def _select_mode(v): pe_select_chk.value = True
 
-@puncta_editor_widget.points_layer.changed.connect
+@_puncta_editor_widget.points_layer.changed.connect
 def _on_layer_change(new_layer):
     if new_layer:
-        puncta_editor_widget.point_size.value = max(1, int(np.mean(new_layer.size))) 
+        _puncta_editor_widget.point_size.value = max(1, int(np.mean(new_layer.size))) 
         if fishing_hook_callback not in new_layer.mouse_drag_callbacks:
             new_layer.mouse_drag_callbacks.append(fishing_hook_callback)
         oos_val = getattr(new_layer, 'out_of_slice_dist', getattr(new_layer, 'out_of_slice', True))
-        puncta_editor_widget.show_all_z.value = bool(oos_val)
+        _puncta_editor_widget.show_all_z.value = bool(oos_val)
 
 # --- 1. Algorithmic Math (Operates strictly on Pixel Arrays) ---
 # --- 1. Algorithmic Math (Operates strictly on Pixel Arrays) ---
@@ -132,7 +132,7 @@ def calculate_fishing_hook(img_layer, data_pos, viewer, use_optimization=True, r
 
 # --- 2. The Yield Callback (Emulates puncta.py segmentation) ---
 def fishing_hook_callback(layer, event):
-    if 'Shift' not in event.modifiers or not puncta_editor_widget.fishing_hook.value:
+    if 'Shift' not in event.modifiers or not _puncta_editor_widget.fishing_hook.value:
         return
 
     viewer = napari.current_viewer()
@@ -152,8 +152,8 @@ def fishing_hook_callback(layer, event):
         img_layer, 
         cursor_pos_data,
         viewer, # Pass viewer for camera info
-        use_optimization=puncta_editor_widget.volume_optimization.value,
-        radius_um=float(puncta_editor_widget.opt_radius.value)
+        use_optimization=_puncta_editor_widget.volume_optimization.value,
+        radius_um=float(_puncta_editor_widget.opt_radius.value)
     )
 
     # GENERATOR: Let napari drop its native point first, then we process it
@@ -187,3 +187,10 @@ def fishing_hook_callback(layer, event):
         layer.data = new_data
         layer.refresh()
         viewer.status = f"Algorithmic Snap: Pixel {np.round(target_coord_data, 1)}"
+
+# --- UI Wrapper ---
+puncta_editor_widget = widgets.Container(labels=False)
+header = widgets.Label(value="Puncta Editor")
+header.native.setObjectName("widgetHeader")
+info = widgets.Label(value="<i>Advanced editing of puncta.</i>")
+puncta_editor_widget.extend([header, info, _puncta_editor_widget])

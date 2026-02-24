@@ -48,20 +48,20 @@ def on_layer_inserted(event, widgets):
         if isinstance(layer, napari.layers.Image):
             if "DAPI" in layer.name.upper():
                 if "R1" in layer.name.upper():
-                    widgets['dapi_segmentation'].r1_layer.value = layer
+                    widgets['dapi_segmentation']._dapi_segmentation_widget.r1_layer.value = layer
                 elif "R2" in layer.name.upper():
-                    widgets['dapi_segmentation'].r2_layer.value = layer
+                    widgets['dapi_segmentation']._dapi_segmentation_widget.r2_layer.value = layer
         
         elif isinstance(layer, napari.layers.Points):
             if "centroids" in layer.name.lower():
                 if "R1" in layer.name.upper():
-                    widgets['registration'].r1_points.value = layer
+                    widgets['registration']._registration_widget.r1_points.value = layer
                 elif "R2" in layer.name.upper():
-                    widgets['registration'].r2_points.value = layer
+                    widgets['registration']._registration_widget.r2_points.value = layer
             
             # Auto-select the new points layer in editors/analysis widgets
-            widgets['puncta_editor'].points_layer.value = layer
-            widgets['colocalization'].source_layer.value = layer
+            widgets['puncta_editor']._puncta_editor_widget.points_layer.value = layer
+            widgets['colocalization']._colocalization_widget.source_layer.value = layer
             
             # If it's a puncta layer, ensure its listener is attached.
             if "puncta" in layer.name.lower():
@@ -72,15 +72,15 @@ def on_layer_inserted(event, widgets):
             # Heuristic for matching aligned/warped DAPI masks
             if "DAPI" in name and ("ALIGNED" in name or "WARPED" in name):
                 if "R1" in name:
-                    widgets['nuclei_matching'].r1_mask_layer.value = layer
+                    widgets['nuclei_matching']._nuclei_matching_widget.r1_mask_layer.value = layer
                 elif "R2" in name:
-                    widgets['nuclei_matching'].r2_mask_layer.value = layer
+                    widgets['nuclei_matching']._nuclei_matching_widget.r2_mask_layer.value = layer
             
             # General purpose editors
-            widgets['mask_editor'].mask_layer.value = layer
+            widgets['mask_editor']._mask_editor_widget.mask_layer.value = layer
             # Auto-select a mask for puncta detection, but not other puncta layers
             if "puncta" not in name.lower():
-                widgets['puncta_detection'].nuclei_layer.value = layer
+                widgets['puncta_detection']._puncta_widget.nuclei_layer.value = layer
     
     # Use a QTimer to delay execution slightly, ensuring the layer is fully added
     QTimer.singleShot(100, update_widgets)

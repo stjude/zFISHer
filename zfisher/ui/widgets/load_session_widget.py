@@ -1,4 +1,4 @@
-from magicgui.widgets import Container, PushButton, FileEdit
+from magicgui.widgets import Container, PushButton, FileEdit, Label
 import napari
 import numpy as np
 from pathlib import Path
@@ -10,7 +10,7 @@ from ._shared import load_raw_data_into_viewer
 
 class LoadSessionWidget(Container):
     def __init__(self, viewer: napari.Viewer):
-        super().__init__()
+        super().__init__(labels=False)
         self._viewer = viewer
 
         self._init_widgets()
@@ -19,12 +19,17 @@ class LoadSessionWidget(Container):
 
     def _init_widgets(self):
         """Initializes all UI widgets for the load session functionality."""
+        self._header = Label(value="Load Session")
+        self._header.native.setObjectName("widgetHeader")
+        self._info = Label(value="<i>Load a previously saved zFISHer session.</i>")
         self._load_session_file = FileEdit(label="Session File (.json)", filter="*.json")
         self._load_session_btn = PushButton(text="Load Session")
 
     def _init_layout(self):
         """Arranges all widgets in the container."""
         self.extend([
+            self._header,
+            self._info,
             self._load_session_file,
             self._load_session_btn,
         ])

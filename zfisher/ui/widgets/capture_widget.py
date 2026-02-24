@@ -173,7 +173,7 @@ def _capture_view(viewer: napari.Viewer, output_filename: str):
                 "File Exists",
                 f"The file '{output_filename}' already exists. The filename has been updated to '{next_name}'. Please try again."
             )
-            capture_widget.output_filename.value = next_name
+            _capture_widget.output_filename.value = next_name
             return
 
         # Use Qt's grab method to include custom widgets like the scale bar
@@ -187,7 +187,7 @@ def _capture_view(viewer: napari.Viewer, output_filename: str):
         # Update filename for the next capture
         global capture_count
         capture_count += 1
-        capture_widget.output_filename.value = _get_next_filename()
+        _capture_widget.output_filename.value = _get_next_filename()
         
     except Exception as e:
         print(f"Capture failed: {e}")
@@ -203,7 +203,7 @@ def _capture_view(viewer: napari.Viewer, output_filename: str):
     layout="vertical",
     output_filename={"label": "Filename:"}
 )
-def capture_widget(output_filename: str):
+def _capture_widget(output_filename: str):
     """Magicgui widget to capture the current viewer canvas."""
     viewer = napari.current_viewer()
     _capture_view(viewer, output_filename)
@@ -212,23 +212,23 @@ def capture_widget(output_filename: str):
 def capture_with_hotkey(viewer: napari.Viewer):
     """Wrapper to call capture from a hotkey."""
     # Use the filename currently in the widget's textbox
-    filename = capture_widget.output_filename.value
+    filename = _capture_widget.output_filename.value
     _capture_view(viewer, filename)
 
 # --- Widget Setup ---
 # Add hotkey information and initialize filename
 hotkey_container = widgets.Container(layout="horizontal", labels=False)
 hotkey_container.append(widgets.Label(value="Hotkey: Shift+P (press in canvas)"))
-capture_widget.insert(0, hotkey_container)
+_capture_widget.insert(0, hotkey_container)
 
 initial_filename = _get_next_filename()
-capture_widget.output_filename.value = initial_filename if initial_filename else "capture1.png"
+_capture_widget.output_filename.value = initial_filename if initial_filename else "capture1.png"
 
 # Add Arrow drawing tool
 arrow_container = widgets.Container(layout="horizontal", labels=False)
 arrow_chk = widgets.CheckBox(text="Draw Arrows")
 arrow_container.append(arrow_chk)
-capture_widget.append(arrow_container)
+_capture_widget.append(arrow_container)
 
 # Add Scale Bar Options
 sb_container = widgets.Container(layout="horizontal", labels=False)
@@ -238,7 +238,7 @@ sb_lock = widgets.CheckBox(text="Lock")
 sb_pixels = widgets.CheckBox(text="Show Pixels")
 
 sb_container.extend([sb_label, sb_visible, sb_lock, sb_pixels])
-capture_widget.append(sb_container)
+_capture_widget.append(sb_container)
 
 @sb_visible.changed.connect
 def _on_sb_visible(state: bool):
@@ -284,3 +284,10 @@ def _on_arrow_draw_toggled(state: bool):
         arrow_drawer = ArrowDrawer(viewer)
         
     arrow_drawer.set_active(state)
+
+# --- UI Wrapper ---
+capture_widget = widgets.Container(labels=False)
+header = widgets.Label(value="Capture & Annotate")
+header.native.setObjectName("widgetHeader")
+info = widgets.Label(value="<i>Save screenshots and draw annotations.</i>")
+capture_widget.extend([header, info, _capture_widget])
