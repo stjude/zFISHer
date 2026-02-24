@@ -225,14 +225,15 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
         text_params = {'string': '{id}', 'size': 8, 'color': 'white', 'translation': np.array([0, 5, 5])}
 
         viewer.add_points(
-            coords,
-            name=layer_name,
-            size=3,
-            face_color="yellow",
-            scale=source_layer.scale,
-            properties=properties,
-            text=text_params
-        )
+                coords,
+                name=layer_name,
+                size=3,
+                face_color="yellow",
+                scale=source_layer.scale,
+                translate=source_layer.translate, # SYNC STAGE OFFSET
+                properties=properties,
+                text=text_params
+            )
         # Handle the initial save explicitly to avoid race conditions with the event system.
         out_dir = session.get_data("output_dir")
         if out_dir:
