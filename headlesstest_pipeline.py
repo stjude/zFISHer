@@ -70,14 +70,17 @@ def run_headless_full_pipeline():
         r2_layers_data.append({'name': f"R2 - {ch_name}", 'data': r2_session.data[:, i, :, :], 'scale': r2_session.voxels, 'is_label': False})
 
     seg_dir = output_dir / constants.SEGMENTATION_DIR
-    for prefix, layer_list in [("R1", r1_layers_data), ("R2", r2_layers_data)]:
-        mask_path = seg_dir / f"{prefix}_masks.tif"
+    # Add the newly created masks to the layer data for warping
+    for prefix, session_obj, layer_list in [("R1", r1_session, r1_layers_data), ("R2", r2_session, r2_layers_data)]:
+        dapi_layer_name = f"{prefix} - {constants.DAPI_CHANNEL_NAME}"
+        mask_layer_name = f"{dapi_layer_name}{constants.MASKS_SUFFIX}"
+        mask_path = seg_dir / f"{mask_layer_name}.tif"
+
         if mask_path.exists():
             layer_list.append({
-                'name': "DAPI_masks", 
+                'name': mask_layer_name,
                 'data': tifffile.imread(mask_path), 
-                'scale': r1_session.voxels, 
-                #'colormap': r1_session.meta['channels'][i]['colormap'], # ADD THIS
+                'scale': session_obj.voxels,
                 'is_label': True
             })
 
@@ -120,10 +123,14 @@ def run_headless_full_pipeline():
     puncta_layers_for_analysis = [] # Used to store coordinates for Step 7
     puncta_params = {'threshold_rel': 0.15, 'min_distance': 3, 'method': "Local Maxima"}
     
+    # Dynamically get channel names from the session, excluding DAPI
+    puncta_channels = [ch for ch in r1_session.channels if ch.upper() != constants.DAPI_CHANNEL_NAME.upper()]
+    print(f"Found puncta channels for analysis: {puncta_channels}")
+
     # Analyze image channels
     for rnd in ["R1", "R2"]:
         prefix = "Aligned" if rnd == "R1" else "Warped"
-        for ch in ["Ch1", "Ch2"]: # Adjust channel names as needed
+        for ch in puncta_channels:
             ch_filename = f"{prefix}_{rnd}_{ch}.tif"
             ch_path = aligned_dir / ch_filename
             
@@ -132,7 +139,7 @@ def run_headless_full_pipeline():
 
             if ch_path.exists():
                 print(f"Detecting spots in {rnd} - {ch}...")
-                csv_out = output_dir / constants.REPORTS_DIR / f"{rnd}_{ch}_puncta.csv"
+                csv_out = output_dir / constants.SEGMENTATION_DIR / f"{prefix}_{rnd}_{ch}_puncta.csv"
                 
                 results = puncta.process_puncta_detection(
                     image_data=tifffile.imread(ch_path),
@@ -152,10 +159,11 @@ def run_headless_full_pipeline():
     # --- STEP 7: ANALYSIS & EXPORT (HEADLESS) ---
     print(f"\n--- STEP 7: Analysis & Export (Headless) ---")
     
-    # Define colocalization rules (e.g., Round 1 Ch1 vs Round 2 Ch1)
-    rules = [
-        {'source': 'R1_Ch1', 'target': 'R2_Ch1', 'threshold': 1.0}, # 1 micron cutoff
-    ]
+    # Define colocalization rules dynamically based on the found channels
+    rules = []
+    for ch in puncta_channels:
+        rules.append({'source': f'R1_{ch}', 'target': f'R2_{ch}', 'threshold': 1.0}) # 1 micron cutoff
+    print(f"Applying colocalization rules: {rules}")
 
     final_report = analysis.run_colocalization_analysis(
         layers_data=puncta_layers_for_analysis,

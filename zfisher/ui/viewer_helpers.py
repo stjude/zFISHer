@@ -106,7 +106,7 @@ def _load_points_layer(viewer, name, path, scale, file_info):
         layer.out_of_slice_display = True
     elif subtype == 'centroids':
         viewer.add_points(data, name=name, size=5, face_color='orange', scale=scale)
-    elif subtype == 'puncta':
+    elif subtype == 'puncta' or subtype == 'puncta_csv':
         properties = {'id': np.arange(len(data)) + 1}
         text_params = {
             'string': '{id}', 'size': 8, 'color': 'white',

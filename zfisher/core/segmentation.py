@@ -462,12 +462,23 @@ def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callba
         
         # 2. Headless Save: Save to the segmentation folder if output_dir exists
         if output_dir:
-            from . import io  # Keep import local to avoid circularity
-            mask_path = Path(output_dir) / constants.SEGMENTATION_DIR / f"{prefix}_masks.tif"
-            csv_path = Path(output_dir) / constants.SEGMENTATION_DIR / f"{prefix}_centroids.csv"
-            
-            # Use your io helpers to save
+            from . import session
+            seg_dir = Path(output_dir) / constants.SEGMENTATION_DIR
+            seg_dir.mkdir(exist_ok=True, parents=True)
+
+            # Construct names consistent with UI for session file
+            dapi_layer_name = f"{prefix} - {constants.DAPI_CHANNEL_NAME}"
+            mask_layer_name = f"{dapi_layer_name}{constants.MASKS_SUFFIX}"
+            centroid_layer_name = f"{dapi_layer_name}{constants.CENTROIDS_SUFFIX}"
+
+            # Save masks and register to session
+            mask_path = seg_dir / f"{mask_layer_name}.tif"
             tifffile.imwrite(mask_path, masks.astype(np.uint32), compression='zlib')
-            np.savetxt(csv_path, centroids, delimiter=",", header="Z,Y,X", comments='')
+            session.set_processed_file(mask_layer_name, str(mask_path), layer_type='labels', metadata={'subtype': 'mask'})
+
+            # Save centroids as .npy and register to session (for consistency with UI)
+            cent_path = seg_dir / f"{centroid_layer_name}.npy"
+            np.save(cent_path, centroids)
+            session.set_processed_file(centroid_layer_name, str(cent_path), layer_type='points', metadata={'subtype': 'centroids'})
             
     return results
