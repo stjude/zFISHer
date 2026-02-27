@@ -20,11 +20,7 @@ def attach_puncta_listener(layer, name):
         # Auto-update all points when layer color properties change
         layer.face_color = layer.current_face_color
 
-    # Disconnect any previous listeners to be safe
-    for callback in list(layer.events.data.callbacks):
-        layer.events.data.disconnect(callback)
-    for callback in list(layer.events.current_face_color.callbacks):
-        layer.events.current_face_color.disconnect(callback)
+
 
     layer.events.data.connect(sync_data)
     layer.events.current_face_color.connect(sync_color)
@@ -40,9 +36,6 @@ def on_layer_inserted(event, widgets):
         for w in widgets.values():
             if hasattr(w, "reset_choices"):
                 w.reset_choices()
-
-        if session.is_loading():
-            return
 
         # Now, try to intelligently set the value based on layer type and name
         if isinstance(layer, napari.layers.Image):

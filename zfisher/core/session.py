@@ -72,6 +72,7 @@ def update_data(key, value):
     value : any
         The new value to set.
     """
+    print(f"DIAGNOSTIC (session): Updating '{key}' with value: {value}")
     _SESSION_DATA[key] = value
     save_session()
 

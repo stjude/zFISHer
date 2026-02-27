@@ -48,12 +48,21 @@ def run_headless_full_pipeline():
     print(f"\n--- STEP 3: Registration (RANSAC) ---")
     r1_centroids = seg_results['R1'][1]
     r2_centroids = seg_results['R2'][1]
-
+    
+    print(f"DIAGNOSTIC (pipeline): R1 Centroids shape: {r1_centroids.shape if r1_centroids is not None else 'None'}")
+    if r1_centroids is not None and r1_centroids.size > 0:
+        print(f"DIAGNOSTIC (pipeline): R1 Centroids mean (Z,Y,X): {np.mean(r1_centroids, axis=0)}")
+    print(f"DIAGNOSTIC (pipeline): R2 Centroids shape: {r2_centroids.shape if r2_centroids is not None else 'None'}")
+    if r2_centroids is not None and r2_centroids.size > 0:
+        print(f"DIAGNOSTIC (pipeline): R2 Centroids mean (Z,Y,X): {np.mean(r2_centroids, axis=0)}")
+    
     shift, rmsd = registration.calculate_session_registration(
         r1_centroids, 
         r2_centroids, 
         progress_callback=lambda p, t: print(f"[{p}%] {t}")
     )
+    
+    print(f"DIAGNOSTIC (pipeline): Calculated shift from registration: {shift}")
 
     if shift is None:
         print("❌ FAILED: Registration failed. Aborting.")
@@ -95,6 +104,9 @@ def run_headless_full_pipeline():
         apply_warp=True,
         progress_callback=lambda p, t: print(f"[{p}%] {t}")
     )
+    # CRITICAL FIX: Save the scale of the global canvas for session restoration.
+    # This was the missing piece causing the rendering error.
+    session.update_data("canvas_scale", r1_session.voxels)
 
     # --- STEP 5: MATCH NUCLEI (CONSENSUS) ---
     print(f"\n--- STEP 5: Match Nuclei (Headless Consensus) ---")

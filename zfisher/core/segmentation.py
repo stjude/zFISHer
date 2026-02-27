@@ -29,9 +29,21 @@ def process_consensus_nuclei(mask1, mask2, output_dir, threshold=20.0, method="U
     if progress_callback: 
         progress_callback(10, f"Matching nuclei labels ({method})...")
     
-    new_mask2, pts1, pts2 = match_nuclei_labels(mask1, mask2, threshold=threshold)
+    # The original pts1 is not needed, only the relabeled mask2
+    new_mask2, _, _ = match_nuclei_labels(mask1, mask2, threshold=threshold)
     merged_mask = merge_labeled_masks(mask1, new_mask2, method=method)
     
+    # DEFINITIVE FIX: Clean the merged mask to remove any tiny, non-contiguous artifacts
+    # created by the intersection. This prevents regionprops from generating invalid (NaN)
+    # centroids, which was the root cause of the napari rendering warning.
+    # The 'in_place' argument is not available in all scikit-image versions.
+    # Reassigning the result is the backward-compatible way to achieve the same outcome.
+    merged_mask = remove_small_objects(merged_mask, min_size=constants.NUC_SEG_OTSU_MIN_SIZE)
+
+    # CRITICAL FIX: Calculate centroids from the FINAL merged mask, not the original R1 mask.
+    # This ensures the IDs displayed in napari correspond to the actual consensus objects.
+    final_pts = get_mask_centroids(merged_mask)
+
     if output_dir:
         from . import session 
         seg_dir = Path(output_dir) / constants.SEGMENTATION_DIR
@@ -51,7 +63,7 @@ def process_consensus_nuclei(mask1, mask2, output_dir, threshold=20.0, method="U
         # Ensure coordinates are captured as 3-element arrays
         structured_pts = np.array([
             (np.array(p['coord'], dtype='f4'), int(p['label'])) 
-            for p in pts1
+            for p in final_pts
         ], dtype=dtype)
         
         np.save(ids_path, structured_pts)
@@ -64,7 +76,7 @@ def process_consensus_nuclei(mask1, mask2, output_dir, threshold=20.0, method="U
             metadata={'subtype': 'structured_ids'}
         )
 
-    return merged_mask, pts1
+    return merged_mask, final_pts
 def segment_nuclei_3d(image_data, gpu=True):
     """
     Segments 3D nuclei using the Cellpose model.

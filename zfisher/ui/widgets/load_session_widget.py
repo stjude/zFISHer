@@ -72,19 +72,32 @@ class LoadSessionWidget(Container):
 
                 # STEP 2: Restore Processed Layers (The Aligned 70-slice files)
                 if processed_files:
-                    # Get the scale from the first available image layer or default
-                    raw_img_layer = next((l for l in self._viewer.layers if isinstance(l, napari.layers.Image)), None)
-                    scale = raw_img_layer.scale if raw_img_layer else (1.0, 1.0, 1.0)
+                    # Get scale and offset from the session if saved by headless run, otherwise fallback.
+                    canvas_scale = session.get_data("canvas_scale")
+                    canvas_offset_pixels = session.get_data("canvas_offset_pixels")
+                    print(f"\nDIAGNOSTIC (load_session): Reading 'canvas_scale' from session file. Value: {canvas_scale}")
+                    print(f"DIAGNOSTIC (load_session): Reading 'canvas_offset_pixels' from session file. Value: {canvas_offset_pixels}")
+
+                    if canvas_scale:
+                        scale = tuple(canvas_scale)
+                        print(f"DIAGNOSTIC (load_session): Using scale from session: {scale}")
+                    else:
+                        # Fallback for older sessions: get scale from a raw layer if present.
+                        print("DIAGNOSTIC (load_session): 'canvas_scale' not found. Falling back to default.")
+                        raw_img_layer = next((l for l in self._viewer.layers if isinstance(l, napari.layers.Image)), None)
+                        scale = raw_img_layer.scale if raw_img_layer else (1.0, 1.0, 1.0)
+                        print(f"DIAGNOSTIC (load_session): Using fallback scale: {scale}")
+
                     sanitized_scale = tuple(s if isinstance(s, (int, float)) and s > 0 and not np.isnan(s) else 1.0 for s in scale)
 
                     def processed_progress(p, text):
                         dialog.update_progress(60 + int(p * 0.35), f"Restoring: {text}")
                     
-                    # This ensures your 5,492 spots and 73 nuclei load correctly
                     viewer_helpers.restore_processed_layers(
                         self._viewer, 
                         processed_files, 
-                        sanitized_scale, 
+                        sanitized_scale,
+                        canvas_offset_pixels,
                         progress_callback=processed_progress
                     )
                 

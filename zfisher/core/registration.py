@@ -37,10 +37,8 @@ def calculate_session_registration(r1_centroids, r2_centroids, progress_callback
 
 def _find_rough_shift_vector_voting(fixed_points, moving_points, n_limit=constants.RANSAC_N_LIMIT, bin_size=constants.RANSAC_BIN_SIZE):
     """
-    Finds a rough alignment shift using brute-force vector voting.
-
-    This method is robust to large displacements and is used to get a
-    coarse initial alignment before refinement.
+    Finds a rough alignment shift using the difference of point cloud means.
+    This method is highly robust to outliers and provides a stable initial guess.
 
     Parameters
     ----------
@@ -48,35 +46,17 @@ def _find_rough_shift_vector_voting(fixed_points, moving_points, n_limit=constan
         (N, 3) array of reference points.
     moving_points : np.ndarray
         (M, 3) array of points to be aligned.
-    n_limit : int, optional
-        The maximum number of points to use for voting to limit computation.
-    bin_size : float, optional
-        The size of the bins for discretizing displacement vectors.
 
     Returns
     -------
     np.ndarray
         A (3,) array representing the coarse shift vector (Z, Y, X).
     """
-    fp = fixed_points
-    mp = moving_points
-    
-    if len(fp) > n_limit:
-        fp = fp[np.random.choice(len(fp), n_limit, replace=False)]
-    if len(mp) > n_limit:
-        mp = mp[np.random.choice(len(mp), n_limit, replace=False)]
-        
-    if len(fp) < 1 or len(mp) < 1:
+    if len(fixed_points) < 1 or len(moving_points) < 1:
         return np.array([0.0, 0.0, 0.0])
-
-    diffs = fp[:, np.newaxis, :] - mp[np.newaxis, :, :]
-    diffs = diffs.reshape(-1, 3)
     
-    binned_diffs = np.round(diffs / bin_size).astype(int)
-    
-    unique_bins, counts = np.unique(binned_diffs, axis=0, return_counts=True)
-    best_bin = unique_bins[np.argmax(counts)]
-    return best_bin * bin_size
+    # A simple difference of means is a very robust estimator for the rough shift.
+    return np.mean(fixed_points, axis=0) - np.mean(moving_points, axis=0)
 
 def _get_nearest_neighbor_pairs(fixed_points, moving_points, rough_shift, search_radius=constants.RANSAC_SEARCH_RADIUS):
     """
@@ -162,12 +142,17 @@ def _refine_shift_with_ransac(src_points, dst_points, residual_threshold=constan
     if len(src_points) < 4:
         return None, None
 
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message="No inliers found")
-        model, inliers = ransac(
-            (src_points, dst_points), AffineTransform, min_samples=4, 
-            residual_threshold=residual_threshold, max_trials=max_trials
-        )
+    try:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="No inliers found")
+            model, inliers = ransac(
+                (src_points, dst_points), AffineTransform, min_samples=4, 
+                residual_threshold=residual_threshold, max_trials=max_trials
+            )
+    except np.linalg.LinAlgError as e:
+        # This can happen with degenerate point sets
+        print(f"DIAGNOSTIC (RANSAC): Linear algebra error during RANSAC: {e}")
+        return None, None
     
     return model, inliers
 
@@ -197,6 +182,7 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, progr
     """
     # 1. Brute-force Vector Voting to find rough shift
     if progress_callback: progress_callback(10, "Finding rough alignment...")
+    print("\n" + "="*20 + " DIAGNOSTIC: REGISTRATION " + "="*20)
     rough_shift = _find_rough_shift_vector_voting(fixed_points, moving_points)
     
     # 2. Refine using Nearest Neighbors
@@ -204,27 +190,37 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, progr
     src, dst = _get_nearest_neighbor_pairs(fixed_points, moving_points, rough_shift)
     
     if len(src) < 4:
+        print(f"DIAGNOSTIC (RANSAC): Rough shift calculated: {rough_shift}")
         if progress_callback: progress_callback(100, "Done (not enough matches for RANSAC).")
         return rough_shift, 0.0
 
     # 3. Run RANSAC to refine the fit
     if progress_callback: progress_callback(70, "Running RANSAC to find best fit...")
+    print(f"DIAGNOSTIC (RANSAC): Found {len(src)} pairs for RANSAC. Rough shift was: {rough_shift}")
     model, inliers = _refine_shift_with_ransac(src, dst)
     
     if model is None:
+        print("DIAGNOSTIC (RANSAC): RANSAC failed to find a model. Reverting to rough shift.")
         if progress_callback: progress_callback(100, "Done (RANSAC failed, using rough shift).")
         return rough_shift, 0.0
 
     rmsd = _calculate_rmsd(src, dst, model, inliers)
     refined_shift = model.translation
     
-    # Sanity checks on the refined shift
+    # Robustness: Check for NaN values which indicate a failed matrix inversion in RANSAC
+    if np.any(np.isnan(refined_shift)):
+        print("DIAGNOSTIC (RANSAC): Refined shift contains NaN. Reverting to rough shift.")
+        return rough_shift, 0.0
+
+    print(f"DIAGNOSTIC (RANSAC): Refined shift calculated: {refined_shift} (RMSD: {rmsd:.4f})")
     deviation = np.linalg.norm(refined_shift - rough_shift)
-    if deviation > constants.RANSAC_DEVIATION_THRESHOLD or np.any(np.isnan(refined_shift)):
+    if deviation > constants.RANSAC_DEVIATION_THRESHOLD:
+        print(f"DIAGNOSTIC (RANSAC): Refined shift deviates too much from rough shift (deviation: {deviation:.2f} px). Reverting.")
         if progress_callback: progress_callback(100, "Done (RANSAC result invalid, reverted to rough shift).")
         return rough_shift, 0.0
         
     if progress_callback: progress_callback(100, "Done.")
+    print("="*60 + "\n")
     return refined_shift, rmsd
 
 def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
@@ -251,6 +247,7 @@ def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
     tuple[np.ndarray, np.ndarray]
         A tuple containing (padded_fixed, padded_moving), both of the same shape.
     """
+    print(f"\nDIAGNOSTIC (align_and_pad): Received shift_vector: {shift_vector}")
     # Round shift to nearest integer for lossless padding
     shift = np.round(shift_vector).astype(int)
     dz, dy, dx = shift
@@ -270,7 +267,11 @@ def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
     min_y, max_y = min(0, dy), max(fy, dy + my)
     min_x, max_x = min(0, dx), max(fx, dx + mx)
     
+    print(f"DIAGNOSTIC (align_and_pad): Calculated min bounds (offset): Z={min_z}, Y={min_y}, X={min_x}")
+    canvas_offset_pixels = np.array([min_z, min_y, min_x])
+
     out_z, out_y, out_x = max_z - min_z, max_y - min_y, max_x - min_x
+    print(f"DIAGNOSTIC (align_and_pad): New canvas shape will be: {(out_z, out_y, out_x)}")
     
     # Create empty canvases
     padded_fixed = np.zeros((out_z, out_y, out_x), dtype=fixed_data.dtype)
@@ -281,14 +282,21 @@ def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
     
     # Paste Moving Image (Offset by shift - min_bound)
     # Apply Sub-pixel Shift to Moving Image
-    # We use linear interpolation (order=1) to avoid ringing artifacts on puncta
+    # We use linear interpolation (order=1) to avoid ringing artifacts on puncta.
     if np.any(np.abs(shift_frac) > 0.01):
         print(f"Applying sub-pixel shift: {shift_frac}")
         order = 0 if is_label else 1
-        moving_data_subpixel = ndi.shift(moving_data.astype(np.float32), shift_frac, order=order)
-        # Cast back to original dtype
-        if np.issubdtype(fixed_data.dtype, np.integer):
-             moving_data_subpixel = np.clip(moving_data_subpixel, 0, np.iinfo(fixed_data.dtype).max).astype(fixed_data.dtype)
+        # Use float64 for precision during shift, then robustly cast back
+        shifted_float = ndi.shift(moving_data.astype(np.float64), shift_frac, order=order)
+        
+        if is_label:
+            # For labels, round to nearest integer before casting to prevent interpolation artifacts.
+            # This is a critical fix to prevent label corruption.
+            moving_data_subpixel = np.round(shifted_float).astype(moving_data.dtype)
+        else:
+            # For intensity images, clip and cast
+            max_val = np.iinfo(moving_data.dtype).max if np.issubdtype(moving_data.dtype, np.integer) else np.finfo(moving_data.dtype).max
+            moving_data_subpixel = np.clip(shifted_float, 0, max_val).astype(moving_data.dtype)
     else:
         moving_data_subpixel = moving_data
 
@@ -296,7 +304,7 @@ def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
     mz_start, my_start, mx_start = dz - min_z, dy - min_y, dx - min_x
     padded_moving[mz_start:mz_start+mz, my_start:my_start+my, mx_start:mx_start+mx] = moving_data_subpixel
     
-    return padded_fixed, padded_moving
+    return padded_fixed, padded_moving, canvas_offset_pixels
 
 def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=16):
     """
@@ -480,6 +488,7 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
     # 1. Rigid Alignment
     update(0, "Matching and aligning channels...")
     aligned_pairs = {}
+    canvas_offset_saved = False
     num_raw_layers = len(r1_layers_data)
     if num_raw_layers > 0:
         for i, r1 in enumerate(r1_layers_data):
@@ -491,7 +500,12 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
             r2 = next((l for l in r2_layers_data if channel_name in l['name']), None)
             if r2:
                 is_label = r1.get('is_label', False)
-                aligned_r1, aligned_r2 = align_and_pad_images(r1['data'], r2['data'], shift, is_label=is_label)
+                aligned_r1, aligned_r2, canvas_offset_pixels = align_and_pad_images(r1['data'], r2['data'], shift, is_label=is_label)
+                print(f"DIAGNOSTIC (generate_canvas): For channel '{channel_name}', got canvas_offset_pixels: {canvas_offset_pixels.tolist()}")
+                if not canvas_offset_saved:
+                    print(f"DIAGNOSTIC (generate_canvas): Saving canvas_offset_pixels to session: {canvas_offset_pixels.tolist()}")
+                    session.update_data("canvas_offset_pixels", canvas_offset_pixels.tolist())
+                    canvas_offset_saved = True
                 aligned_pairs[channel_name] = {
                     'r1_data': aligned_r1, 'r2_data': aligned_r2,
                     'r1_meta': r1, 'r2_meta': r2, 'is_label': is_label

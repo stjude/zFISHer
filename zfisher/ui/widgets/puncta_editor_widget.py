@@ -72,7 +72,15 @@ def register_editor_hotkeys(viewer):
 @_puncta_editor_widget.points_layer.changed.connect
 def _on_layer_change(new_layer):
     if new_layer:
-        _puncta_editor_widget.point_size.value = max(1, int(np.mean(new_layer.size))) 
+        # Prevent crash if layer has no points, causing mean to be NaN
+        mean_val = np.mean(new_layer.size)
+        if np.isnan(mean_val):
+            size = 3 # Default size for empty layers
+        else:
+            size = int(mean_val)
+
+        _puncta_editor_widget.point_size.value = max(1, size)
+        
         if fishing_hook_callback not in new_layer.mouse_drag_callbacks:
             new_layer.mouse_drag_callbacks.append(fishing_hook_callback)
         oos_val = getattr(new_layer, 'out_of_slice_dist', getattr(new_layer, 'out_of_slice', True))

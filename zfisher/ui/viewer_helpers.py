@@ -78,7 +78,7 @@ def add_image_session_to_viewer(viewer: napari.Viewer, image_session, prefix: st
     
     update_scale_text()
 
-def _load_points_layer(viewer, name, path, scale, file_info):
+def _load_points_layer(viewer, name, path, scale, file_info, translate):
     if path.suffix.lower() == '.csv':
         try:
             # Puncta are saved as CSV with header: Z,Y,X,...
@@ -91,6 +91,14 @@ def _load_points_layer(viewer, name, path, scale, file_info):
 
     subtype = file_info.get('subtype')
 
+    print("\n" + "="*20 + f" DIAGNOSTIC: Loading Points Layer " + "="*20)
+    print(f"  - Layer Name: '{name}'")
+    print(f"  - Subtype: {subtype}")
+    print(f"  - Scale: {scale}")
+    print(f"  - Translate: {translate}")
+    print(f"  - Data shape: {data.shape if data is not None else 'None'}")
+    print("="*68)
+
     if subtype == 'structured_ids':
         coords = np.vstack(data['coord'])
         properties = {p_name: data[p_name] for p_name in data.dtype.names if p_name != 'coord'}
@@ -99,13 +107,13 @@ def _load_points_layer(viewer, name, path, scale, file_info):
             'translation': np.array([0, -5, 0])
         }
         layer = viewer.add_points(
-            coords, name=name, size=0, scale=scale, properties=properties,
-            text=text_params, blending='translucent_no_depth'
+            coords, name=name, size=1, face_color='transparent', scale=scale, properties=properties,
+            text=text_params, blending='translucent_no_depth', translate=translate
         )
         # Show points from all Z-slices in 2D view
         layer.out_of_slice_display = True
     elif subtype == 'centroids':
-        viewer.add_points(data, name=name, size=5, face_color='orange', scale=scale)
+        viewer.add_points(data, name=name, size=5, face_color='orange', scale=scale, translate=translate)
     elif subtype == 'puncta' or subtype == 'puncta_csv':
         properties = {'id': np.arange(len(data)) + 1}
         text_params = {
@@ -114,27 +122,27 @@ def _load_points_layer(viewer, name, path, scale, file_info):
         }
         viewer.add_points(
             data, name=name, size=3, face_color='yellow', scale=scale,
-            properties=properties, text=text_params
+            properties=properties, text=text_params, translate=translate
         )
     else: # Generic points
-        viewer.add_points(data, name=name, scale=scale)
+        viewer.add_points(data, name=name, scale=scale, translate=translate)
 
-def _load_labels_layer(viewer, name, path, scale, file_info):
+def _load_labels_layer(viewer, name, path, scale, file_info, translate):
     data = tifffile.imread(path)
-    layer = viewer.add_labels(data, name=name, opacity=0.3, visible=False, scale=scale)
+    layer = viewer.add_labels(data, name=name, opacity=0.3, visible=False, scale=scale, translate=translate)
     # Use iso_categorical for better 3D rendering of masks alongside points
     layer.rendering = 'iso_categorical'
 
-def _load_image_layer(viewer, name, path, scale, file_info):
+def _load_image_layer(viewer, name, path, scale, file_info, translate):
     data = tifffile.imread(path)
     c_map = 'gray'
     for ch, color in constants.CHANNEL_COLORS.items():
         if ch.upper() in name.upper():
             c_map = color
             break
-    viewer.add_image(data, name=name, blending='additive', scale=scale, colormap=c_map)
+    viewer.add_image(data, name=name, blending='additive', scale=scale, colormap=c_map, translate=translate)
 
-def _load_vectors_layer(viewer, name, path, scale, file_info):
+def _load_vectors_layer(viewer, name, path, scale, file_info, translate):
     data = np.load(path, allow_pickle=True)
     vector_params = {
         'data': data, 'name': name, 'opacity': 1.0, 'edge_width': 1,
@@ -143,15 +151,25 @@ def _load_vectors_layer(viewer, name, path, scale, file_info):
     if parse_version(napari.__version__) >= parse_version("0.7.0"):
         vector_params['head_width'] = 4
         vector_params['head_length'] = 6
+    vector_params['translate'] = translate
+    vector_params['scale'] = scale
     viewer.add_vectors(**vector_params)
 
-def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, default_scale: tuple, progress_callback=None):
+def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, default_scale: tuple, canvas_offset_pixels: list = None, progress_callback=None):
     """
     Loads processed files (masks, points, etc.) from a session into the viewer.
     """
     num_files = len(processed_files)
     if num_files == 0:
         return
+
+    # --- NEW: Calculate world-space translation from pixel offset ---
+    translate = [0.0, 0.0, 0.0]
+    if canvas_offset_pixels:
+        # Convert pixel offset to world coordinate translation
+        translate = np.array(canvas_offset_pixels) * np.array(default_scale)
+        print(f"DIAGNOSTIC (viewer_helpers): Applying canvas translation: {translate.tolist()}")
+    translate = translate.tolist() # Ensure it's a list for JSON compatibility/consistency
 
     for i, (name, file_info) in enumerate(processed_files.items()):
         if progress_callback:
@@ -180,13 +198,13 @@ def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, defau
 
         try:
             if layer_type == 'points':
-                _load_points_layer(viewer, name, path, default_scale, file_info)
+                _load_points_layer(viewer, name, path, default_scale, file_info, translate)
             elif layer_type == 'labels':
-                _load_labels_layer(viewer, name, path, default_scale, file_info)
+                _load_labels_layer(viewer, name, path, default_scale, file_info, translate)
             elif layer_type == 'image':
-                _load_image_layer(viewer, name, path, default_scale, file_info)
+                _load_image_layer(viewer, name, path, default_scale, file_info, translate)
             elif layer_type == 'vectors':
-                _load_vectors_layer(viewer, name, path, default_scale, file_info)
+                _load_vectors_layer(viewer, name, path, default_scale, file_info, translate)
             else:
                 print(f"Warning: Unknown layer type '{layer_type}' for layer '{name}'.")
 
@@ -292,22 +310,19 @@ def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napa
 
 def add_consensus_nuclei_to_viewer(viewer: napari.Viewer, r1_mask_layer: napari.layers.Labels, merged_mask: np.ndarray, pts1: list):
     """
-    Adds consensus nuclei results (merged mask and ID points) to the viewer.
-
-    Handles layer creation, naming, styling, and saving to the session.
+    Adds consensus nuclei results (merged mask and ID points) to the viewer. Assumes the data has already been saved to the session by a core function.
 
     Parameters
     ----------
     viewer : napari.Viewer
         The napari viewer instance.
     r1_mask_layer : napari.layers.Labels
-        The reference mask layer, used for scale information.
+        The reference mask layer, used for scale and translate information.
     merged_mask : np.ndarray
         The consensus mask data to be added as a new layer.
     pts1 : list
         A list of dictionaries [{'coord':..., 'label':...}] for the ID points.
     """
-    output_dir = session.get_data("output_dir")
     layer_name = constants.CONSENSUS_MASKS_NAME
 
     # Add merged mask layer
@@ -315,22 +330,10 @@ def add_consensus_nuclei_to_viewer(viewer: napari.Viewer, r1_mask_layer: napari.
         merged_mask,
         name=layer_name,
         scale=r1_mask_layer.scale,
+        translate=r1_mask_layer.translate,
         opacity=0.5
     )
-    # Use iso_categorical for better 3D rendering of masks alongside points
     layer.rendering = 'iso_categorical'
-
-    # Save mask to disk and session
-    if output_dir:
-        try:
-            seg_dir = Path(output_dir) / constants.SEGMENTATION_DIR
-            seg_dir.mkdir(exist_ok=True, parents=True)
-            mask_save_path = seg_dir / f"{layer_name}.tif"
-            tifffile.imwrite(mask_save_path, merged_mask)
-            session.set_processed_file(layer_name, str(mask_save_path), layer_type='labels', metadata={'subtype': 'consensus_mask'})
-            print(f"Saved consensus mask to {mask_save_path}")
-        except Exception as e:
-            print(f"Failed to save consensus mask: {e}")
 
     # Add ID points layer
     if pts1:
@@ -339,26 +342,12 @@ def add_consensus_nuclei_to_viewer(viewer: napari.Viewer, r1_mask_layer: napari.
         labels = np.array([p['label'] for p in pts1])
 
         points_layer = viewer.add_points(
-            coords, name=ids_layer_name, size=0, scale=r1_mask_layer.scale,
+            coords, name=ids_layer_name, size=1, face_color='transparent', scale=r1_mask_layer.scale, translate=r1_mask_layer.translate,
             properties={'label': labels},
             text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
             blending='translucent_no_depth'
         )
-        # Show points from all Z-slices in 2D view
         points_layer.out_of_slice_display = True
-
-        # Save points to disk and session
-        if output_dir:
-            try:
-                seg_dir = Path(output_dir) / constants.SEGMENTATION_DIR
-                ids_save_path = seg_dir / f"{ids_layer_name}.npy"
-                dtype = [('coord', 'f4', 3), ('label', 'i4')]
-                structured_pts = np.array([(p['coord'], p['label']) for p in pts1], dtype=dtype)
-                np.save(ids_save_path, structured_pts)
-                session.set_processed_file(ids_layer_name, str(ids_save_path), layer_type='points', metadata={'subtype': 'structured_ids'})
-                print(f"Saved consensus IDs to {ids_save_path}")
-            except Exception as e:
-                print(f"Failed to save consensus IDs: {e}")
 
 def add_or_update_label_ids(viewer: napari.Viewer, labels_layer: napari.layers.Labels):
     """
@@ -389,7 +378,7 @@ def add_or_update_label_ids(viewer: napari.Viewer, labels_layer: napari.layers.L
         viewer.layers[name].out_of_slice_display = True
     elif len(coords) > 0:
         layer = viewer.add_points(
-            coords, name=name, size=0, scale=labels_layer.scale,
+            coords, name=name, size=1, face_color='transparent', scale=labels_layer.scale,
             properties={'label': labels},
             text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
             blending='translucent_no_depth'
