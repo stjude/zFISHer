@@ -1,10 +1,13 @@
 import napari
 from magicgui import magicgui, widgets
 import numpy as np
+import pandas as pd
 from scipy.spatial import cKDTree
+from pathlib import Path
 
 from ...core import session
 from ..decorators import require_active_session
+from ... import constants
 
 @magicgui(
     call_button="Delete Selected Points",
@@ -31,6 +34,41 @@ def _puncta_editor_widget(
         points_layer.projection_mode = 'all' if show_all_z else 'none'
         if points_layer.mode == 'select' and len(points_layer.selected_data) > 0:
             points_layer.remove_selected()
+
+@magicgui(call_button="Save Puncta Changes")
+@require_active_session()
+def _save_widget(layer: "napari.layers.Points"):
+    if not layer:
+        print("No points layer selected to save.")
+        return
+
+    viewer = napari.current_viewer()
+    out_dir = session.get_data("output_dir")
+    if not out_dir:
+        print("No output directory set. Cannot save.")
+        return
+    
+    try:
+        # Combine coordinates and features for saving
+        coords_df = pd.DataFrame(layer.data, columns=['Z', 'Y', 'X'])
+        full_df_to_save = pd.concat([layer.features.reset_index(drop=True), coords_df.reset_index(drop=True)], axis=1)
+
+        # Define path and save
+        reports_dir = Path(out_dir) / constants.REPORTS_DIR
+        reports_dir.mkdir(exist_ok=True)
+        csv_path = reports_dir / f"{layer.name}.csv"
+        
+        full_df_to_save.to_csv(csv_path, index=False)
+        
+        # Update session file to point to this new CSV
+        session.set_processed_file(layer.name, str(csv_path), layer_type='points', metadata={'subtype': 'puncta_csv'})
+        
+        viewer.status = f"Saved {len(full_df_to_save)} puncta for '{layer.name}' to {csv_path.name}"
+        print(f"Saved puncta changes for layer '{layer.name}'")
+
+    except Exception as e:
+        print(f"Error saving puncta layer '{layer.name}': {e}")
+        viewer.status = f"Error saving '{layer.name}': {e}"
 
 # --- UI Connections ---
 @_puncta_editor_widget.point_size.changed.connect
@@ -147,24 +185,20 @@ def fishing_hook_callback(layer, event):
     img_layer = next((l for l in viewer.layers if isinstance(l, napari.layers.Image) and l.visible), None)
     if not img_layer or not layer: return
     
-    # This is the critical change: ensure transforms are aligned so we can use data coordinates directly.
     if not np.allclose(layer.scale, img_layer.scale) or not np.allclose(layer.translate, img_layer.translate):
         layer.scale = img_layer.scale
         layer.translate = img_layer.translate
 
-    # Convert mouse position from the Points layer's world/canvas space to the IMAGE data space.
-    # This ensures that even if transforms were misaligned, we get the right starting point.
     cursor_pos_data = img_layer.world_to_data(viewer.cursor.position)
 
     target_coord_data = calculate_fishing_hook(
         img_layer, 
         cursor_pos_data,
-        viewer, # Pass viewer for camera info
+        viewer,
         use_optimization=_puncta_editor_widget.volume_optimization.value,
         radius_um=float(_puncta_editor_widget.opt_radius.value)
     )
 
-    # GENERATOR: Let napari drop its native point first, then we process it
     yield 
     while event.type == 'mouse_move':
         yield
@@ -172,33 +206,67 @@ def fishing_hook_callback(layer, event):
     if target_coord_data is not None:
         new_data = layer.data.copy()
         
-        # --- NEW: Safe Collision Guard ---
-        # If in 'add' mode, napari just added a point at the end of new_data.
-        # We must exclude it from our search to avoid colliding with ourselves.
         search_data = new_data[:-1] if layer.mode == 'add' and len(new_data) > 0 else new_data
         
         if len(search_data) > 0:
             dist, _ = cKDTree(search_data).query(target_coord_data, k=1)
-            if dist < 1.5:  # Collision detected (1.5 pixel radius)
-                # Rollback napari's native broken point
+            if dist < 1.5:
                 if layer.mode == 'add' and len(new_data) > 0:
                     layer.data = new_data[:-1] 
                 viewer.status = "Point already exists here."
                 return
-        # ---------------------------------
+        
+        # --- ID Management ---
+        current_features = layer.features
+        if 'puncta_id' not in current_features:
+            current_features['puncta_id'] = pd.Series(dtype='int')
+
+        # Determine next ID, ignoring NaNs
+        if not current_features['puncta_id'].empty:
+            max_id = current_features['puncta_id'].dropna().max()
+            if pd.notna(max_id):
+                next_id = int(max_id) + 1
+            else: # No valid IDs exist
+                next_id = 0
+        else:
+            next_id = 0
+
+        new_properties = {
+            'puncta_id': next_id,
+            'Nucleus_ID': 0,
+            'Intensity': np.nan,
+            'SNR': np.nan,
+        }
+
+        # Ensure all required columns exist
+        for col, default_val in new_properties.items():
+            if col not in current_features:
+                current_features[col] = default_val
 
         if layer.mode == 'add' and len(new_data) > 0:
-            new_data[-1] = target_coord_data # Overwrite napari's bad point
-        else:
+            new_data[-1] = target_coord_data
+            
+            # Update the properties for the just-added point
+            new_point_index = current_features.index[-1]
+            for col, value in new_properties.items():
+                current_features.loc[new_point_index, col] = value
+
+        else: 
             new_data = np.vstack((new_data, target_coord_data))
+            new_row = pd.DataFrame([new_properties])
+            current_features = pd.concat([current_features, new_row], ignore_index=True)
             
         layer.data = new_data
+        layer.features = current_features
         layer.refresh()
-        viewer.status = f"Algorithmic Snap: Pixel {np.round(target_coord_data, 1)}"
+        viewer.status = f"Algorithmic Snap: ID {next_id}, Pixel {np.round(target_coord_data, 1)}"
 
 # --- UI Wrapper ---
 puncta_editor_widget = widgets.Container(labels=False)
 header = widgets.Label(value="Puncta Editor")
 header.native.setObjectName("widgetHeader")
 info = widgets.Label(value="<i>Advanced editing of puncta.</i>")
-puncta_editor_widget.extend([header, info, _puncta_editor_widget])
+puncta_editor_widget.extend([header, info, _puncta_editor_widget, _save_widget])
+
+# Link the layer dropdowns
+_save_widget.layer.bind(_puncta_editor_widget.points_layer)

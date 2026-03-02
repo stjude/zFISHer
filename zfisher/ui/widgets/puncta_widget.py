@@ -78,7 +78,7 @@ def _puncta_widget(
             output_path=csv_path
         )
         
-        viewer_helpers.add_or_update_puncta_layer(viewer, image_layer, results[:, :3])
+        viewer_helpers.add_or_update_puncta_layer(viewer, image_layer, results)
         viewer.status = f"Found {len(results)} spots in {image_layer.name}."
 
 # --- Automated UI Event Listeners ---

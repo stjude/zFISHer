@@ -61,6 +61,7 @@ def add_image_session_to_viewer(viewer: napari.Viewer, image_session, prefix: st
                     f"Scale: 1 um = {px_per_um:.2f} px\n"
                     f"FOV Width: {fov_um:.1f} um ({int(fov_px)} px)"
                 )
+                viewer.text_overlay.position = "top_right"
         except Exception:
             pass
 
@@ -79,53 +80,71 @@ def add_image_session_to_viewer(viewer: napari.Viewer, image_session, prefix: st
     update_scale_text()
 
 def _load_points_layer(viewer, name, path, scale, file_info, translate):
-    if path.suffix.lower() == '.csv':
-        try:
-            # Puncta are saved as CSV with header: Z,Y,X,...
-            df = pd.read_csv(path)
-            data = df[['Z', 'Y', 'X']].to_numpy()
-        except (pd.errors.EmptyDataError, KeyError, FileNotFoundError):
-            data = np.empty((0, 3)) # Return empty array if file is empty or has wrong columns
-    else: # Assume .npy
-        data = np.load(path, allow_pickle=True)
-
     subtype = file_info.get('subtype')
 
     print("\n" + "="*20 + f" DIAGNOSTIC: Loading Points Layer " + "="*20)
     print(f"  - Layer Name: '{name}'")
     print(f"  - Subtype: {subtype}")
+    print(f"  - Path: {path}")
     print(f"  - Scale: {scale}")
     print(f"  - Translate: {translate}")
-    print(f"  - Data shape: {data.shape if data is not None else 'None'}")
     print("="*68)
 
-    if subtype == 'structured_ids':
-        coords = np.vstack(data['coord'])
-        properties = {p_name: data[p_name] for p_name in data.dtype.names if p_name != 'coord'}
-        text_params = {
-            'string': '{label}', 'size': 10, 'color': '#40b5d8',
-            'translation': np.array([0, -5, 0])
-        }
-        layer = viewer.add_points(
-            coords, name=name, size=1, face_color='transparent', scale=scale, properties=properties,
-            text=text_params, blending='translucent_no_depth', translate=translate
-        )
-        # Show points from all Z-slices in 2D view
-        layer.out_of_slice_display = True
-    elif subtype == 'centroids':
-        viewer.add_points(data, name=name, size=5, face_color='orange', scale=scale, translate=translate)
-    elif subtype == 'puncta' or subtype == 'puncta_csv':
-        properties = {'id': np.arange(len(data)) + 1}
-        text_params = {
-            'string': '{id}', 'size': 8, 'color': 'white',
-            'translation': np.array([0, 5, 5]),
-        }
-        viewer.add_points(
-            data, name=name, size=3, face_color='yellow', scale=scale,
-            properties=properties, text=text_params, translate=translate
-        )
-    else: # Generic points
-        viewer.add_points(data, name=name, scale=scale, translate=translate)
+    try:
+        if path.suffix.lower() == '.csv':
+            df = pd.read_csv(path)
+            coord_cols = ['Z', 'Y', 'X']
+            if not all(col in df.columns for col in coord_cols):
+                print(f"Warning: CSV for layer '{name}' is missing coordinate columns.")
+                return
+            
+            data = df[coord_cols].to_numpy()
+            features = df.drop(columns=coord_cols, errors='ignore')
+            
+            # Ensure puncta_id exists for text display
+            if 'puncta_id' not in features.columns:
+                features['puncta_id'] = np.arange(len(data))
+            
+            text_params = {
+                'string': '{puncta_id:.0f}', 'size': 8, 'color': 'white',
+                'translation': np.array([0, 5, 5]),
+            }
+            viewer.add_points(
+                data, name=name, size=3, face_color='yellow', scale=scale,
+                features=features, text=text_params, translate=translate
+            )
+        else:  # Handle .npy files and other binary formats
+            data = np.load(path, allow_pickle=True)
+            
+            if subtype == 'structured_ids':
+                coords = np.vstack(data['coord'])
+                properties = {p_name: data[p_name] for p_name in data.dtype.names if p_name != 'coord'}
+                text_params = {
+                    'string': '{label}', 'size': 10, 'color': '#40b5d8',
+                    'translation': np.array([0, -5, 0])
+                }
+                layer = viewer.add_points(
+                    coords, name=name, size=1, face_color='transparent', scale=scale, properties=properties,
+                    text=text_params, blending='translucent_no_depth', translate=translate
+                )
+                layer.out_of_slice_display = True
+            
+            elif subtype == 'centroids':
+                viewer.add_points(data, name=name, size=5, face_color='orange', scale=scale, translate=translate)
+
+            else:  # Default for .npy, including old 'puncta' subtype
+                features = pd.DataFrame({'puncta_id': np.arange(len(data))})
+                text_params = {
+                    'string': '{puncta_id:.0f}', 'size': 8, 'color': 'white',
+                    'translation': np.array([0, 5, 5]),
+                }
+                viewer.add_points(
+                    data, name=name, size=3, face_color='yellow', scale=scale,
+                    features=features, text=text_params, translate=translate
+                )
+    except Exception as e:
+        # The calling function `restore_processed_layers` will print this
+        raise e
 
 def _load_labels_layer(viewer, name, path, scale, file_info, translate):
     data = tifffile.imread(path)
@@ -212,53 +231,93 @@ def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, defau
         except Exception as e:
             print(f"Error restoring layer '{name}': {e}")
 
-def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layers.Image, coords: np.ndarray):
+def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layers.Image, puncta_data: np.ndarray):
     """
-    Adds a new puncta layer to the viewer or updates an existing one.
+    Adds or updates a puncta layer with full feature support.
 
-    This function handles creating the layer name, merging coordinates if the
-    layer already exists, and performing the initial save to the session.
-
-    Parameters
-    ----------
-    viewer : napari.Viewer
-        The napari viewer instance.
-    source_layer : napari.layers.Image
-        The image layer from which the puncta were detected.
-    coords : np.ndarray
-        The (N, 3) array of detected puncta coordinates.
+    Handles merging new data, creating unique IDs, and setting up text display.
     """
-    if coords is None or len(coords) == 0:
+    if puncta_data is None or puncta_data.shape[0] == 0:
         return
 
     layer_name = f"{source_layer.name}{constants.PUNCTA_SUFFIX}"
+    coords = puncta_data[:, :3]
+
+    # Create a DataFrame for the new properties
+    new_features = pd.DataFrame({
+        'Nucleus_ID': puncta_data[:, 3],
+        'Intensity': puncta_data[:, 4],
+        'SNR': puncta_data[:, 5]
+    })
+
+    text_params = {
+        'string': '{puncta_id:.0f}',  # Format as integer
+        'size': 8,
+        'color': 'white',
+        'translation': np.array([0, 5, 5]),
+    }
 
     if layer_name in viewer.layers:
+        # Update existing layer
         pts_layer = viewer.layers[layer_name]
-        pts_layer.data = segmentation.merge_puncta(pts_layer.data, coords)
-        pts_layer.properties = {'id': np.arange(len(pts_layer.data)) + 1}
-        pts_layer.text = {'string': '{id}', 'size': 8, 'color': 'white', 'translation': np.array([0, 5, 5])}
+        
+        # Get existing data and features
+        existing_coords = pts_layer.data
+        existing_features = pts_layer.features
+
+        # Determine next ID based on existing points
+        if not existing_features.empty and 'puncta_id' in existing_features:
+            max_id = existing_features['puncta_id'].dropna().max()
+            next_id = int(max_id) + 1 if pd.notna(max_id) else 0
+        else:
+            next_id = 0
+            
+        # Assign new unique IDs to the new data
+        new_features['puncta_id'] = np.arange(next_id, next_id + len(new_features))
+
+        # Merge data
+        combined_coords = segmentation.merge_puncta(existing_coords, coords)
+        combined_features = pd.concat([existing_features, new_features], ignore_index=True)
+        
+        # Update layer
+        pts_layer.data = combined_coords
+        pts_layer.features = combined_features
+        pts_layer.text = text_params
+
     else:
-        properties = {'id': np.arange(len(coords)) + 1}
-        text_params = {'string': '{id}', 'size': 8, 'color': 'white', 'translation': np.array([0, 5, 5])}
+        # Create new layer
+        # Assign initial IDs
+        new_features['puncta_id'] = np.arange(len(new_features))
 
         viewer.add_points(
-                coords,
-                name=layer_name,
-                size=3,
-                face_color="yellow",
-                scale=source_layer.scale,
-                translate=source_layer.translate, # SYNC STAGE OFFSET
-                properties=properties,
-                text=text_params
-            )
-        # Handle the initial save explicitly to avoid race conditions with the event system.
-        out_dir = session.get_data("output_dir")
-        if out_dir:
-            seg_dir = Path(out_dir) / constants.SEGMENTATION_DIR
-            puncta_path = seg_dir / f"{layer_name}.npy"
-            np.save(puncta_path, coords)
-            session.set_processed_file(layer_name, str(puncta_path), layer_type='points', metadata={'subtype': 'puncta'})
+            coords,
+            name=layer_name,
+            size=3,
+            face_color="yellow",
+            scale=source_layer.scale,
+            translate=source_layer.translate,
+            features=new_features,
+            text=text_params
+        )
+
+    # --- Save full features to CSV ---
+    out_dir = session.get_data("output_dir")
+    if out_dir:
+        puncta_layer = viewer.layers[layer_name]
+        
+        # Combine coordinates and features for saving
+        coords_df = pd.DataFrame(puncta_layer.data, columns=['Z', 'Y', 'X'])
+        full_df_to_save = pd.concat([puncta_layer.features.reset_index(drop=True), coords_df.reset_index(drop=True)], axis=1)
+
+        # Define path and save
+        reports_dir = Path(out_dir) / constants.REPORTS_DIR
+        reports_dir.mkdir(exist_ok=True)
+        csv_path = reports_dir / f"{layer_name}.csv"
+        
+        full_df_to_save.to_csv(csv_path, index=False)
+        
+        # Update session file to point to this new CSV
+        session.set_processed_file(layer_name, str(csv_path), layer_type='points', metadata={'subtype': 'puncta_csv'})
 
 def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napari.layers.Image, masks: np.ndarray, centroids: np.ndarray):
     """

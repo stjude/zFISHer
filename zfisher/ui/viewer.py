@@ -7,7 +7,7 @@ from functools import partial
 
 from qtpy.QtWidgets import QApplication, QToolBox, QToolButton, QWidget, QLabel, QVBoxLayout, QDockWidget
 from qtpy.QtGui import QIcon, QPainter, QPalette
-from qtpy.QtCore import Qt, QPoint, QTimer
+from qtpy.QtCore import Qt, QPoint, QTimer, QEvent
 from magicgui import widgets
 from ..core import session
 
@@ -32,6 +32,10 @@ from . import events, style
 
 # --- Helper Classes ---
 
+from qtpy.QtCore import Qt, QPoint, QTimer, QEvent, QEvent
+
+# ... (keep existing imports) ...
+
 class DraggableScaleBar(QWidget):
     def __init__(self, viewer, parent=None):
         super().__init__(parent)
@@ -44,24 +48,38 @@ class DraggableScaleBar(QWidget):
         self.font_color = style.SCALE_BAR_FONT_COLOR
         self.font = style.SCALE_BAR_FONT
         self.resize(200, 60)
-        QTimer.singleShot(1500, self.move_to_bottom_right)
+        
+        # New robust positioning logic
+        if self.parent():
+            self.parent().installEventFilter(self)
+        
         self.viewer.camera.events.zoom.connect(self.on_zoom)
         self.viewer.layers.events.inserted.connect(self.on_layer_change)
         self.viewer.layers.events.removed.connect(self.on_layer_change)
+
         self.pixel_size_um = 1.0
         self.bar_length_um = 10
         self.bar_length_px = 100
         self.text = ""
         self.recalculate()
 
+    def eventFilter(self, watched, event):
+        # When the parent widget is resized, move this widget
+        if watched == self.parent() and event.type() == QEvent.Resize:
+            self.move_to_bottom_right()
+        return super().eventFilter(watched, event)
+
     def move_to_bottom_right(self):
         self.adjustSize()
         parent = self.parent()
         if parent:
             p_w, p_h = parent.width(), parent.height()
-            self.move(p_w - self.width() - 20, p_h - self.height() - 20)
+            if p_w > 0 and p_h > 0:
+                self.move(p_w - self.width() - 20, p_h - self.height() - 20)
 
     def get_pixel_size(self):
+        # This should ideally get the pixel size from the current layer
+        # For now, it seems to be hardcoded in dependent calculations
         return 1.0
 
     def recalculate(self):
@@ -75,15 +93,27 @@ class DraggableScaleBar(QWidget):
         zoom = self.viewer.camera.zoom
         if zoom == 0: return
         target_px = 150
-        um_per_canvas_px = 1.0 / zoom
+        
+        # This part has a bug if no layers are present. Let's get scale from layer if possible.
+        active_layer = self.viewer.layers.selection.active
+        if active_layer:
+             pixel_size_x = active_layer.scale[-1]
+        else:
+             pixel_size_x = 1.0 # fallback
+
+        um_per_canvas_px = pixel_size_x / zoom if pixel_size_x > 0 else 1.0 / zoom
+
         target_um = target_px * um_per_canvas_px
         if target_um <= 0: return
+
         exponent = math.floor(math.log10(target_um))
         fraction = target_um / (10 ** exponent)
+
         if fraction < 1.5: nice_fraction = 1
         elif fraction < 3.5: nice_fraction = 2
         elif fraction < 7.5: nice_fraction = 5
         else: nice_fraction = 10
+        
         self.bar_length_um = nice_fraction * (10 ** exponent)
         self.bar_length_px = self.bar_length_um / um_per_canvas_px
         self.text = f"{self.bar_length_um:.4g} um"
