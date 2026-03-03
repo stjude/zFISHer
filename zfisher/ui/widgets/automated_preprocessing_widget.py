@@ -12,6 +12,15 @@ from ..decorators import require_active_session, error_handler
 from ...core.registration import generate_global_canvas
 from ... import constants
 
+
+def _get_qt_parent(viewer):
+    """Get the Qt parent window for dialogs without using deprecated napari internals."""
+    try:
+        from qtpy.QtWidgets import QApplication
+        return QApplication.activeWindow()
+    except Exception:
+        return None
+
 @magicgui(
     call_button="Run Automated Preprocessing",
     viewer={"visible": False, "label": " "},
@@ -35,7 +44,7 @@ def _automated_preprocessing_magic_widget(
         viewer.status = "Please select both DAPI layers."
         return
 
-    with popups.ProgressDialog(viewer.window._qt_window, "Automated Preprocessing...") as dialog:
+    with popups.ProgressDialog(_get_qt_parent(viewer), "Automated Preprocessing...") as dialog:
         output_dir = Path(session.get_data("output_dir"))
         voxels = tuple(r1_dapi_layer.scale)
 
