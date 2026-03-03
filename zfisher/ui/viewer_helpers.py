@@ -187,6 +187,8 @@ def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, defau
         logger.debug("Applying canvas translation: %s", translate.tolist())
     translate = translate.tolist() # Ensure it's a list for JSON compatibility/consistency
 
+    computed_ids_names = []  # deferred: must be rebuilt after all mask layers are loaded
+
     for i, (name, file_info) in enumerate(processed_files.items()):
         if progress_callback:
             progress = int(((i + 1) / num_files) * 100)
@@ -195,6 +197,11 @@ def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, defau
         # Handle old format for backward compatibility, or just ignore non-dict values
         if not isinstance(file_info, dict):
             logger.warning("Skipping layer '%s' with old/invalid format in session file.", name)
+            continue
+
+        # computed_ids entries have no file — recompute from mask after all layers are loaded
+        if file_info.get('subtype') == 'computed_ids':
+            computed_ids_names.append(name)
             continue
 
         path_str = file_info.get('path')
@@ -227,6 +234,17 @@ def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, defau
             logger.debug("Restored layer: %s", name)
         except Exception as e:
             logger.error("Error restoring layer '%s': %s", name, e)
+
+    # Post-pass: recompute any _IDs layers that were registered as computed (no file).
+    # Parent mask must already be loaded before this runs.
+    for ids_name in computed_ids_names:
+        # ids_name is always "{mask_name}_IDs"
+        mask_name = ids_name[:-4]  # strip "_IDs"
+        if mask_name in viewer.layers and isinstance(viewer.layers[mask_name], napari.layers.Labels):
+            try:
+                add_or_update_label_ids(viewer, viewer.layers[mask_name])
+            except Exception as e:
+                logger.error("Error recomputing IDs for '%s': %s", mask_name, e)
 
 def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layers.Image, puncta_data: np.ndarray):
     """
@@ -451,4 +469,10 @@ def add_or_update_label_ids(viewer: napari.Viewer, labels_layer: napari.layers.L
         )
         # Show points from all Z-slices in 2D view
         layer.out_of_slice_display = True
+
+    # Register in session so this IDs layer is recreated on next session load.
+    # Skip during session restore to avoid circular re-registration.
+    if not session.is_loading():
+        session.set_processed_file(name, "", layer_type='points', metadata={'subtype': 'computed_ids'})
+
     viewer.status = f"Refreshed IDs for {labels_layer.name}"

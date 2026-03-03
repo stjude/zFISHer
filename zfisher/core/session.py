@@ -114,6 +114,19 @@ def set_processed_file(layer_name, path, layer_type: str, metadata: dict = None)
         _SESSION_DATA["processed_files"][layer_name] = file_info
         _save_session_unlocked()
 
+def remove_processed_file(layer_name):
+    """
+    Removes a layer's entry from the session's processed_files registry and saves.
+
+    Parameters
+    ----------
+    layer_name : str
+        The name of the layer to remove.
+    """
+    with _lock:
+        _SESSION_DATA.get("processed_files", {}).pop(layer_name, None)
+        _save_session_unlocked()
+
 def clear_session():
     """
     Resets the in-memory session data to its default, empty state.

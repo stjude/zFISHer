@@ -90,10 +90,28 @@ def on_layer_inserted(event, widgets):
 def on_layer_removed(event, widgets):
     """
     Refreshes all widget dropdowns when a layer is removed.
+    For Labels layers, also removes the associated _IDs points layer
+    and cleans up the session registry.
     """
+    layer = event.value
+    viewer = napari.current_viewer()
+
+    # Remove the orphan _IDs display layer (if it exists) and clean up session data
+    if isinstance(layer, napari.layers.Labels):
+        ids_name = f"{layer.name}_IDs"
+        if viewer and ids_name in viewer.layers:
+            viewer.layers.remove(viewer.layers[ids_name])
+        session.remove_processed_file(layer.name)
+        session.remove_processed_file(ids_name)
+
+    # Clean up stale session entry and listener tracking for removed points layers
+    elif isinstance(layer, napari.layers.Points):
+        session.remove_processed_file(layer.name)
+        _attached_listeners.discard(id(layer))
+
     def update_choices():
         for w in widgets.values():
             if hasattr(w, "reset_choices"):
                 w.reset_choices()
-    
+
     QTimer.singleShot(10, update_choices)
