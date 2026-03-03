@@ -59,13 +59,14 @@ def calculate_session_registration(r1_centroids, r2_centroids, voxels=None, prog
 
     return shift, rmsd
 
-def _find_rough_shift_vector_voting(fixed_points, moving_points, n_limit=constants.RANSAC_N_LIMIT, bin_size=constants.RANSAC_BIN_SIZE):
+def _find_rough_shift_nearest_neighbor(fixed_points, moving_points, n_limit=constants.RANSAC_N_LIMIT, bin_size=constants.RANSAC_BIN_SIZE):
     """
-    Finds a rough alignment shift via vector voting (difference histogram peak).
+    Finds a rough alignment shift via nearest-neighbor median voting.
 
-    Computes all pairwise difference vectors between subsampled point clouds,
-    bins them, and returns the most-voted bin center. This is robust to outliers
-    and unequal point counts between rounds.
+    For each point in the smaller cloud, finds its nearest neighbor in the
+    larger cloud and records the difference vector. The median of these
+    vectors gives a robust initial shift estimate that is resistant to
+    outliers, unmatched points, and centroid quantization artifacts.
 
     Parameters
     ----------
@@ -82,21 +83,25 @@ def _find_rough_shift_vector_voting(fixed_points, moving_points, n_limit=constan
     if len(fixed_points) < 1 or len(moving_points) < 1:
         return np.array([0.0, 0.0, 0.0])
 
-    # Subsample to keep pairwise computation tractable
+    # Subsample for speed
     rng = np.random.default_rng(42)
     vote_limit = min(500, n_limit)
     fp = fixed_points if len(fixed_points) <= vote_limit else fixed_points[rng.choice(len(fixed_points), vote_limit, replace=False)]
     mp = moving_points if len(moving_points) <= vote_limit else moving_points[rng.choice(len(moving_points), vote_limit, replace=False)]
 
-    # All pairwise difference vectors (N*M, 3)
-    diffs = (fp[:, np.newaxis, :] - mp[np.newaxis, :, :]).reshape(-1, 3)
+    # Use the smaller cloud as query points for efficiency
+    if len(fp) <= len(mp):
+        tree = cKDTree(mp)
+        dists, idxs = tree.query(fp)
+        diffs = fp - mp[idxs]  # fixed - moving = shift to add to moving
+    else:
+        tree = cKDTree(fp)
+        dists, idxs = tree.query(mp)
+        diffs = fp[idxs] - mp  # fixed - moving = shift to add to moving
 
-    # Bin into histogram and return the peak bin center
-    binned = np.round(diffs / bin_size).astype(np.int32)
-    unique_bins, counts = np.unique(binned, axis=0, return_counts=True)
-    peak = unique_bins[np.argmax(counts)]
-
-    return peak.astype(float) * bin_size
+    # Median is robust to outlier matches (unmatched nuclei pairing with
+    # distant wrong neighbors). Mean would be biased by these.
+    return np.median(diffs, axis=0)
 
 def _get_nearest_neighbor_pairs(fixed_points, moving_points, rough_shift, search_radius=constants.RANSAC_SEARCH_RADIUS, voxels=None):
     """
@@ -235,10 +240,10 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, voxel
         - The calculated (Z, Y, X) shift vector.
         - The calculated RMSD of the inlier points.
     """
-    # 1. Brute-force Vector Voting to find rough shift
+    # 1. Nearest-neighbor median voting to find rough shift
     if progress_callback: progress_callback(10, "Finding rough alignment...")
     logger.debug("Starting registration alignment")
-    rough_shift = _find_rough_shift_vector_voting(fixed_points, moving_points)
+    rough_shift = _find_rough_shift_nearest_neighbor(fixed_points, moving_points)
     
     # 2. Refine using Nearest Neighbors
     if progress_callback: progress_callback(40, "Matching nearest neighbors...")
