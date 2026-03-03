@@ -132,6 +132,7 @@ class NewSessionWidget(Container):
             # --- 4. Registration ---
             shift, _ = registration.calculate_session_registration(
                 seg_results['R1'][1], seg_results['R2'][1],
+                voxels=r1_sess.voxels,
                 progress_callback=lambda p, t: dialog.update_progress(35 + int(p * 0.1), t)
             )
             if shift is None:
@@ -226,11 +227,23 @@ class NewSessionWidget(Container):
                     self._viewer.add_image(data, name=name, blending='additive', colormap=cmap, scale=voxels,
                                            visible=constants.DAPI_CHANNEL_NAME.upper() in name.upper())
 
+            # Deformation field (.npy vectors) from aligned_dir
+            deform_path = aligned_dir / f"{constants.DEFORMATION_FIELD_NAME}.npy"
+            if deform_path.exists():
+                viewer_helpers._load_vectors_layer(self._viewer, constants.DEFORMATION_FIELD_NAME,
+                                                   deform_path, voxels, {}, [0, 0, 0])
+
             consensus_path = seg_dir / f"{constants.CONSENSUS_MASKS_NAME}.tif"
             if consensus_path.exists():
                 data = tifffile.imread(consensus_path)
                 lyr = self._viewer.add_labels(data, name=constants.CONSENSUS_MASKS_NAME, opacity=0.5, scale=voxels, visible=False)
                 lyr.rendering = 'iso_categorical'
+
+            # Consensus nuclei ID points (.npy structured array)
+            ids_path = seg_dir / f"{constants.CONSENSUS_MASKS_NAME}{constants.CONSENSUS_IDS_SUFFIX}.npy"
+            if ids_path.exists():
+                viewer_helpers._load_points_layer(self._viewer, f"{constants.CONSENSUS_MASKS_NAME}{constants.CONSENSUS_IDS_SUFFIX}",
+                                                  ids_path, voxels, {'subtype': 'structured_ids'}, [0, 0, 0])
 
             for csv_path in sorted(seg_dir.glob(f"*{constants.PUNCTA_SUFFIX}.csv")):
                 viewer_helpers._load_points_layer(self._viewer, csv_path.stem, csv_path, voxels, {}, [0, 0, 0])

@@ -3,6 +3,11 @@ import numpy as np
 from pathlib import Path
 from skimage.measure import ransac
 from skimage.transform import AffineTransform
+
+class _AffineTransform3D(AffineTransform):
+    """3D affine transform wrapper — skimage defaults to 2D without this."""
+    def __init__(self):
+        super().__init__(dimensionality=3)
 from scipy.spatial import cKDTree
 from scipy import ndimage as ndi
 import SimpleITK as sitk
@@ -16,7 +21,7 @@ from .. import constants
 
 logger = logging.getLogger(__name__)
 
-def calculate_session_registration(r1_centroids, r2_centroids, progress_callback=None):
+def calculate_session_registration(r1_centroids, r2_centroids, voxels=None, progress_callback=None):
     """
     Headless Orchestrator for Step 3.
     Calculates the shift and updates the global session data.
@@ -24,15 +29,16 @@ def calculate_session_registration(r1_centroids, r2_centroids, progress_callback
     if r1_centroids is None or r2_centroids is None:
         return None, 0.0
 
-    # 1. Execute the RANSAC math (already pure compute!)
     shift, rmsd = align_centroids_ransac(
-        r1_centroids, 
-        r2_centroids, 
+        r1_centroids,
+        r2_centroids,
+        voxels=voxels,
         progress_callback=progress_callback
     )
 
-    # 2. Update Session State
-    # Note: Using .tolist() because JSON doesn't support numpy arrays
+    if shift is None:
+        return None, 0.0
+
     session.update_data("shift", shift.tolist())
     session.update_data("registration_rmsd", float(rmsd))
 
@@ -40,8 +46,11 @@ def calculate_session_registration(r1_centroids, r2_centroids, progress_callback
 
 def _find_rough_shift_vector_voting(fixed_points, moving_points, n_limit=constants.RANSAC_N_LIMIT, bin_size=constants.RANSAC_BIN_SIZE):
     """
-    Finds a rough alignment shift using the difference of point cloud means.
-    This method is highly robust to outliers and provides a stable initial guess.
+    Finds a rough alignment shift via vector voting (difference histogram peak).
+
+    Computes all pairwise difference vectors between subsampled point clouds,
+    bins them, and returns the most-voted bin center. This is robust to outliers
+    and unequal point counts between rounds.
 
     Parameters
     ----------
@@ -57,40 +66,68 @@ def _find_rough_shift_vector_voting(fixed_points, moving_points, n_limit=constan
     """
     if len(fixed_points) < 1 or len(moving_points) < 1:
         return np.array([0.0, 0.0, 0.0])
-    
-    # A simple difference of means is a very robust estimator for the rough shift.
-    return np.mean(fixed_points, axis=0) - np.mean(moving_points, axis=0)
 
-def _get_nearest_neighbor_pairs(fixed_points, moving_points, rough_shift, search_radius=constants.RANSAC_SEARCH_RADIUS):
+    # Subsample to keep pairwise computation tractable
+    rng = np.random.default_rng(42)
+    vote_limit = min(500, n_limit)
+    fp = fixed_points if len(fixed_points) <= vote_limit else fixed_points[rng.choice(len(fixed_points), vote_limit, replace=False)]
+    mp = moving_points if len(moving_points) <= vote_limit else moving_points[rng.choice(len(moving_points), vote_limit, replace=False)]
+
+    # All pairwise difference vectors (N*M, 3)
+    diffs = (fp[:, np.newaxis, :] - mp[np.newaxis, :, :]).reshape(-1, 3)
+
+    # Bin into histogram and return the peak bin center
+    binned = np.round(diffs / bin_size).astype(np.int32)
+    unique_bins, counts = np.unique(binned, axis=0, return_counts=True)
+    peak = unique_bins[np.argmax(counts)]
+
+    return peak.astype(float) * bin_size
+
+def _get_nearest_neighbor_pairs(fixed_points, moving_points, rough_shift, search_radius=constants.RANSAC_SEARCH_RADIUS, voxels=None):
     """
     Matches points based on nearest neighbors after applying a rough shift.
+
+    Optionally scales coordinates to physical units (µm) before distance
+    computation to handle anisotropic voxel sizes correctly. Returns matched
+    pairs in the original pixel coordinate space.
 
     Parameters
     ----------
     fixed_points : np.ndarray
-        (N, 3) array of reference points.
+        (N, 3) array of reference points in pixel (Z, Y, X) coordinates.
     moving_points : np.ndarray
         (M, 3) array of points to be aligned.
     rough_shift : np.ndarray
         A (3,) coarse shift vector to apply to `moving_points` before matching.
     search_radius : float, optional
-        The maximum distance to search for a nearest neighbor.
+        The maximum physical distance (µm if voxels provided, else pixels) to
+        search for a nearest neighbor.
+    voxels : tuple or None, optional
+        (dz, dy, dx) voxel size in µm. If provided, distances are computed in
+        physical space to correct for anisotropy.
 
     Returns
     -------
     tuple[np.ndarray, np.ndarray]
-        A tuple containing (src, dst) points, where `src` are from `moving_points`
-        and `dst` are their corresponding matches in `fixed_points`.
+        (src, dst) point pairs in original pixel coordinates.
     """
-    moving_shifted = moving_points + rough_shift
-    
-    tree = cKDTree(fixed_points)
+    scale = np.array(voxels) if voxels is not None else np.ones(3)
+
+    # Scale to physical space for unbiased distance computation
+    fixed_phys = fixed_points * scale
+    moving_phys = moving_points * scale
+    rough_shift_phys = rough_shift * scale
+
+    moving_shifted = moving_phys + rough_shift_phys
+
+    tree = cKDTree(fixed_phys)
     distances, indices = tree.query(moving_shifted, distance_upper_bound=search_radius)
-    
+
     valid_mask = distances < float('inf')
+    # Return original pixel coords so RANSAC operates in pixel space
     src = moving_points[valid_mask]
     dst = fixed_points[indices[valid_mask]]
-    
+
     return src, dst
 
 def _calculate_rmsd(src_points, dst_points, model, inliers):
@@ -149,7 +186,7 @@ def _refine_shift_with_ransac(src_points, dst_points, residual_threshold=constan
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message="No inliers found")
             model, inliers = ransac(
-                (src_points, dst_points), AffineTransform, min_samples=4, 
+                (src_points, dst_points), _AffineTransform3D, min_samples=4,
                 residual_threshold=residual_threshold, max_trials=max_trials
             )
     except np.linalg.LinAlgError as e:
@@ -159,7 +196,7 @@ def _refine_shift_with_ransac(src_points, dst_points, residual_threshold=constan
     
     return model, inliers
 
-def align_centroids_ransac(fixed_points, moving_points, max_distance=None, progress_callback=None):
+def align_centroids_ransac(fixed_points, moving_points, max_distance=None, voxels=None, progress_callback=None):
     """
     Calculates the rigid shift between two point clouds.
 
@@ -190,7 +227,7 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, progr
     
     # 2. Refine using Nearest Neighbors
     if progress_callback: progress_callback(40, "Matching nearest neighbors...")
-    src, dst = _get_nearest_neighbor_pairs(fixed_points, moving_points, rough_shift)
+    src, dst = _get_nearest_neighbor_pairs(fixed_points, moving_points, rough_shift, voxels=voxels)
     
     if len(src) < 4:
         logger.debug("Rough shift calculated: %s", rough_shift)

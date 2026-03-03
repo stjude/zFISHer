@@ -11,12 +11,11 @@ from ...core import segmentation
 from ... import constants
 
 class MaskHighlighter:
-    """Helper class to highlight labels in red under the mouse cursor."""
+    """Highlights the hovered nucleus by overriding its color directly in the Labels layer."""
     def __init__(self, viewer):
         self.viewer = viewer
         self.last_layer = None
         self.last_id = None
-        self.highlight_layer = None # To store the temporary highlight layer
         self.active = False
 
     def enable(self):
@@ -32,64 +31,37 @@ class MaskHighlighter:
             self.active = False
 
     def reset_highlight(self):
-        """Removes the temporary highlight layer."""
-        if self.highlight_layer:
-            try:
-                self.viewer.layers.remove(self.highlight_layer)
-            except (KeyError, ValueError):
-                # Layer might have been removed manually
-                pass
-        
-        # Clear state
+        """Removes the red color override from the last highlighted label."""
+        if self.last_layer is not None and self.last_id is not None:
+            colors = dict(self.last_layer.color)
+            colors.pop(self.last_id, None)
+            self.last_layer.color = colors
         self.last_layer = None
         self.last_id = None
-        self.highlight_layer = None
 
-    def perform_highlight(self, layer, label_id_to_highlight):
-        """Creates a temporary layer to show the highlighted label in red."""
+    def perform_highlight(self, layer, label_id):
+        """Sets the hovered label to red in the Labels layer color map."""
+        colors = dict(layer.color)
+        # Clear previous highlight if switching labels
+        if self.last_id is not None and self.last_id != label_id:
+            colors.pop(self.last_id, None)
+        colors[label_id] = np.array([1.0, 0.0, 0.0, 1.0])
+        layer.color = colors
+
         self.last_layer = layer
-        self.last_id = label_id_to_highlight
-
-        try:
-            # Create a boolean mask of the label to highlight.
-            # We will display this as an Image layer, which is more robust
-            # across napari versions than trying to color a Labels layer.
-            highlight_mask = (layer.data == label_id_to_highlight)
-
-            # The name for our temporary layer
-            highlight_layer_name = "_highlight"
-
-            # Remove the old highlight layer if it exists
-            if self.highlight_layer and self.highlight_layer.name in self.viewer.layers:
-                self.viewer.layers.remove(self.highlight_layer)
-
-            # Add the new highlight layer as an Image layer with a red colormap.
-            self.highlight_layer = self.viewer.add_image(
-                highlight_mask,
-                name=highlight_layer_name,
-                scale=layer.scale,
-                colormap='red',
-                opacity=0.8,
-                blending='additive',
-            )
-            
-            self.viewer.status = f"Hovering Nucleus ID: {label_id_to_highlight} (Press 'C' to delete)"
-
-        except Exception as e:
-            # This might still fail on very old napari.
-            print(f"Highlighting failed: {e}")
-            self.reset_highlight() # Clean up if something went wrong
-            self.viewer.status = "Error: Cannot highlight on this napari version."
+        self.last_id = label_id
+        self.viewer.status = f"Hovering Nucleus ID: {label_id} (Press 'C' to delete)"
 
     def on_mouse_move(self, viewer, event):
-        if not self.active: return
-        
-        layer = mask_editor_widget.mask_layer.value
-        if not isinstance(layer, napari.layers.Labels):
-            if self.last_id: self.reset_highlight()
+        if not self.active:
             return
 
-        # Get the ID under the cursor from the original layer
+        layer = mask_editor_widget.mask_layer.value
+        if not isinstance(layer, napari.layers.Labels):
+            if self.last_id is not None:
+                self.reset_highlight()
+            return
+
         id_under_cursor = layer.get_value(
             event.position,
             view_direction=event.view_direction,
@@ -97,17 +69,13 @@ class MaskHighlighter:
             world=True
         )
 
-        # If we are currently highlighting a nucleus...
-        if self.last_id is not None:
-            # ...and the cursor is still over it, do nothing.
-            if id_under_cursor == self.last_id:
-                return
-            # ...otherwise, the cursor has moved off, so reset the highlight.
-            else:
+        if id_under_cursor == self.last_id:
+            return  # still over same nucleus, nothing to do
+
+        if id_under_cursor is None or id_under_cursor == 0:
+            if self.last_id is not None:
                 self.reset_highlight()
-        
-        # After a potential reset, if the cursor is now over a valid nucleus, highlight it.
-        if id_under_cursor is not None and id_under_cursor > 0:
+        else:
             self.perform_highlight(layer, id_under_cursor)
 
 # Global instance
