@@ -25,7 +25,7 @@ from .widgets.colocalization_widget import colocalization_widget
 from .widgets.export_visualization_widget import ExportVisualizationWidget
 from .widgets.mask_editor_widget import mask_editor_widget, delete_mask_under_mouse
 from .widgets.puncta_editor_widget import puncta_editor_widget, delete_point_under_mouse
-from .widgets.capture_widget import capture_widget, capture_with_hotkey
+from .widgets.capture_widget import capture_widget, capture_with_hotkey, region_capture_with_hotkey
 
 # Import the event handlers
 from . import events, style
@@ -369,6 +369,7 @@ def launch_zfisher():
     viewer.layers.events.removed.connect(partial(events.on_layer_removed, widgets=widget_map))
 
     viewer.bind_key('Shift-P', capture_with_hotkey, overwrite=True)
+    viewer.bind_key('Control-A', region_capture_with_hotkey, overwrite=True)
     viewer.bind_key('x', delete_point_under_mouse, overwrite=True)
     viewer.bind_key('c', delete_mask_under_mouse, overwrite=True)
 

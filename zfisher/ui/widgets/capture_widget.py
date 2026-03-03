@@ -2,131 +2,245 @@ import napari
 import numpy as np
 from pathlib import Path
 from magicgui import magicgui, widgets
-from packaging.version import parse as parse_version
+from qtpy.QtWidgets import QWidget
+from qtpy.QtGui import QPainter, QPen, QBrush, QColor
+from qtpy.QtCore import Qt, QRect
 
 from ...core import session
 from .. import popups
 from ..decorators import require_active_session
 from ... import constants
 
-# --- Arrow Drawing ---
+# --- Arrow Drawing (Shapes-based, works in 2D and 3D) ---
+
+def build_arrow_shapes(start, end, head_fraction=0.25, head_width_ratio=0.6):
+    """Build shaft (line) and arrowhead (triangle polygon) vertices.
+
+    Parameters
+    ----------
+    start, end : np.ndarray, shape (D,)
+        Arrow endpoints in data coordinates.
+    head_fraction : float
+        Head length as a fraction of total arrow length.
+    head_width_ratio : float
+        Head half-width as a fraction of head length.
+
+    Returns
+    -------
+    shaft : np.ndarray (2, D) or None
+        Line from *start* to the base of the head.
+    head : np.ndarray (3, D) or None
+        Triangle: [tip, left_barb, right_barb].
+    """
+    direction = end - start
+    length = np.linalg.norm(direction)
+    if length < 1e-6:
+        return None, None
+
+    unit = direction / length
+    h_len = np.clip(length * head_fraction, 2.0, length * 0.4)
+    h_half_w = h_len * head_width_ratio
+
+    base = end - h_len * unit          # base of the triangle on the shaft
+
+    # Perpendicular in the YX plane (last two axes)
+    ndim = len(direction)
+    perp = np.zeros(ndim)
+    if ndim >= 3:
+        dy, dx = direction[-2], direction[-1]
+        yx_len = np.hypot(dy, dx)
+        if yx_len > 1e-6:
+            perp[-2] = -dx / yx_len
+            perp[-1] =  dy / yx_len
+        else:
+            perp[-2] = 1.0              # purely-Z arrow: use Y as perp
+    elif ndim == 2:
+        dy, dx = direction[0], direction[1]
+        yx_len = np.hypot(dy, dx)
+        if yx_len > 1e-6:
+            perp[0] = -dx / yx_len
+            perp[1] =  dy / yx_len
+        else:
+            perp[0] = 1.0
+
+    shaft = np.array([start, base])
+    head  = np.array([end, base + h_half_w * perp, base - h_half_w * perp])
+    return shaft, head
+
 
 class ArrowDrawer:
+    """Draw arrows on a napari Shapes layer (works in both 2D and 3D)."""
+
     def __init__(self, viewer: napari.Viewer):
         self.viewer = viewer
         self.start_pos = None
         self.arrows_layer = None
         self._is_active = False
+        self._arrow_endpoints = []          # list of (start, end) np arrays
         self._save_callback = self._create_save_callback()
 
+    # ---- persistence ----
+
     def _create_save_callback(self):
-        def _save_arrows_data(event=None):
+        def _save(event=None):
             out_dir = session.get_data("output_dir")
-            if out_dir and self.arrows_layer:
+            if out_dir:
                 seg_dir = Path(out_dir) / constants.SEGMENTATION_DIR
                 seg_dir.mkdir(exist_ok=True, parents=True)
-                arrows_path = seg_dir / f"{self.arrows_layer.name}.npy"
-                np.save(arrows_path, self.arrows_layer.data)
-                session.set_processed_file(self.arrows_layer.name, str(arrows_path), layer_type='vectors')
-        return _save_arrows_data
+                arrows_path = seg_dir / "Arrows.npy"
+                if self._arrow_endpoints:
+                    data = np.array([[s, e] for s, e in self._arrow_endpoints])
+                else:
+                    data = np.empty((0, 2, self.viewer.dims.ndim))
+                np.save(arrows_path, data)
+                session.set_processed_file(
+                    "Arrows", str(arrows_path),
+                    layer_type='shapes', metadata={'subtype': 'arrows'}
+                )
+        return _save
+
+    # ---- layer management ----
 
     def _get_or_create_layer(self):
         if self.arrows_layer and self.arrows_layer.name in self.viewer.layers:
             return self.arrows_layer
-        
+
         for layer in self.viewer.layers:
-            if layer.name == "Arrows" and isinstance(layer, napari.layers.Vectors):
+            if layer.name != "Arrows":
+                continue
+
+            if isinstance(layer, napari.layers.Shapes):
                 self.arrows_layer = layer
-                # Ensure listener is attached
-                if self._save_callback not in self.arrows_layer.events.data.callbacks:
-                    self.arrows_layer.events.data.connect(self._save_callback)
+                self._sync_endpoints_from_session()
                 return layer
 
-        vector_params = {
-            'data': np.empty((0, 2, self.viewer.dims.ndim)),
-            'name': "Arrows",
-            'opacity': 1.0,
-            'edge_width': 1,
-            'length': 1,
-            'edge_color': 'white',
-        }
-        
-        # Defensively add new arrow head styling parameters based on napari version
-        # to ensure consistent appearance with loaded arrows.
-        if parse_version(napari.__version__) >= parse_version("0.7.0"):
-            # Use smaller values to prevent the head from overpowering the tail
-            vector_params['head_width'] = 4
-            vector_params['head_length'] = 6
+            # Old Vector-based arrows: auto-convert to Shapes
+            if isinstance(layer, napari.layers.Vectors):
+                old_data = np.array(layer.data)          # (N, 2, D) [start, vec]
+                self.viewer.layers.remove(layer)
+                for i in range(len(old_data)):
+                    s = old_data[i, 0]
+                    e = s + old_data[i, 1]               # vector -> endpoint
+                    self._arrow_endpoints.append((s.copy(), e.copy()))
+                break                                    # fall through to create
 
-        self.arrows_layer = self.viewer.add_vectors(**vector_params)
-        self.arrows_layer.events.data.connect(self._save_callback)
+        self.arrows_layer = self.viewer.add_shapes(
+            name="Arrows", edge_color='white', face_color='white',
+            edge_width=2, opacity=1.0,
+        )
+        if self._arrow_endpoints:
+            self._rebuild_all_shapes()
+            self._save_callback()
         return self.arrows_layer
 
+    def _sync_endpoints_from_session(self):
+        """Populate *_arrow_endpoints* from the saved .npy when reconnecting
+        to an existing Shapes layer loaded by session restore."""
+        if self._arrow_endpoints:
+            return
+        out_dir = session.get_data("output_dir")
+        if not out_dir:
+            return
+        arrows_path = Path(out_dir) / constants.SEGMENTATION_DIR / "Arrows.npy"
+        if arrows_path.exists():
+            data = np.load(arrows_path)
+            if data.ndim == 3 and data.shape[1] == 2 and data.shape[0] > 0:
+                self._arrow_endpoints = [
+                    (data[i, 0].copy(), data[i, 1].copy()) for i in range(len(data))
+                ]
+
+    # ---- rendering ----
+
+    def _rebuild_all_shapes(self, preview_end=None):
+        """Rebuild every arrow shape from *_arrow_endpoints* (+ optional preview)."""
+        layer = self.arrows_layer
+        if layer is None:
+            return
+
+        shapes = []
+        shape_types = []
+
+        for start, end in self._arrow_endpoints:
+            shaft, head = build_arrow_shapes(start, end)
+            if shaft is not None:
+                shapes.append(shaft)
+                shape_types.append('line')
+                shapes.append(head)
+                shape_types.append('polygon')
+
+        # Temporary preview line while the user is dragging
+        if self.start_pos is not None and preview_end is not None:
+            shapes.append(np.array([self.start_pos, preview_end]))
+            shape_types.append('line')
+
+        if shapes:
+            layer.data = shapes
+            layer.shape_type = shape_types
+            layer.edge_color = 'white'
+            layer.face_color = 'white'
+            layer.edge_width = 2
+        elif len(layer.data) > 0:
+            layer.selected_data = set(range(len(layer.data)))
+            layer.remove_selected()
+
+    # ---- mouse interaction ----
+
     def on_mouse_drag(self, viewer, event):
-        """A generator function to handle mouse dragging for drawing arrows."""
+        """Generator-based mouse-drag handler for drawing arrows."""
         if not self._is_active:
             return
 
-        # On mouse press, handle right-click to delete. This does not require a modifier.
+        # Right-click: delete last arrow
         if event.type == 'mouse_press' and event.button == 2:
-            layer = self._get_or_create_layer()
-            if len(layer.data) > 0:
-                layer.data = layer.data[:-1]
+            if self._arrow_endpoints:
+                self._arrow_endpoints.pop()
+                self._rebuild_all_shapes()
+                self._save_callback()
                 self.viewer.status = "Removed last arrow."
-            # We yield to consume the event and prevent a context menu from appearing.
             yield
             return
 
-        # For drawing, require Shift + Left-Click to avoid conflict with default panning.
-        # If the modifier is not present, we return immediately, allowing panning to occur.
+        # Require Shift + Left-Click
         if 'Shift' not in event.modifiers or event.button != 1:
             return
 
-        # --- on mouse press (event.type == 'mouse_press') ---
-        layer = self._get_or_create_layer()
-        cursor_pos = np.array(event.position)
-        self.start_pos = cursor_pos
-
-        # A new arrow is a zero-length vector at the start position.
-        # The data format is [start_point, vector_from_start].
-        new_arrow_data = np.array([self.start_pos, np.zeros_like(self.start_pos)])
-        layer.data = np.vstack([layer.data, [new_arrow_data]])
+        # --- press ---
+        self.start_pos = np.array(event.position)
+        self._rebuild_all_shapes(preview_end=self.start_pos)
         self.viewer.status = "Release mouse to finish arrow."
         yield
 
-        # --- on mouse move ---
+        # --- move ---
         while event.type == 'mouse_move':
-            cursor_pos = np.array(event.position)
-            # Update the vector component of the arrow data.
-            vector = cursor_pos - self.start_pos
-            layer.data[-1, 1, :] = vector
-            # Force a refresh to ensure the view updates.
-            layer.refresh()
+            cursor = np.array(event.position)
+            self._rebuild_all_shapes(preview_end=cursor)
             yield
 
-        # --- on mouse release ---
-        # The data is already in the correct [start, vector] format.
-        # We just need to finalize the state.
+        # --- release ---
+        cursor = np.array(event.position)
+        if np.linalg.norm(cursor - self.start_pos) > 1e-3:
+            self._arrow_endpoints.append((self.start_pos.copy(), cursor.copy()))
+            self.viewer.status = "Arrow drawn."
+        else:
+            self.viewer.status = "Arrow too small, cancelled."
+
         self.start_pos = None
-        self.viewer.status = "Arrow drawn."
+        self._rebuild_all_shapes()
+        self._save_callback()
+
+    # ---- activation ----
 
     def set_active(self, active: bool):
         self._is_active = active
         if active:
             self._get_or_create_layer()
             self.viewer.status = "Arrow drawing ON. Hold Shift & drag to draw, right-click to remove last."
-            # Insert the callback at the beginning of the list to capture the event
-            # before napari's default pan/zoom handlers can.
             if self.on_mouse_drag not in self.viewer.mouse_drag_callbacks:
                 self.viewer.mouse_drag_callbacks.insert(0, self.on_mouse_drag)
         else:
-            # If we were in the middle of drawing, cancel it
             if self.start_pos is not None:
-                # Remove the temporary arrow that was being drawn
-                if self.arrows_layer and len(self.arrows_layer.data) > 0:
-                    self.arrows_layer.data = self.arrows_layer.data[:-1]
                 self.start_pos = None
-            
+                self._rebuild_all_shapes()      # drop any in-progress preview
             self.viewer.status = "Arrow drawing OFF."
             if self.on_mouse_drag in self.viewer.mouse_drag_callbacks:
                 self.viewer.mouse_drag_callbacks.remove(self.on_mouse_drag)
@@ -215,10 +329,138 @@ def capture_with_hotkey(viewer: napari.Viewer):
     filename = _capture_widget.output_filename.value
     _capture_view(viewer, filename)
 
+# --- Region Capture (Ctrl+A) ---
+
+class RegionCaptureOverlay(QWidget):
+    """Transparent overlay drawn on top of the canvas that lets the user
+    click-and-drag a selection rectangle.  On mouse-release the enclosed
+    area is grabbed from the canvas and saved as a PNG capture."""
+
+    def __init__(self, canvas_widget, viewer):
+        super().__init__(canvas_widget)
+        self._canvas = canvas_widget
+        self._viewer = viewer
+        self._origin = None
+        self._current = None
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.hide()
+
+    # -- public API --
+
+    def activate(self):
+        """Show the overlay and begin listening for a box selection."""
+        self.resize(self._canvas.size())
+        self.move(0, 0)
+        self.setCursor(Qt.CrossCursor)
+        self.show()
+        self.raise_()
+        self.setFocus()
+        self._viewer.status = "Click & drag to select capture region. Escape to cancel."
+
+    # -- Qt event overrides --
+
+    def paintEvent(self, event):
+        if self._origin is not None and self._current is not None:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.Antialiasing)
+            pen = QPen(QColor(255, 255, 255), 2, Qt.DashLine)
+            painter.setPen(pen)
+            painter.setBrush(QBrush(QColor(255, 255, 255, 40)))
+            rect = QRect(self._origin, self._current).normalized()
+            painter.drawRect(rect)
+            painter.end()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._origin = event.pos()
+            self._current = event.pos()
+            self.update()
+
+    def mouseMoveEvent(self, event):
+        if self._origin is not None:
+            self._current = event.pos()
+            self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self._origin is not None:
+            self._current = event.pos()
+            rect = QRect(self._origin, self._current).normalized()
+            self._deactivate()
+
+            if rect.width() < 5 or rect.height() < 5:
+                self._viewer.status = "Selection too small — capture cancelled."
+                return
+
+            # Grab just the selected rectangle from the canvas underneath
+            pixmap = self._canvas.grab(rect)
+            _save_region_capture(self._viewer, pixmap)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self._deactivate()
+            self._viewer.status = "Region capture cancelled."
+        else:
+            super().keyPressEvent(event)
+
+    # -- internals --
+
+    def _deactivate(self):
+        self._origin = None
+        self._current = None
+        self.hide()
+        self.setCursor(Qt.ArrowCursor)
+
+
+def _save_region_capture(viewer, pixmap):
+    """Save a QPixmap from a region capture to the captures directory."""
+    global capture_count
+
+    output_dir = session.get_data("output_dir")
+    if not output_dir:
+        viewer.status = "No active session — cannot save capture."
+        return
+
+    captures_dir = Path(output_dir) / constants.CAPTURES_DIR
+    captures_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = _get_next_filename()
+    if not filename:
+        return
+
+    save_path = captures_dir / filename
+    pixmap.save(str(save_path))
+
+    capture_count += 1
+    next_fn = _get_next_filename()
+    if next_fn:
+        _capture_widget.output_filename.value = next_fn
+
+    viewer.status = f"Region captured: {save_path.name}"
+
+
+_region_overlay = None
+
+def region_capture_with_hotkey(viewer: napari.Viewer):
+    """Activate the region-capture overlay from a hotkey (Ctrl+A)."""
+    global _region_overlay
+
+    if not session.get_data("output_dir"):
+        viewer.status = "No active session — start or load a session first."
+        return
+
+    canvas_widget = viewer.window.qt_viewer.canvas.native
+
+    if _region_overlay is None:
+        _region_overlay = RegionCaptureOverlay(canvas_widget, viewer)
+
+    _region_overlay.activate()
+
+
 # --- Widget Setup ---
 # Add hotkey information and initialize filename
 hotkey_container = widgets.Container(layout="horizontal", labels=False)
-hotkey_container.append(widgets.Label(value="Hotkey: Shift+P (press in canvas)"))
+hotkey_container.append(widgets.Label(value="Shift+P: Capture  |  Ctrl+A: Region Capture"))
 _capture_widget.insert(0, hotkey_container)
 
 initial_filename = _get_next_filename()
