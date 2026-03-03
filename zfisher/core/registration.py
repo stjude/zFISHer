@@ -2,12 +2,27 @@ import logging
 import numpy as np
 from pathlib import Path
 from skimage.measure import ransac
-from skimage.transform import AffineTransform
 
-class _AffineTransform3D(AffineTransform):
-    """3D affine transform wrapper — skimage defaults to 2D without this."""
+class _TranslationTransform3D:
+    """Translation-only 3D transform for use with RANSAC.
+
+    A full AffineTransform has 12 DOF (rotation, scale, shear, translation)
+    and will overfit when min_samples=4 (exactly determined), producing wild
+    transforms. This class constrains RANSAC to only estimate a 3-DOF
+    translation, which is all that's needed for rigid inter-round alignment.
+    """
     def __init__(self):
-        super().__init__(dimensionality=3)
+        self.translation = np.zeros(3)
+
+    def estimate(self, src, dst):
+        self.translation = np.mean(dst - src, axis=0)
+        return True
+
+    def residuals(self, src, dst):
+        return np.sqrt(np.sum((src + self.translation - dst) ** 2, axis=1))
+
+    def __call__(self, coords):
+        return coords + self.translation
 from scipy.spatial import cKDTree
 from scipy import ndimage as ndi
 import SimpleITK as sitk
@@ -179,14 +194,14 @@ def _refine_shift_with_ransac(src_points, dst_points, residual_threshold=constan
     tuple[AffineTransform, np.ndarray] or tuple[None, None]
         The estimated model and a boolean mask of the inliers, or (None, None).
     """
-    if len(src_points) < 4:
+    if len(src_points) < 3:
         return None, None
 
     try:
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message="No inliers found")
             model, inliers = ransac(
-                (src_points, dst_points), _AffineTransform3D, min_samples=4,
+                (src_points, dst_points), _TranslationTransform3D, min_samples=1,
                 residual_threshold=residual_threshold, max_trials=max_trials
             )
     except np.linalg.LinAlgError as e:
@@ -229,7 +244,7 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, voxel
     if progress_callback: progress_callback(40, "Matching nearest neighbors...")
     src, dst = _get_nearest_neighbor_pairs(fixed_points, moving_points, rough_shift, voxels=voxels)
     
-    if len(src) < 4:
+    if len(src) < 3:
         logger.debug("Rough shift calculated: %s", rough_shift)
         if progress_callback: progress_callback(100, "Done (not enough matches for RANSAC).")
         return rough_shift, 0.0

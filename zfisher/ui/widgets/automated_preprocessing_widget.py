@@ -35,7 +35,7 @@ def _automated_preprocessing_magic_widget(
         viewer.status = "Please select both DAPI layers."
         return
 
-    with popups.ProgressDialog(None, "Automated Preprocessing...") as dialog:
+    with popups.ProgressDialog(viewer.window._qt_window, "Automated Preprocessing...") as dialog:
         output_dir = Path(session.get_data("output_dir"))
         voxels = tuple(r1_dapi_layer.scale)
 
