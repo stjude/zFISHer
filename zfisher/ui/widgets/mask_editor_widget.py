@@ -3,6 +3,7 @@ import numpy as np
 from magicgui import magicgui, widgets
 import tifffile
 from pathlib import Path
+from qtpy.QtCore import QTimer
 
 from ...core import session
 from .. import popups, viewer_helpers
@@ -33,31 +34,21 @@ class MaskHighlighter:
     def reset_highlight(self):
         """Removes the red color override from the last highlighted label."""
         if self.last_layer is not None and self.last_id is not None:
-            try:
-                cmap = self.last_layer.colormap
+            cmap = self.last_layer.colormap
+            if hasattr(cmap, 'color_dict'):
                 cmap.color_dict.pop(int(self.last_id), None)
-                if hasattr(cmap, '_clear_cache'):
-                    cmap._clear_cache()
-                self.last_layer.events.colormap()
-                self.last_layer.refresh(extent=False)
-            except Exception:
-                pass
+                self.last_layer.colormap = cmap  # reassign through setter to trigger visual refresh
         self.last_layer = None
         self.last_id = None
 
     def perform_highlight(self, layer, label_id):
         """Sets the hovered label to red in the Labels layer colormap."""
-        try:
-            cmap = layer.colormap
+        cmap = layer.colormap
+        if hasattr(cmap, 'color_dict'):
             if self.last_id is not None and self.last_id != label_id:
                 cmap.color_dict.pop(int(self.last_id), None)
             cmap.color_dict[int(label_id)] = np.array([1.0, 0.0, 0.0, 1.0])
-            if hasattr(cmap, '_clear_cache'):
-                cmap._clear_cache()
-            layer.events.colormap()
-            layer.refresh(extent=False)
-        except Exception:
-            pass
+            layer.colormap = cmap  # reassign through setter to trigger visual refresh
 
         self.last_layer = layer
         self.last_id = label_id
@@ -301,6 +292,18 @@ _mask_editor_widget._current_callback = None
 
 def _create_save_callback(layer):
     """Factory to create a save callback for a specific layer."""
+    _refresh_timer = QTimer()
+    _refresh_timer.setSingleShot(True)
+
+    def _refresh_ids():
+        viewer = napari.current_viewer()
+        if viewer:
+            ids_name = f"{layer.name}_IDs"
+            if ids_name in viewer.layers:
+                viewer_helpers.add_or_update_label_ids(viewer, layer)
+
+    _refresh_timer.timeout.connect(_refresh_ids)
+
     def _save_mask_data(event=None):
         out_dir = session.get_data("output_dir")
         if out_dir and layer and layer.name:
@@ -309,6 +312,9 @@ def _create_save_callback(layer):
             mask_path = seg_dir / f"{layer.name}.tif"
             tifffile.imwrite(mask_path, layer.data)
             session.set_processed_file(layer.name, str(mask_path), layer_type='labels', metadata={'subtype': 'edited_mask'})
+        # Debounced refresh: update existing ID layer 800 ms after the last edit
+        _refresh_timer.start(800)
+
     return _save_mask_data
 
 @_mask_editor_widget.mask_layer.changed.connect

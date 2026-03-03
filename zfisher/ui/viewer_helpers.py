@@ -366,7 +366,8 @@ def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napa
 
 def add_consensus_nuclei_to_viewer(viewer: napari.Viewer, r1_mask_layer: napari.layers.Labels, merged_mask: np.ndarray, pts1: list):
     """
-    Adds consensus nuclei results (merged mask and ID points) to the viewer. Assumes the data has already been saved to the session by a core function.
+    Adds or updates consensus nuclei results (merged mask and ID points) in the viewer.
+    If the layers already exist they are updated in-place rather than duplicated.
 
     Parameters
     ----------
@@ -380,30 +381,39 @@ def add_consensus_nuclei_to_viewer(viewer: napari.Viewer, r1_mask_layer: napari.
         A list of dictionaries [{'coord':..., 'label':...}] for the ID points.
     """
     layer_name = constants.CONSENSUS_MASKS_NAME
+    ids_layer_name = f"{layer_name}{constants.CONSENSUS_IDS_SUFFIX}"
 
-    # Add merged mask layer
-    layer = viewer.add_labels(
-        merged_mask,
-        name=layer_name,
-        scale=r1_mask_layer.scale,
-        translate=r1_mask_layer.translate,
-        opacity=0.5
-    )
-    layer.rendering = 'iso_categorical'
+    # Add or update merged mask layer
+    if layer_name in viewer.layers:
+        viewer.layers[layer_name].data = merged_mask
+    else:
+        layer = viewer.add_labels(
+            merged_mask,
+            name=layer_name,
+            scale=r1_mask_layer.scale,
+            translate=r1_mask_layer.translate,
+            opacity=0.5
+        )
+        layer.rendering = 'iso_categorical'
 
-    # Add ID points layer
+    # Add or update ID points layer
     if pts1:
-        ids_layer_name = f"{layer_name}{constants.CONSENSUS_IDS_SUFFIX}"
         coords = np.array([p['coord'] for p in pts1])
         labels = np.array([p['label'] for p in pts1])
 
-        points_layer = viewer.add_points(
-            coords, name=ids_layer_name, size=1, face_color='transparent', scale=r1_mask_layer.scale, translate=r1_mask_layer.translate,
-            properties={'label': labels},
-            text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
-            blending='translucent_no_depth'
-        )
-        points_layer.out_of_slice_display = True
+        if ids_layer_name in viewer.layers:
+            ids_layer = viewer.layers[ids_layer_name]
+            ids_layer.data = coords
+            ids_layer.properties = {'label': labels}
+        else:
+            points_layer = viewer.add_points(
+                coords, name=ids_layer_name, size=1, face_color='transparent',
+                scale=r1_mask_layer.scale, translate=r1_mask_layer.translate,
+                properties={'label': labels},
+                text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
+                blending='translucent_no_depth'
+            )
+            points_layer.out_of_slice_display = True
 
 def add_or_update_label_ids(viewer: napari.Viewer, labels_layer: napari.layers.Labels):
     """
