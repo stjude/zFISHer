@@ -33,20 +33,31 @@ class MaskHighlighter:
     def reset_highlight(self):
         """Removes the red color override from the last highlighted label."""
         if self.last_layer is not None and self.last_id is not None:
-            colors = dict(self.last_layer.color)
-            colors.pop(self.last_id, None)
-            self.last_layer.color = colors
+            try:
+                cmap = self.last_layer.colormap
+                cmap.color_dict.pop(int(self.last_id), None)
+                if hasattr(cmap, '_clear_cache'):
+                    cmap._clear_cache()
+                self.last_layer.events.colormap()
+                self.last_layer.refresh(extent=False)
+            except Exception:
+                pass
         self.last_layer = None
         self.last_id = None
 
     def perform_highlight(self, layer, label_id):
-        """Sets the hovered label to red in the Labels layer color map."""
-        colors = dict(layer.color)
-        # Clear previous highlight if switching labels
-        if self.last_id is not None and self.last_id != label_id:
-            colors.pop(self.last_id, None)
-        colors[label_id] = np.array([1.0, 0.0, 0.0, 1.0])
-        layer.color = colors
+        """Sets the hovered label to red in the Labels layer colormap."""
+        try:
+            cmap = layer.colormap
+            if self.last_id is not None and self.last_id != label_id:
+                cmap.color_dict.pop(int(self.last_id), None)
+            cmap.color_dict[int(label_id)] = np.array([1.0, 0.0, 0.0, 1.0])
+            if hasattr(cmap, '_clear_cache'):
+                cmap._clear_cache()
+            layer.events.colormap()
+            layer.refresh(extent=False)
+        except Exception:
+            pass
 
         self.last_layer = layer
         self.last_id = label_id
@@ -56,7 +67,7 @@ class MaskHighlighter:
         if not self.active:
             return
 
-        layer = mask_editor_widget.mask_layer.value
+        layer = _mask_editor_widget.mask_layer.value
         if not isinstance(layer, napari.layers.Labels):
             if self.last_id is not None:
                 self.reset_highlight()
