@@ -37,7 +37,9 @@ class MaskHighlighter:
             cmap = self.last_layer.colormap
             if hasattr(cmap, 'color_dict'):
                 cmap.color_dict.pop(int(self.last_id), None)
-                self.last_layer.colormap = cmap  # reassign through setter to trigger visual refresh
+                if hasattr(cmap, '_clear_cache'):
+                    cmap._clear_cache()
+                self.last_layer.colormap = cmap
         self.last_layer = None
         self.last_id = None
 
@@ -48,7 +50,9 @@ class MaskHighlighter:
             if self.last_id is not None and self.last_id != label_id:
                 cmap.color_dict.pop(int(self.last_id), None)
             cmap.color_dict[int(label_id)] = np.array([1.0, 0.0, 0.0, 1.0])
-            layer.colormap = cmap  # reassign through setter to trigger visual refresh
+            if hasattr(cmap, '_clear_cache'):
+                cmap._clear_cache()
+            layer.colormap = cmap
 
         self.last_layer = layer
         self.last_id = label_id
@@ -171,7 +175,7 @@ _mask_editor_widget.append(refresh_ids_btn)
 
 @require_active_session("Please start or load a session before editing masks.")
 def _on_paint(value: bool):
-    if not session.get_data("output_dir"): # Check again in case session was closed
+    if not session.get_data("output_dir"):
         paint_chk.value = False
         return
     viewer = napari.current_viewer()
@@ -179,6 +183,7 @@ def _on_paint(value: bool):
     if layer:
         if value:
             erase_chk.value = False
+            hover_chk.value = False  # hover refresh conflicts with paint interaction
             viewer.layers.selection.active = layer
             layer.mode = 'paint'
             layer.n_edit_dimensions = 2
@@ -191,7 +196,7 @@ def _on_paint(value: bool):
 
 @require_active_session("Please start or load a session before editing masks.")
 def _on_erase(value: bool):
-    if not session.get_data("output_dir"): # Check again in case session was closed
+    if not session.get_data("output_dir"):
         erase_chk.value = False
         return
     viewer = napari.current_viewer()
@@ -199,6 +204,7 @@ def _on_erase(value: bool):
     if layer:
         if value:
             paint_chk.value = False
+            hover_chk.value = False  # hover refresh conflicts with erase interaction
             viewer.layers.selection.active = layer
             layer.mode = 'erase'
             viewer.status = "Erase Mode."
@@ -281,7 +287,7 @@ erase_chk.changed.connect(_on_erase)
 pick_btn.clicked.connect(_on_pick)
 extrude_btn.clicked.connect(_on_extrude)
 delete_btn.clicked.connect(_on_delete)
-hover_chk.changed.connect(_on_hover_mode)
+# Note: hover_chk is already connected via @hover_chk.changed.connect decorator on _on_hover_mode
 refresh_ids_btn.clicked.connect(_on_refresh_ids)
 
 # --- Auto-saving for selected mask layer ---

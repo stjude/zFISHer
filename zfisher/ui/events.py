@@ -51,8 +51,10 @@ def on_layer_inserted(event, widgets):
             if "DAPI" in layer.name.upper():
                 if "R1" in layer.name.upper():
                     widgets['dapi_segmentation']._dapi_segmentation_widget.r1_layer.value = layer
+                    widgets['automated_preprocessing']._automated_preprocessing_magic_widget.r1_dapi_layer.value = layer
                 elif "R2" in layer.name.upper():
                     widgets['dapi_segmentation']._dapi_segmentation_widget.r2_layer.value = layer
+                    widgets['automated_preprocessing']._automated_preprocessing_magic_widget.r2_dapi_layer.value = layer
         
         elif isinstance(layer, napari.layers.Points):
             if "centroids" in layer.name.lower():
