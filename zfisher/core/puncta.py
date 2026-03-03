@@ -17,6 +17,10 @@ def calculate_spot_quality(image_data, coords, radius=2):
     
     for coord in coords:
         z, y, x = coord.astype(int)
+        # Clip to valid image bounds
+        z = np.clip(z, 0, z_max - 1)
+        y = np.clip(y, 0, y_max - 1)
+        x = np.clip(x, 0, x_max - 1)
         # Define local neighborhood for background estimation
         z_slice = image_data[z]
         y_min, y_max_p = max(0, y-radius), min(y_max, y+radius+1)
@@ -108,7 +112,11 @@ def process_puncta_detection(image_data, mask_data=None, voxels=None, params=Non
 
     quality_metrics = calculate_spot_quality(image_data, coords)
 
-    indices = tuple(coords.astype(int).T)
+    # Clip coordinates to valid mask/image bounds before indexing
+    coords_int = coords.astype(int)
+    for dim in range(3):
+        coords_int[:, dim] = np.clip(coords_int[:, dim], 0, image_data.shape[dim] - 1)
+    indices = tuple(coords_int.T)
     nucleus_ids = mask_data[indices] if mask_data is not None else np.zeros(len(coords))
     
     # Combined Data: Z, Y, X, Nucleus_ID, Intensity, SNR

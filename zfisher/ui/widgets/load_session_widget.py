@@ -1,12 +1,16 @@
+import logging
 from magicgui.widgets import Container, PushButton, FileEdit, Label
 import napari
 import numpy as np
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 from ...core import session
 from .. import popups, viewer_helpers
 from ..decorators import error_handler
 from ._shared import load_raw_data_into_viewer
+from .colocalization_widget import refresh_rules_display
 
 class LoadSessionWidget(Container):
     def __init__(self, viewer: napari.Viewer):
@@ -75,18 +79,17 @@ class LoadSessionWidget(Container):
                     # Get scale and offset from the session if saved by headless run, otherwise fallback.
                     canvas_scale = session.get_data("canvas_scale")
                     canvas_offset_pixels = session.get_data("canvas_offset_pixels")
-                    print(f"\nDIAGNOSTIC (load_session): Reading 'canvas_scale' from session file. Value: {canvas_scale}")
-                    print(f"DIAGNOSTIC (load_session): Reading 'canvas_offset_pixels' from session file. Value: {canvas_offset_pixels}")
+                    logger.debug("load_session: canvas_scale=%s, canvas_offset_pixels=%s", canvas_scale, canvas_offset_pixels)
 
                     if canvas_scale:
                         scale = tuple(canvas_scale)
-                        print(f"DIAGNOSTIC (load_session): Using scale from session: {scale}")
+                        logger.debug("load_session: using scale from session: %s", scale)
                     else:
                         # Fallback for older sessions: get scale from a raw layer if present.
-                        print("DIAGNOSTIC (load_session): 'canvas_scale' not found. Falling back to default.")
+                        logger.debug("load_session: 'canvas_scale' not found, falling back to default.")
                         raw_img_layer = next((l for l in self._viewer.layers if isinstance(l, napari.layers.Image)), None)
                         scale = raw_img_layer.scale if raw_img_layer else (1.0, 1.0, 1.0)
-                        print(f"DIAGNOSTIC (load_session): Using fallback scale: {scale}")
+                        logger.debug("load_session: using fallback scale: %s", scale)
 
                     sanitized_scale = tuple(s if isinstance(s, (int, float)) and s > 0 and not np.isnan(s) else 1.0 for s in scale)
 
@@ -102,6 +105,7 @@ class LoadSessionWidget(Container):
                     )
                 
                 dialog.update_progress(95, "Finalizing UI...")
+                refresh_rules_display()
                 self._viewer.status = "Session Restored."
 
                 if hasattr(self._viewer.window, 'custom_scale_bar'):

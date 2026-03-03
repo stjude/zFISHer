@@ -24,3 +24,6 @@ data/*.tif
 
 # OS stuff
 .DS_Store
+
+# VScode stuff
+*.code-workspace

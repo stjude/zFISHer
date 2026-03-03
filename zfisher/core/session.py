@@ -1,8 +1,15 @@
 import json
+import logging
+import threading
 from pathlib import Path
 import numpy as np
 
 from .. import constants
+
+logger = logging.getLogger(__name__)
+
+# Thread-safety lock for all session state access
+_lock = threading.Lock()
 
 # Private global state
 _SESSION_DATA = {
@@ -10,7 +17,8 @@ _SESSION_DATA = {
     "r1_path": None,
     "r2_path": None,
     "shift": None,
-    "processed_files": {} 
+    "processed_files": {},
+    "colocalization_rules": []
 }
 _is_loading = False
 
@@ -57,9 +65,10 @@ def get_data(key=None, default=None):
     any
         The requested value or the entire session dictionary.
     """
-    if key:
-        return _SESSION_DATA.get(key, default)
-    return _SESSION_DATA
+    with _lock:
+        if key:
+            return _SESSION_DATA.get(key, default)
+        return _SESSION_DATA
 
 def update_data(key, value):
     """
@@ -72,9 +81,9 @@ def update_data(key, value):
     value : any
         The new value to set.
     """
-    print(f"DIAGNOSTIC (session): Updating '{key}' with value: {value}")
-    _SESSION_DATA[key] = value
-    save_session()
+    with _lock:
+        _SESSION_DATA[key] = value
+        _save_session_unlocked()
 
 def set_processed_file(layer_name, path, layer_type: str, metadata: dict = None):
     """
@@ -91,31 +100,34 @@ def set_processed_file(layer_name, path, layer_type: str, metadata: dict = None)
     metadata : dict, optional
         An optional dictionary for additional metadata (e.g., subtype).
     """
-    if "processed_files" not in _SESSION_DATA:
-        _SESSION_DATA["processed_files"] = {}
-    
-    file_info = {
-        'path': str(path),
-        'type': layer_type, # e.g., 'points', 'labels', 'image', 'vectors', 'report'
-    }
-    if metadata:
-        file_info.update(metadata)
+    with _lock:
+        if "processed_files" not in _SESSION_DATA:
+            _SESSION_DATA["processed_files"] = {}
 
-    _SESSION_DATA["processed_files"][layer_name] = file_info
-    save_session()
+        file_info = {
+            'path': str(path),
+            'type': layer_type, # e.g., 'points', 'labels', 'image', 'vectors', 'report'
+        }
+        if metadata:
+            file_info.update(metadata)
+
+        _SESSION_DATA["processed_files"][layer_name] = file_info
+        _save_session_unlocked()
 
 def clear_session():
     """
     Resets the in-memory session data to its default, empty state.
     """
     global _SESSION_DATA
-    _SESSION_DATA.update({
-        "output_dir": None,
-        "r1_path": None,
-        "r2_path": None,
-        "shift": None,
-        "processed_files": {}
-    })
+    with _lock:
+        _SESSION_DATA.update({
+            "output_dir": None,
+            "r1_path": None,
+            "r2_path": None,
+            "shift": None,
+            "processed_files": {},
+            "colocalization_rules": []
+        })
 
 def initialize_new_session(output_dir, r1_path, r2_path, progress_callback=None):
     """
@@ -152,21 +164,25 @@ def initialize_new_session(output_dir, r1_path, r2_path, progress_callback=None)
 
     return True
 
-def save_session():
-    """
-    Saves the current in-memory session state to a JSON file.
-    """
+def _save_session_unlocked():
+    """Internal save — caller must already hold _lock."""
     out_dir = _SESSION_DATA.get("output_dir")
-    if not out_dir: 
+    if not out_dir:
         return
-        
+
     try:
         out_path = Path(out_dir) / "zfisher_session.json"
         with open(out_path, 'w') as f:
             json.dump(_SESSION_DATA, f, indent=4, default=str)
-        print(f"Session saved: {out_path}")
     except Exception as e:
-        print(f"Failed to save session: {e}")
+        logger.error("Failed to save session: %s", e)
+
+def save_session():
+    """
+    Saves the current in-memory session state to a JSON file.
+    """
+    with _lock:
+        _save_session_unlocked()
 
 def load_session_file(path):
     """
@@ -184,5 +200,6 @@ def load_session_file(path):
     """
     with open(path, 'r') as f:
         data = json.load(f)
-    _SESSION_DATA.update(data)
+    with _lock:
+        _SESSION_DATA.update(data)
     return _SESSION_DATA

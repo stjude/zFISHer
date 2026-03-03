@@ -1,3 +1,4 @@
+import logging
 import pandas as pd
 import numpy as np
 from scipy.spatial import cKDTree
@@ -5,6 +6,8 @@ from pathlib import Path
 from datetime import datetime
 
 from .. import constants
+
+logger = logging.getLogger(__name__)
 
 def calculate_distances(points_layers_data):
     """
@@ -139,7 +142,7 @@ def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None, co
         return save_path
         
     except (ImportError, ModuleNotFoundError):
-        print("Excel export failed (missing openpyxl). Falling back to CSV.")
+        logger.warning("Excel export failed (missing openpyxl). Falling back to CSV.")
         save_path = save_path.with_suffix(".csv")
         df.to_csv(save_path, index=False)
         return save_path

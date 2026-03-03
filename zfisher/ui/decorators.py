@@ -1,7 +1,10 @@
+import logging
 from functools import wraps
 import napari
 from ..core import session
 from . import popups
+
+logger = logging.getLogger(__name__)
 
 def require_active_session(message="Please start or load a session first."):
     """
@@ -20,7 +23,7 @@ def require_active_session(message="Please start or load a session first."):
                     viewer = napari.current_viewer()
                     popups.show_error_popup(viewer.window._qt_window, "No Active Session", message)
                 except Exception as e:
-                    print(f"Could not show 'No Active Session' popup: {e}")
+                    logger.error("Could not show 'No Active Session' popup: %s", e)
                 return None  # Stop execution
             return func(*args, **kwargs)
         return wrapper
@@ -36,13 +39,13 @@ def error_handler(title="An Error Occurred"):
             try:
                 return func(*args, **kwargs)
             except Exception as e:
-                print(f"Error in {func.__name__}: {e}")
+                logger.error("Error in %s: %s", func.__name__, e)
                 try:
                     viewer = napari.current_viewer()
                     if viewer:
                         viewer.status = f"Error: {e}"
                         popups.show_error_popup(viewer.window._qt_window, title, str(e))
                 except Exception as popup_e:
-                    print(f"Could not show error popup: {popup_e}")
+                    logger.error("Could not show error popup: %s", popup_e)
         return wrapper
     return decorator

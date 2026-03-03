@@ -181,7 +181,8 @@ class WelcomeWidget(QWidget):
         self.viewer.layers.events.removed.connect(self._check_visibility)
 
         if self.parent():
-            QTimer.singleShot(100, self.resize_to_parent)
+            self.parent().installEventFilter(self)
+            QTimer.singleShot(100, lambda: (self.resize_to_parent(), self._check_visibility()))
 
     def _check_visibility(self, event=None):
         if len(self.viewer.layers) > 0:
@@ -197,6 +198,11 @@ class WelcomeWidget(QWidget):
             painter = QPainter(self)
             painter.fillRect(self.rect(), style.WELCOME_WIDGET_BG_COLOR)
             
+    def eventFilter(self, obj, event):
+        if obj is self.parent() and event.type() == event.Resize:
+            self.resize_to_parent()
+        return super().eventFilter(obj, event)
+
     def resize_to_parent(self):
         if not self.parent(): return
         self.resize(self.parent().size())
@@ -246,18 +252,46 @@ def launch_zfisher():
     # --- 1. Amethyst & Mint Theme (RE-ENABLED) ---
     theme_name = style.register_napari_theme()
 
-    icon_path = Path(__file__).parent.parent.parent / "icon.png"
-    if icon_path.exists():
-        app.setWindowIcon(QIcon(str(icon_path)))
+    # Build icon — generate .ico from .png for Windows taskbar compatibility
+    icon_dir = Path(__file__).parent.parent.parent
+    ico_path = icon_dir / "icon.ico"
+    png_path = icon_dir / "icon.png"
+    if not ico_path.exists() and png_path.exists():
+        try:
+            from PIL import Image
+            img = Image.open(png_path)
+            img.save(ico_path, format="ICO", sizes=[(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)])
+        except Exception:
+            ico_path = png_path
+    icon_file = ico_path if ico_path.exists() else png_path
+    icon = QIcon(str(icon_file)) if icon_file.exists() else QIcon()
+    app.setWindowIcon(icon)
 
     # --- 2. Create Viewer ---
     viewer = napari.Viewer(title="zFISHer - 3D Colocalization", ndisplay=2)
+
+    # Re-apply to the napari QMainWindow directly
+    if not icon.isNull():
+        viewer.window._qt_window.setWindowIcon(icon)
+
+    # Force icon onto the Win32 window handle (bypasses Qt for taskbar)
+    if icon_file.exists() and str(icon_file).lower().endswith('.ico'):
+        try:
+            import ctypes
+            ICON_SMALL, ICON_BIG, WM_SETICON = 0, 1, 0x80
+            LR_LOADFROMFILE = 0x10
+            hwnd = int(viewer.window._qt_window.winId())
+            hicon = ctypes.windll.user32.LoadImageW(None, str(icon_file), 1, 0, 0, LR_LOADFROMFILE)
+            ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon)
+            ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon)
+        except Exception:
+            pass
     
-    # Native Welcome Killer
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", FutureWarning)
-        if hasattr(viewer.window.qt_viewer, 'welcome_widget'):
-            viewer.window.qt_viewer.welcome_widget.setVisible(False)
+    # Permanently disable napari's native welcome screen
+    qt_viewer = viewer.window.qt_viewer
+    qt_viewer._show_welcome_screen = False
+    if hasattr(qt_viewer, '_welcome_widget'):
+        qt_viewer._welcome_widget.set_welcome_visible(False)
     
     try:
         # Apply the registered theme

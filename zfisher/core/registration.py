@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 from pathlib import Path
 from skimage.measure import ransac
@@ -12,6 +13,8 @@ from .session import set_processed_file
 
 from . import session
 from .. import constants
+
+logger = logging.getLogger(__name__)
 
 def calculate_session_registration(r1_centroids, r2_centroids, progress_callback=None):
     """
@@ -151,7 +154,7 @@ def _refine_shift_with_ransac(src_points, dst_points, residual_threshold=constan
             )
     except np.linalg.LinAlgError as e:
         # This can happen with degenerate point sets
-        print(f"DIAGNOSTIC (RANSAC): Linear algebra error during RANSAC: {e}")
+        logger.debug("Linear algebra error during RANSAC: %s", e)
         return None, None
     
     return model, inliers
@@ -182,7 +185,7 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, progr
     """
     # 1. Brute-force Vector Voting to find rough shift
     if progress_callback: progress_callback(10, "Finding rough alignment...")
-    print("\n" + "="*20 + " DIAGNOSTIC: REGISTRATION " + "="*20)
+    logger.debug("Starting registration alignment")
     rough_shift = _find_rough_shift_vector_voting(fixed_points, moving_points)
     
     # 2. Refine using Nearest Neighbors
@@ -190,17 +193,17 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, progr
     src, dst = _get_nearest_neighbor_pairs(fixed_points, moving_points, rough_shift)
     
     if len(src) < 4:
-        print(f"DIAGNOSTIC (RANSAC): Rough shift calculated: {rough_shift}")
+        logger.debug("Rough shift calculated: %s", rough_shift)
         if progress_callback: progress_callback(100, "Done (not enough matches for RANSAC).")
         return rough_shift, 0.0
 
     # 3. Run RANSAC to refine the fit
     if progress_callback: progress_callback(70, "Running RANSAC to find best fit...")
-    print(f"DIAGNOSTIC (RANSAC): Found {len(src)} pairs for RANSAC. Rough shift was: {rough_shift}")
+    logger.debug("Found %d pairs for RANSAC. Rough shift was: %s", len(src), rough_shift)
     model, inliers = _refine_shift_with_ransac(src, dst)
     
     if model is None:
-        print("DIAGNOSTIC (RANSAC): RANSAC failed to find a model. Reverting to rough shift.")
+        logger.warning("RANSAC failed to find a model. Reverting to rough shift.")
         if progress_callback: progress_callback(100, "Done (RANSAC failed, using rough shift).")
         return rough_shift, 0.0
 
@@ -209,18 +212,18 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, progr
     
     # Robustness: Check for NaN values which indicate a failed matrix inversion in RANSAC
     if np.any(np.isnan(refined_shift)):
-        print("DIAGNOSTIC (RANSAC): Refined shift contains NaN. Reverting to rough shift.")
+        logger.warning("Refined shift contains NaN. Reverting to rough shift.")
         return rough_shift, 0.0
 
-    print(f"DIAGNOSTIC (RANSAC): Refined shift calculated: {refined_shift} (RMSD: {rmsd:.4f})")
+    logger.debug("Refined shift calculated: %s (RMSD: %.4f)", refined_shift, rmsd)
     deviation = np.linalg.norm(refined_shift - rough_shift)
     if deviation > constants.RANSAC_DEVIATION_THRESHOLD:
-        print(f"DIAGNOSTIC (RANSAC): Refined shift deviates too much from rough shift (deviation: {deviation:.2f} px). Reverting.")
+        logger.warning("Refined shift deviates too much from rough shift (deviation: %.2f px). Reverting.", deviation)
         if progress_callback: progress_callback(100, "Done (RANSAC result invalid, reverted to rough shift).")
         return rough_shift, 0.0
         
     if progress_callback: progress_callback(100, "Done.")
-    print("="*60 + "\n")
+    logger.debug("Registration complete")
     return refined_shift, rmsd
 
 def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
@@ -247,7 +250,7 @@ def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
     tuple[np.ndarray, np.ndarray]
         A tuple containing (padded_fixed, padded_moving), both of the same shape.
     """
-    print(f"\nDIAGNOSTIC (align_and_pad): Received shift_vector: {shift_vector}")
+    logger.debug("align_and_pad: received shift_vector: %s", shift_vector)
     # Round shift to nearest integer for lossless padding
     shift = np.round(shift_vector).astype(int)
     dz, dy, dx = shift
@@ -267,11 +270,11 @@ def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
     min_y, max_y = min(0, dy), max(fy, dy + my)
     min_x, max_x = min(0, dx), max(fx, dx + mx)
     
-    print(f"DIAGNOSTIC (align_and_pad): Calculated min bounds (offset): Z={min_z}, Y={min_y}, X={min_x}")
+    logger.debug("align_and_pad: min bounds (offset): Z=%d, Y=%d, X=%d", min_z, min_y, min_x)
     canvas_offset_pixels = np.array([min_z, min_y, min_x])
 
     out_z, out_y, out_x = max_z - min_z, max_y - min_y, max_x - min_x
-    print(f"DIAGNOSTIC (align_and_pad): New canvas shape will be: {(out_z, out_y, out_x)}")
+    logger.debug("align_and_pad: new canvas shape: %s", (out_z, out_y, out_x))
     
     # Create empty canvases
     padded_fixed = np.zeros((out_z, out_y, out_x), dtype=fixed_data.dtype)
@@ -284,7 +287,7 @@ def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
     # Apply Sub-pixel Shift to Moving Image
     # We use linear interpolation (order=1) to avoid ringing artifacts on puncta.
     if np.any(np.abs(shift_frac) > 0.01):
-        print(f"Applying sub-pixel shift: {shift_frac}")
+        logger.debug("Applying sub-pixel shift: %s", shift_frac)
         order = 0 if is_label else 1
         # Use float64 for precision during shift, then robustly cast back
         shifted_float = ndi.shift(moving_data.astype(np.float64), shift_frac, order=order)
@@ -326,7 +329,7 @@ def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=16
     SimpleITK.Transform
         The calculated B-spline transform.
     """
-    print(f"Downsampling data by {downsample_factor}x (BinShrink) for registration calculation...")
+    logger.info("Downsampling data by %dx (BinShrink) for registration calculation...", downsample_factor)
     
     # Convert to SimpleITK images (Full Resolution)
     # ITK handles dimensions as (X, Y, Z) from numpy (Z, Y, X)
@@ -353,10 +356,10 @@ def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=16
     R.SetInitialTransform(tx, True)
     R.SetInterpolator(sitk.sitkLinear)
     
-    print(f"Starting B-Spline optimization on {fixed_img.GetSize()} volume (Sampling 1%, 10 iters)...")
+    logger.info("Starting B-Spline optimization on %s volume...", fixed_img.GetSize())
     # Execute Registration
     outTx = R.Execute(fixed_img, moving_img)
-    print("Registration finished.")
+    logger.info("Registration finished.")
     
     return outTx
 
@@ -501,9 +504,9 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
             if r2:
                 is_label = r1.get('is_label', False)
                 aligned_r1, aligned_r2, canvas_offset_pixels = align_and_pad_images(r1['data'], r2['data'], shift, is_label=is_label)
-                print(f"DIAGNOSTIC (generate_canvas): For channel '{channel_name}', got canvas_offset_pixels: {canvas_offset_pixels.tolist()}")
+                logger.debug("generate_canvas: channel '%s' canvas_offset_pixels: %s", channel_name, canvas_offset_pixels.tolist())
                 if not canvas_offset_saved:
-                    print(f"DIAGNOSTIC (generate_canvas): Saving canvas_offset_pixels to session: {canvas_offset_pixels.tolist()}")
+                    logger.debug("generate_canvas: saving canvas_offset_pixels to session: %s", canvas_offset_pixels.tolist())
                     session.update_data("canvas_offset_pixels", canvas_offset_pixels.tolist())
                     canvas_offset_saved = True
                 aligned_pairs[channel_name] = {

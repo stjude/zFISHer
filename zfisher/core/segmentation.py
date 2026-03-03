@@ -14,8 +14,7 @@ import tifffile
 
 from .. import constants
 
-# Set logging to see the progress bar in terminal
-logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 # zfisher/core/segmentation.py

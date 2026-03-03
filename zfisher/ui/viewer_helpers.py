@@ -1,3 +1,4 @@
+import logging
 import napari
 import numpy as np
 import tifffile
@@ -8,6 +9,8 @@ from ..core import session, segmentation
 
 from .. import constants
 from . import style
+
+logger = logging.getLogger(__name__)
 
 # Global to track the zoom listener, but now it's scoped to this module
 _current_scale_updater = None
@@ -26,7 +29,7 @@ def add_image_session_to_viewer(viewer: napari.Viewer, image_session, prefix: st
     # Data from io.py is (Z, C, Y, X), napari expects (C, Z, Y, X) for channel_axis=0
     data_swapped = np.moveaxis(image_session.data, 1, 0)
     
-    print(f"Loaded {prefix}: {data_swapped.shape[0]} channels, {data_swapped.shape[1]} Z-slices. Full shape: {data_swapped.shape}")
+    logger.info("Loaded %s: %d channels, %d Z-slices. Full shape: %s", prefix, data_swapped.shape[0], data_swapped.shape[1], data_swapped.shape)
     
     new_layers = viewer.add_image(
         data_swapped,
@@ -82,20 +85,14 @@ def add_image_session_to_viewer(viewer: napari.Viewer, image_session, prefix: st
 def _load_points_layer(viewer, name, path, scale, file_info, translate):
     subtype = file_info.get('subtype')
 
-    print("\n" + "="*20 + f" DIAGNOSTIC: Loading Points Layer " + "="*20)
-    print(f"  - Layer Name: '{name}'")
-    print(f"  - Subtype: {subtype}")
-    print(f"  - Path: {path}")
-    print(f"  - Scale: {scale}")
-    print(f"  - Translate: {translate}")
-    print("="*68)
+    logger.debug("Loading points layer '%s' (subtype=%s, path=%s, scale=%s, translate=%s)", name, subtype, path, scale, translate)
 
     try:
         if path.suffix.lower() == '.csv':
             df = pd.read_csv(path)
             coord_cols = ['Z', 'Y', 'X']
             if not all(col in df.columns for col in coord_cols):
-                print(f"Warning: CSV for layer '{name}' is missing coordinate columns.")
+                logger.warning("CSV for layer '%s' is missing coordinate columns.", name)
                 return
             
             data = df[coord_cols].to_numpy()
@@ -187,7 +184,7 @@ def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, defau
     if canvas_offset_pixels:
         # Convert pixel offset to world coordinate translation
         translate = np.array(canvas_offset_pixels) * np.array(default_scale)
-        print(f"DIAGNOSTIC (viewer_helpers): Applying canvas translation: {translate.tolist()}")
+        logger.debug("Applying canvas translation: %s", translate.tolist())
     translate = translate.tolist() # Ensure it's a list for JSON compatibility/consistency
 
     for i, (name, file_info) in enumerate(processed_files.items()):
@@ -197,7 +194,7 @@ def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, defau
 
         # Handle old format for backward compatibility, or just ignore non-dict values
         if not isinstance(file_info, dict):
-            print(f"Skipping layer '{name}' with old/invalid format in session file.")
+            logger.warning("Skipping layer '%s' with old/invalid format in session file.", name)
             continue
 
         path_str = file_info.get('path')
@@ -207,12 +204,12 @@ def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, defau
             continue
 
         if not path_str or not layer_type:
-            print(f"Skipping layer '{name}' due to missing path or type information.")
+            logger.warning("Skipping layer '%s' due to missing path or type information.", name)
             continue
 
         path = Path(path_str)
         if not path.exists():
-            print(f"Warning: File not found for layer '{name}': {path_str}")
+            logger.warning("File not found for layer '%s': %s", name, path_str)
             continue
 
         try:
@@ -225,11 +222,11 @@ def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, defau
             elif layer_type == 'vectors':
                 _load_vectors_layer(viewer, name, path, default_scale, file_info, translate)
             else:
-                print(f"Warning: Unknown layer type '{layer_type}' for layer '{name}'.")
+                logger.warning("Unknown layer type '%s' for layer '%s'.", layer_type, name)
 
-            print(f"Restored layer: {name}")
+            logger.debug("Restored layer: %s", name)
         except Exception as e:
-            print(f"Error restoring layer '{name}': {e}")
+            logger.error("Error restoring layer '%s': %s", name, e)
 
 def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layers.Image, puncta_data: np.ndarray):
     """

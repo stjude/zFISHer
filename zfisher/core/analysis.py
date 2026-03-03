@@ -1,9 +1,12 @@
 # zfisher/core/analysis.py
+import logging
 import pandas as pd
 from pathlib import Path
 from .report import calculate_distances, export_report
 from . import session
 from .. import constants
+
+logger = logging.getLogger(__name__)
 
 def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, output_dir):
     """
@@ -15,7 +18,7 @@ def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, 
     df = calculate_distances(layers_data)
     
     if df.empty:
-        print("Warning: No puncta found to analyze.")
+        logger.warning("No puncta found to analyze.")
         return None
 
     # 2. File I/O: Generate Multi-Sheet Excel Report

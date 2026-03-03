@@ -1,3 +1,4 @@
+import logging
 import napari
 import numpy as np
 from pathlib import Path
@@ -5,8 +6,16 @@ from qtpy.QtCore import QTimer
 from ..core import session
 from .. import constants
 
+logger = logging.getLogger(__name__)
+
+# Track layers that already have listeners to prevent duplicate attachment
+_attached_listeners = set()
+
 def attach_puncta_listener(layer, name):
     """Attaches listeners to a points layer for auto-saving and color syncing."""
+    if id(layer) in _attached_listeners:
+        return
+    _attached_listeners.add(id(layer))
     def sync_data(event=None):
         out_dir = session.get_data("output_dir")
         if out_dir:

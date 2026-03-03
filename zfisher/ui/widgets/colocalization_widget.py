@@ -27,21 +27,20 @@ def _colocalization_widget(
 
     if not source_layer or not target_layer:
         return
-        
+
     rule = {
         'source': source_layer.name,
         'target': target_layer.name,
         'threshold': cutoff
     }
-    
-    # Initialize rules list if it doesn't exist
-    if not hasattr(_colocalization_widget, 'rules'):
-        _colocalization_widget.rules = []
-        
-    _colocalization_widget.rules.append(rule)
-    
+
+    # Persist rules in session so they survive UI resets and app restarts
+    rules = session.get_data("colocalization_rules", default=[])
+    rules.append(rule)
+    session.update_data("colocalization_rules", rules)
+
     # Update the UI display for the user
-    lines = [f"{r['source']} -> {r['target']} (<= {r['threshold']} um)" for r in _colocalization_widget.rules]
+    lines = [f"{r['source']} -> {r['target']} (<= {r['threshold']} um)" for r in rules]
     _colocalization_widget.rules_display.value = "\n".join(lines)
     viewer.status = f"Added rule: {lines[-1]}"
 
@@ -63,7 +62,7 @@ _colocalization_widget.extend([
 @require_active_session()
 def _on_clear_rules():
     """Resets the rule list."""
-    _colocalization_widget.rules = []
+    session.update_data("colocalization_rules", [])
     _colocalization_widget.rules_display.value = ""
     napari.current_viewer().status = "All analysis rules cleared."
 
@@ -75,7 +74,7 @@ def _on_coloc_export():
     This replaces the old distance_widget and export_widget logic.
     """
     viewer = napari.current_viewer()
-    rules = getattr(_colocalization_widget, 'rules', [])
+    rules = session.get_data("colocalization_rules", default=[])
     
     # Validation: Ensure we have enough data to compare
     points_layers = [l for l in viewer.layers if isinstance(l, napari.layers.Points)]
@@ -112,6 +111,15 @@ def _on_coloc_export():
 # Bind the consolidated events
 _colocalization_widget.clear_btn.clicked.connect(_on_clear_rules)
 _colocalization_widget.export_btn.clicked.connect(_on_coloc_export)
+
+def refresh_rules_display():
+    """Restores the rules display from session data (e.g., after loading a session)."""
+    rules = session.get_data("colocalization_rules", default=[])
+    if rules:
+        lines = [f"{r['source']} -> {r['target']} (<= {r['threshold']} um)" for r in rules]
+        _colocalization_widget.rules_display.value = "\n".join(lines)
+    else:
+        _colocalization_widget.rules_display.value = ""
 
 # --- UI Wrapper ---
 colocalization_widget = widgets.Container(labels=False)

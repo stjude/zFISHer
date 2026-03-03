@@ -1,3 +1,4 @@
+import logging
 import nd2
 import numpy as np
 from dataclasses import dataclass
@@ -9,6 +10,8 @@ import re
 from collections import defaultdict
 import os
 from .. import constants
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class FISHSession:
@@ -35,7 +38,7 @@ class TiffSession:
             try:
                 self._parse_ome_metadata()
             except Exception as e:
-                print(f"Warning: Could not parse OME-XML from {path}. Error: {e}")
+                logger.warning("Could not parse OME-XML from %s: %s", path, e)
                 self._set_default_metadata()
         else:
             self._set_default_metadata()
@@ -53,7 +56,7 @@ class TiffSession:
                 if ij_meta and 'Labels' in ij_meta:
                     # 'Labels' is a list of channel names
                     self.channels = ij_meta['Labels'][:self.data.shape[1]]
-                    print(f"Metadata Fallback: Loaded channel names {self.channels} from ImageJ Labels.")
+                    logger.info("Metadata fallback: loaded channel names %s from ImageJ Labels.", self.channels)
                     
                     # Try to extract Z-spacing if available
                     if 'spacing' in ij_meta:
@@ -64,6 +67,7 @@ class TiffSession:
 
         # Final fallback to generic naming if no labels are found
         self.channels = [f"Ch{i+1}" for i in range(self.data.shape[1])]
+        logger.warning("No channel metadata found for %s. Using generic names: %s. Voxel size defaulting to 1.0 µm — physical measurements may be inaccurate.", self.path, self.channels)
 
     def _parse_ome_metadata(self):
         """Parses channel names and voxel sizes from OME-XML string."""
@@ -84,10 +88,13 @@ class TiffSession:
             dz = float(pixels_element.get('PhysicalSizeZ', 1.0))
             dy = float(pixels_element.get('PhysicalSizeY', 1.0))
             dx = float(pixels_element.get('PhysicalSizeX', 1.0))
+            raw_voxels = (dz, dy, dx)
             self.voxels = tuple(
-                s if isinstance(s, (int, float)) and not np.isnan(s) and s > 0 else 1.0 
-                for s in (dz, dy, dx)
+                s if isinstance(s, (int, float)) and not np.isnan(s) and s > 0 else 1.0
+                for s in raw_voxels
             )
+            if self.voxels != raw_voxels:
+                logger.warning("Some voxel sizes were invalid in OME metadata (raw: %s), defaulting to 1.0 µm where needed.", raw_voxels)
 
     def _load_data(self, path_str: str):
         """Loads image data and normalizes dimensions to (Z, C, Y, X)."""
@@ -166,13 +173,16 @@ def load_nd2_session(path: str) -> FISHSession:
         v_size_raw = (f.voxel_size().z, f.voxel_size().y, f.voxel_size().x)
         # Sanitize voxel sizes: replace None, zero, negative, or NaN with 1.0
         v_size = tuple(
-            s if isinstance(s, (int, float)) and not np.isnan(s) and s > 0 else 1.0 
+            s if isinstance(s, (int, float)) and not np.isnan(s) and s > 0 else 1.0
             for s in v_size_raw
         )
+        if v_size != v_size_raw:
+            logger.warning("Some voxel sizes were invalid in ND2 metadata (raw: %s), defaulting to 1.0 µm where needed.", v_size_raw)
         try:
             ch_names = [c.channel.name for c in f.metadata.channels]
         except (AttributeError, TypeError):
             ch_names = [f"Channel_{i+1}" for i in range(img.shape[1])]
+            logger.warning("Could not read channel names from ND2 metadata. Using generic names: %s", ch_names)
 
     return FISHSession(data=img, voxels=v_size, channels=ch_names, path=path, metadata=f.metadata)
 
@@ -205,7 +215,7 @@ def get_channel_data(session, target_name=constants.DAPI_CHANNEL_NAME):
         idx = session.channels.index(target_name)
         return session.data[:, idx, :, :]
     except ValueError:
-        print(f"Warning: {target_name} not found. Defaulting to index 0.")
+        logger.warning("Channel '%s' not found. Defaulting to index 0.", target_name)
         return session.data[:, 0, :, :]
     
 def convert_nd2_to_ome(
@@ -239,7 +249,7 @@ def convert_nd2_to_ome(
             progress_callback(f"Converting {prefix} to OME-TIFF...")
 
         ome_tif_path = output_dir / f"{prefix}_converted.ome.tif"
-        print(f"Converting {nd2_session.path} to OME-TIFF...")
+        logger.info("Converting %s to OME-TIFF...", nd2_session.path)
 
         metadata = {
             'axes': 'ZCYX',
@@ -250,7 +260,7 @@ def convert_nd2_to_ome(
         }
 
         tifffile.imwrite(ome_tif_path, nd2_session.data, metadata=metadata, photometric='minisblack')
-        print(f"Saved OME-TIFF to {ome_tif_path}")
+        logger.info("Saved OME-TIFF to %s", ome_tif_path)
 
         if progress_callback:
             progress_callback(f"Extracting OME-XML for {prefix}...")
@@ -260,16 +270,16 @@ def convert_nd2_to_ome(
                 xml_path = output_dir / f"{prefix}_metadata.ome.xml"
                 with open(xml_path, "w", encoding="utf-8") as f:
                     f.write(tf.ome_metadata)
-                print(f"Exported OME-XML metadata to {xml_path}")
+                logger.info("Exported OME-XML metadata to %s", xml_path)
 
         if hasattr(nd2_session, 'metadata') and nd2_session.metadata:
             json_path = output_dir / f"{prefix}_metadata.json"
             with open(json_path, "w", encoding="utf-8") as f:
                 json.dump(nd2_session.metadata, f, indent=4, default=str)
-            print(f"Exported ND2 metadata to {json_path}")
+            logger.info("Exported ND2 metadata to %s", json_path)
 
     except Exception as e:
-        print(f"Failed to convert ND2 to OME-TIFF: {e}")
+        logger.error("Failed to convert ND2 to OME-TIFF: %s", e)
 
 def discover_nd2_pairs(input_dir: Path):
     """
@@ -298,7 +308,7 @@ def discover_nd2_pairs(input_dir: Path):
 
     # Fallback for non-standard names: pair by sorted order
     if not paired_list and len(files) >= 2:
-        print("Warning: No R1/R2 pairs found by name. Assuming sorted file order represents pairs.")
+        logger.warning("No R1/R2 pairs found by name. Assuming sorted file order represents pairs.")
         sorted_files = sorted(files)
         # If odd number of files, the last one is ignored
         for i in range(0, (len(sorted_files) // 2) * 2, 2):
@@ -308,5 +318,5 @@ def discover_nd2_pairs(input_dir: Path):
             fov_name = common_prefix if common_prefix else r1_path.stem
             paired_list.append({'name': fov_name, 'r1': r1_path, 'r2': r2_path})
 
-    print(f"Discovered {len(paired_list)} file pairs for batch processing.")
+    logger.info("Discovered %d file pairs for batch processing.", len(paired_list))
     return paired_list
