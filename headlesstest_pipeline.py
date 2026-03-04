@@ -164,7 +164,8 @@ def run_headless_full_pipeline():
                 puncta_layers_for_analysis.append({
                     'name': f"{rnd}_{ch}",
                     'data': results[:, :3], # Just ZYX coords
-                    'scale': r1_session.voxels
+                    'scale': r1_session.voxels,
+                    'nucleus_ids': results[:, 3]
                 })
                 print(f"✅ Found {len(results)} spots.")
 

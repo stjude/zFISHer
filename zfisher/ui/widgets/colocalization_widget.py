@@ -1,11 +1,17 @@
 import napari
 from pathlib import Path
 from magicgui import magicgui, widgets
+from magicgui.widgets import Container, Label, PushButton, LineEdit
 
-from ...core import session, analysis  # Delegates math to the core orchestrator
+from ...core import session, analysis
 from .. import popups
 from ..decorators import require_active_session, error_handler
 from ... import constants
+
+
+# =====================================================================
+# Pairwise Colocalization
+# =====================================================================
 
 @magicgui(
     call_button="Add Colocalization Rule",
@@ -15,14 +21,12 @@ from ... import constants
     cutoff={"label": "Cutoff (um)", "min": 0.1, "step": 0.1, "value": 1.0}
 )
 @require_active_session("Please start or load a session before adding rules.")
-def _colocalization_widget(
-    source_layer: "napari.layers.Points", 
-    target_layer: "napari.layers.Points", 
+def _rule_builder(
+    source_layer: "napari.layers.Points",
+    target_layer: "napari.layers.Points",
     cutoff: float = 1.0
 ):
-    """
-    Unified Analysis Hub: Manages biological rules and master report exports.
-    """
+    """Adds a colocalization rule to the current session."""
     viewer = napari.current_viewer()
 
     if not source_layer or not target_layer:
@@ -34,73 +38,146 @@ def _colocalization_widget(
         'threshold': cutoff
     }
 
-    # Persist rules in session so they survive UI resets and app restarts
     rules = session.get_data("colocalization_rules", default=[])
     rules.append(rule)
     session.update_data("colocalization_rules", rules)
 
-    # Update the UI display for the user
-    lines = [f"{r['source']} -> {r['target']} (<= {r['threshold']} um)" for r in rules]
-    _colocalization_widget.rules_display.value = "\n".join(lines)
-    viewer.status = f"Added rule: {lines[-1]}"
+    _update_rules_display(rules)
+    viewer.status = f"Added rule: {rule['source']} -> {rule['target']} (<= {rule['threshold']} um)"
 
-# --- Consolidated UI Hub Elements ---
-_colocalization_widget.rules_display = widgets.Label(value="")
-_colocalization_widget.clear_btn = widgets.PushButton(text="Clear Rules")
-_colocalization_widget.filename = widgets.LineEdit(label="Report Name", value="zFISHer_Analysis_Report.xlsx")
-_colocalization_widget.export_btn = widgets.PushButton(text="Run Analysis & Export Master Report")
 
-_colocalization_widget.extend([
-    widgets.Label(value="<b>Biological Rules:</b>"),
-    _colocalization_widget.rules_display,
-    _colocalization_widget.clear_btn,
-    widgets.Label(value="<br><b>Export Settings:</b>"),
-    _colocalization_widget.filename,
-    _colocalization_widget.export_btn
-])
+_rules_display = Label(value="No rules defined.")
+_clear_btn = PushButton(text="Clear Rules")
+
+
+def _update_rules_display(rules):
+    """Formats and updates the rules display label."""
+    if rules:
+        lines = [f"{r['source']}  \u2192  {r['target']}  (\u2264 {r['threshold']} \u00b5m)" for r in rules]
+        _rules_display.value = "\n".join(lines)
+    else:
+        _rules_display.value = "No rules defined."
+
 
 @require_active_session()
 def _on_clear_rules():
     """Resets the rule list."""
     session.update_data("colocalization_rules", [])
-    _colocalization_widget.rules_display.value = ""
+    _update_rules_display([])
     napari.current_viewer().status = "All analysis rules cleared."
+
+
+_clear_btn.clicked.connect(_on_clear_rules)
+
+
+# =====================================================================
+# Tri-Colocalization
+# =====================================================================
+
+@magicgui(
+    call_button="Add Tri-Colocalization Rule",
+    layout="vertical",
+    anchor_layer={"label": "Anchor Channel"},
+    channel_a_layer={"label": "Channel A"},
+    channel_b_layer={"label": "Channel B"},
+    cutoff={"label": "Cutoff (um)", "min": 0.1, "step": 0.1, "value": 1.0}
+)
+@require_active_session("Please start or load a session before adding rules.")
+def _tri_rule_builder(
+    anchor_layer: "napari.layers.Points",
+    channel_a_layer: "napari.layers.Points",
+    channel_b_layer: "napari.layers.Points",
+    cutoff: float = 1.0
+):
+    """Adds a tri-colocalization rule: anchor must be near both Channel A and Channel B."""
+    viewer = napari.current_viewer()
+
+    if not anchor_layer or not channel_a_layer or not channel_b_layer:
+        return
+
+    rule = {
+        'anchor': anchor_layer.name,
+        'channel_a': channel_a_layer.name,
+        'channel_b': channel_b_layer.name,
+        'threshold': cutoff
+    }
+
+    tri_rules = session.get_data("tri_colocalization_rules", default=[])
+    tri_rules.append(rule)
+    session.update_data("tri_colocalization_rules", tri_rules)
+
+    _update_tri_rules_display(tri_rules)
+    viewer.status = f"Added tri-coloc rule: {rule['anchor']} + {rule['channel_a']} + {rule['channel_b']} (<= {rule['threshold']} um)"
+
+
+_tri_rules_display = Label(value="No tri-coloc rules defined.")
+_tri_clear_btn = PushButton(text="Clear Tri-Coloc Rules")
+
+
+def _update_tri_rules_display(tri_rules):
+    """Formats and updates the tri-colocalization rules display."""
+    if tri_rules:
+        lines = [
+            f"{r['anchor']}  \u2194  {r['channel_a']} + {r['channel_b']}  (\u2264 {r['threshold']} \u00b5m)"
+            for r in tri_rules
+        ]
+        _tri_rules_display.value = "\n".join(lines)
+    else:
+        _tri_rules_display.value = "No tri-coloc rules defined."
+
+
+@require_active_session()
+def _on_clear_tri_rules():
+    """Resets the tri-colocalization rule list."""
+    session.update_data("tri_colocalization_rules", [])
+    _update_tri_rules_display([])
+    napari.current_viewer().status = "All tri-colocalization rules cleared."
+
+
+_tri_clear_btn.clicked.connect(_on_clear_tri_rules)
+
+
+# =====================================================================
+# Export
+# =====================================================================
+
+_filename = LineEdit(label="Report Name", value="zFISHer_Analysis_Report.xlsx")
+_export_btn = PushButton(text="Run Analysis & Export Master Report")
+
 
 @require_active_session("Please start or load a session before exporting.")
 @error_handler("Analysis Export Failed")
-def _on_coloc_export():
-    """
-    Triggers the core analysis orchestrator.
-    This replaces the old distance_widget and export_widget logic.
-    """
+def _on_export():
+    """Triggers the core analysis orchestrator."""
     viewer = napari.current_viewer()
     rules = session.get_data("colocalization_rules", default=[])
-    
-    # Validation: Ensure we have enough data to compare
+    tri_rules = session.get_data("tri_colocalization_rules", default=[])
+
     points_layers = [l for l in viewer.layers if isinstance(l, napari.layers.Points)]
     if len(points_layers) < 2:
         raise ValueError("At least two puncta layers are required for nearest-neighbor analysis.")
 
     with popups.ProgressDialog(viewer.window._qt_window, "Generating Master Report...") as dialog:
-        # 1. Prepare data for the Core
-        points_data = [{'name': l.name, 'data': l.data, 'scale': l.scale} for l in points_layers]
-        
-        # 2. Get session output path
+        points_data = []
+        for l in points_layers:
+            d = {'name': l.name, 'data': l.data, 'scale': l.scale, 'translate': l.translate}
+            if hasattr(l, 'features') and 'Nucleus_ID' in l.features.columns:
+                d['nucleus_ids'] = l.features['Nucleus_ID'].values
+            points_data.append(d)
+
         out_dir = Path(session.get_data("output_dir")) / constants.REPORTS_DIR
         out_dir.mkdir(exist_ok=True, parents=True)
-        
-        # 3. Call the Core Analysis Orchestrator
-        # This function handles the cKDTree math and Excel formatting.
+
         final_path = analysis.run_colocalization_analysis(
             layers_data=points_data,
             rules=rules,
-            filename=_colocalization_widget.filename.value,
+            tri_rules=tri_rules,
+            filename=_filename.value,
             r1_path=session.get_data("r1_path"),
             r2_path=session.get_data("r2_path"),
             output_dir=out_dir
         )
-        
-        # 4. User Feedback
+
         popups.show_info_popup(
             viewer.window._qt_window,
             "Export Complete",
@@ -108,22 +185,50 @@ def _on_coloc_export():
         )
         viewer.status = f"Analysis saved to {final_path.name}"
 
-# Bind the consolidated events
-_colocalization_widget.clear_btn.clicked.connect(_on_clear_rules)
-_colocalization_widget.export_btn.clicked.connect(_on_coloc_export)
+
+_export_btn.clicked.connect(_on_export)
+
+
+# =====================================================================
+# Public API
+# =====================================================================
 
 def refresh_rules_display():
-    """Restores the rules display from session data (e.g., after loading a session)."""
+    """Restores all rules displays from session data (e.g., after loading a session)."""
     rules = session.get_data("colocalization_rules", default=[])
-    if rules:
-        lines = [f"{r['source']} -> {r['target']} (<= {r['threshold']} um)" for r in rules]
-        _colocalization_widget.rules_display.value = "\n".join(lines)
-    else:
-        _colocalization_widget.rules_display.value = ""
+    _update_rules_display(rules)
+    tri_rules = session.get_data("tri_colocalization_rules", default=[])
+    _update_tri_rules_display(tri_rules)
 
-# --- UI Wrapper ---
-colocalization_widget = widgets.Container(labels=False)
-header = widgets.Label(value="Colocalization Analysis")
+
+# =====================================================================
+# UI Wrapper
+# =====================================================================
+
+colocalization_widget = Container(labels=False)
+header = Label(value="Colocalization Analysis")
 header.native.setObjectName("widgetHeader")
-info = widgets.Label(value="<i>Define rules and export colocalization reports.</i>")
-colocalization_widget.extend([header, info, _colocalization_widget])
+info = Label(value="<i>Define distance rules between puncta channels, then export a report.</i>")
+
+colocalization_widget.extend([
+    header,
+    info,
+    # --- Pairwise Colocalization ---
+    Label(value="<b>Pairwise Colocalization:</b>"),
+    _rule_builder,
+    Label(value="<b>Active Rules:</b>"),
+    _rules_display,
+    _clear_btn,
+    # --- Tri-Colocalization ---
+    Label(value="<hr>"),
+    Label(value="<b>Tri-Colocalization:</b>"),
+    _tri_rule_builder,
+    Label(value="<b>Active Tri-Coloc Rules:</b>"),
+    _tri_rules_display,
+    _tri_clear_btn,
+    # --- Export ---
+    Label(value="<hr>"),
+    Label(value="<b>Export:</b>"),
+    _filename,
+    _export_btn
+])

@@ -63,6 +63,10 @@ EXCEL_SUFFIX = ".xlsx"
 METADATA_SHEET = "Metadata"
 DISTANCES_SHEET = "Distances"
 COLOCALIZATION_SHEET = "Colocalization"
+TRI_COLOCALIZATION_SHEET = "Tri-Colocalization"
+PER_NUCLEI_SHEET = "ROI per Nuclei"
+STATS_SHEET = "Stats"
+DISTRIBUTION_SHEET = "Distribution"
 
 # --- UI Constants ---
 # Channel color mapping
