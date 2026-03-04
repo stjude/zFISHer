@@ -1,0 +1,26 @@
+name: zFISHer
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10.19
+  - napari=0.6.6
+  - pyqt=5.15.11
+  - numpy=1.24.3
+  - scikit-image=0.24.0
+  - pandas=2.3.3
+  - tifffile=2025.2.18
+  - magicgui=0.10.1
+  - simpleitk=2.5.3
+  - packaging=26.0
+  - qtpy=2.4.3
+  - cpuonly
+  - pytorch=2.3.1
+  - torchvision=0.18.1
+  - pip
+  - pip:
+    - cellpose==4.0.8
+    - nd2==0.11.2
+    - openpyxl==3.1.5
+    - scipy==1.15.3
