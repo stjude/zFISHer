@@ -11,65 +11,53 @@ from .. import popups
 from ..decorators import require_active_session
 from ... import constants
 
-# --- Arrow Drawing (Shapes-based, works in 2D and 3D) ---
+# --- Arrow Drawing (Vectors-based, lightweight, works in 2D and 3D) ---
 
-def build_arrow_shapes(start, end, head_fraction=0.25, head_width_ratio=0.6):
-    """Build shaft (line) and arrowhead (triangle polygon) vertices.
+def _build_vectors(start, end, head_fraction=0.25, head_width_ratio=0.5):
+    """Return (N, 2, D) vectors array for one arrow: shaft + two barbs.
 
-    Parameters
-    ----------
-    start, end : np.ndarray, shape (D,)
-        Arrow endpoints in data coordinates.
-    head_fraction : float
-        Head length as a fraction of total arrow length.
-    head_width_ratio : float
-        Head half-width as a fraction of head length.
-
-    Returns
-    -------
-    shaft : np.ndarray (2, D) or None
-        Line from *start* to the base of the head.
-    head : np.ndarray (3, D) or None
-        Triangle: [tip, left_barb, right_barb].
+    Vectors format: each row is [start_point, direction_vector].
     """
     direction = end - start
     length = np.linalg.norm(direction)
     if length < 1e-6:
-        return None, None
+        return None
 
     unit = direction / length
-    h_len = np.clip(length * head_fraction, 2.0, length * 0.4)
+    h_len = np.clip(length * head_fraction, 1.5, length * 0.4)
     h_half_w = h_len * head_width_ratio
+    base = end - h_len * unit
 
-    base = end - h_len * unit          # base of the triangle on the shaft
-
-    # Perpendicular in the YX plane (last two axes)
+    # Perpendicular in YX plane
     ndim = len(direction)
     perp = np.zeros(ndim)
     if ndim >= 3:
         dy, dx = direction[-2], direction[-1]
         yx_len = np.hypot(dy, dx)
         if yx_len > 1e-6:
-            perp[-2] = -dx / yx_len
-            perp[-1] =  dy / yx_len
+            perp[-2], perp[-1] = -dx / yx_len, dy / yx_len
         else:
-            perp[-2] = 1.0              # purely-Z arrow: use Y as perp
-    elif ndim == 2:
+            perp[-2] = 1.0
+    else:
         dy, dx = direction[0], direction[1]
         yx_len = np.hypot(dy, dx)
         if yx_len > 1e-6:
-            perp[0] = -dx / yx_len
-            perp[1] =  dy / yx_len
+            perp[0], perp[1] = -dx / yx_len, dy / yx_len
         else:
             perp[0] = 1.0
 
-    shaft = np.array([start, base])
-    head  = np.array([end, base + h_half_w * perp, base - h_half_w * perp])
-    return shaft, head
+    barb_l = base + h_half_w * perp
+    barb_r = base - h_half_w * perp
+
+    return np.array([
+        [start, direction],          # shaft
+        [end, barb_l - end],         # left barb
+        [end, barb_r - end],         # right barb
+    ])
 
 
 class ArrowDrawer:
-    """Draw arrows on a napari Shapes layer (works in both 2D and 3D)."""
+    """Draw arrows on a napari Vectors layer (works in both 2D and 3D)."""
 
     def __init__(self, viewer: napari.Viewer):
         self.viewer = viewer
@@ -95,7 +83,7 @@ class ArrowDrawer:
                 np.save(arrows_path, data)
                 session.set_processed_file(
                     "Arrows", str(arrows_path),
-                    layer_type='shapes', metadata={'subtype': 'arrows'}
+                    layer_type='vectors', metadata={'subtype': 'arrows'}
                 )
         return _save
 
@@ -108,34 +96,28 @@ class ArrowDrawer:
         for layer in self.viewer.layers:
             if layer.name != "Arrows":
                 continue
-
-            if isinstance(layer, napari.layers.Shapes):
+            if isinstance(layer, napari.layers.Vectors):
                 self.arrows_layer = layer
                 self._sync_endpoints_from_session()
                 return layer
-
-            # Old Vector-based arrows: auto-convert to Shapes
-            if isinstance(layer, napari.layers.Vectors):
-                old_data = np.array(layer.data)          # (N, 2, D) [start, vec]
+            # Old Shapes-based arrows: convert
+            if isinstance(layer, napari.layers.Shapes):
                 self.viewer.layers.remove(layer)
-                for i in range(len(old_data)):
-                    s = old_data[i, 0]
-                    e = s + old_data[i, 1]               # vector -> endpoint
-                    self._arrow_endpoints.append((s.copy(), e.copy()))
-                break                                    # fall through to create
+                self._sync_endpoints_from_session()
+                break
 
-        self.arrows_layer = self.viewer.add_shapes(
-            name="Arrows", edge_color='white', face_color='white',
+        ndim = self.viewer.dims.ndim
+        empty = np.empty((0, 2, ndim))
+        self.arrows_layer = self.viewer.add_vectors(
+            empty, name="Arrows", edge_color='white',
             edge_width=2, opacity=1.0,
         )
         if self._arrow_endpoints:
-            self._rebuild_all_shapes()
+            self._refresh_layer()
             self._save_callback()
         return self.arrows_layer
 
     def _sync_endpoints_from_session(self):
-        """Populate *_arrow_endpoints* from the saved .npy when reconnecting
-        to an existing Shapes layer loaded by session restore."""
         if self._arrow_endpoints:
             return
         out_dir = session.get_data("output_dir")
@@ -151,37 +133,30 @@ class ArrowDrawer:
 
     # ---- rendering ----
 
-    def _rebuild_all_shapes(self, preview_end=None):
-        """Rebuild every arrow shape from *_arrow_endpoints* (+ optional preview)."""
-        layer = self.arrows_layer
-        if layer is None:
-            return
-
-        shapes = []
-        shape_types = []
-
+    def _build_all_vectors(self, preview_end=None):
+        """Build (N, 2, D) vectors array for all arrows + optional preview."""
+        parts = []
         for start, end in self._arrow_endpoints:
-            shaft, head = build_arrow_shapes(start, end)
-            if shaft is not None:
-                shapes.append(shaft)
-                shape_types.append('line')
-                shapes.append(head)
-                shape_types.append('polygon')
+            vecs = _build_vectors(start, end)
+            if vecs is not None:
+                parts.append(vecs)
 
-        # Temporary preview line while the user is dragging
         if self.start_pos is not None and preview_end is not None:
-            shapes.append(np.array([self.start_pos, preview_end]))
-            shape_types.append('line')
+            # Preview: just a single shaft vector, no arrowhead
+            direction = preview_end - self.start_pos
+            parts.append(np.array([[self.start_pos, direction]]))
 
-        if shapes:
-            layer.data = shapes
-            layer.shape_type = shape_types
-            layer.edge_color = 'white'
-            layer.face_color = 'white'
-            layer.edge_width = 2
-        elif len(layer.data) > 0:
-            layer.selected_data = set(range(len(layer.data)))
-            layer.remove_selected()
+        if parts:
+            return np.concatenate(parts, axis=0)
+
+        ndim = self.viewer.dims.ndim
+        return np.empty((0, 2, ndim))
+
+    def _refresh_layer(self, preview_end=None):
+        """Update the Vectors layer data."""
+        if self.arrows_layer is None:
+            return
+        self.arrows_layer.data = self._build_all_vectors(preview_end)
 
     # ---- mouse interaction ----
 
@@ -194,26 +169,26 @@ class ArrowDrawer:
         if event.type == 'mouse_press' and event.button == 2:
             if self._arrow_endpoints:
                 self._arrow_endpoints.pop()
-                self._rebuild_all_shapes()
+                self._refresh_layer()
                 self._save_callback()
                 self.viewer.status = "Removed last arrow."
             yield
             return
 
-        # Require Shift + Left-Click
-        if 'Shift' not in event.modifiers or event.button != 1:
+        # Ctrl+Shift + Left-click to draw (combo is unused by napari)
+        if not ('Control' in event.modifiers and 'Shift' in event.modifiers) or event.button != 1:
             return
 
         # --- press ---
         self.start_pos = np.array(event.position)
-        self._rebuild_all_shapes(preview_end=self.start_pos)
+        self._refresh_layer(preview_end=self.start_pos)
         self.viewer.status = "Release mouse to finish arrow."
         yield
 
         # --- move ---
         while event.type == 'mouse_move':
             cursor = np.array(event.position)
-            self._rebuild_all_shapes(preview_end=cursor)
+            self._refresh_layer(preview_end=cursor)
             yield
 
         # --- release ---
@@ -225,7 +200,7 @@ class ArrowDrawer:
             self.viewer.status = "Arrow too small, cancelled."
 
         self.start_pos = None
-        self._rebuild_all_shapes()
+        self._refresh_layer()
         self._save_callback()
 
     # ---- activation ----
@@ -234,13 +209,13 @@ class ArrowDrawer:
         self._is_active = active
         if active:
             self._get_or_create_layer()
-            self.viewer.status = "Arrow drawing ON. Hold Shift & drag to draw, right-click to remove last."
+            self.viewer.status = "Arrow drawing ON. Ctrl+Shift+drag to draw, right-click to remove last."
             if self.on_mouse_drag not in self.viewer.mouse_drag_callbacks:
                 self.viewer.mouse_drag_callbacks.insert(0, self.on_mouse_drag)
         else:
             if self.start_pos is not None:
                 self.start_pos = None
-                self._rebuild_all_shapes()      # drop any in-progress preview
+                self._refresh_layer()
             self.viewer.status = "Arrow drawing OFF."
             if self.on_mouse_drag in self.viewer.mouse_drag_callbacks:
                 self.viewer.mouse_drag_callbacks.remove(self.on_mouse_drag)
