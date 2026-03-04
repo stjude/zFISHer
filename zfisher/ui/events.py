@@ -65,7 +65,7 @@ def on_layer_inserted(event, widgets):
             
             # Auto-select the new points layer in editors/analysis widgets
             widgets['puncta_editor']._puncta_editor_widget.points_layer.value = layer
-            widgets['colocalization']._colocalization_widget.source_layer.value = layer
+            widgets['colocalization']._rule_builder.source_layer.value = layer
             
             # If it's a puncta layer, ensure its listener is attached.
             if "puncta" in layer.name.lower():

@@ -133,7 +133,7 @@ def run_headless_full_pipeline():
     # --- STEP 6: PUNCTA DETECTION (HEADLESS) ---
     print(f"\n--- STEP 6: Puncta Detection (Headless) ---")
     puncta_layers_for_analysis = [] # Used to store coordinates for Step 7
-    puncta_params = {'threshold_rel': 0.15, 'min_distance': 3, 'method': "Local Maxima"}
+    puncta_params = {'threshold_rel': 0.15, 'min_distance': 3, 'method': "Local Maxima", 'nuclei_only': True}
     
     # Dynamically get channel names from the session, excluding DAPI
     puncta_channels = [ch for ch in r1_session.channels if ch.upper() != constants.DAPI_CHANNEL_NAME.upper()]

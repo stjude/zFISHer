@@ -118,7 +118,17 @@ def process_puncta_detection(image_data, mask_data=None, voxels=None, params=Non
         coords_int[:, dim] = np.clip(coords_int[:, dim], 0, image_data.shape[dim] - 1)
     indices = tuple(coords_int.T)
     nucleus_ids = mask_data[indices] if mask_data is not None else np.zeros(len(coords))
-    
+
+    # Filter out extranuclear puncta if requested
+    nuclei_only = params.get('nuclei_only', True)
+    if nuclei_only and mask_data is not None:
+        keep = nucleus_ids > 0
+        coords = coords[keep]
+        nucleus_ids = nucleus_ids[keep]
+        quality_metrics = quality_metrics[keep]
+        if len(coords) == 0:
+            return np.empty((0, 6))
+
     # Combined Data: Z, Y, X, Nucleus_ID, Intensity, SNR
     final_data = np.column_stack([coords, nucleus_ids, quality_metrics])
 

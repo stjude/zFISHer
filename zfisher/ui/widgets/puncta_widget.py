@@ -19,6 +19,7 @@ from ... import constants
     layout="vertical",
     image_layer={"label": "Target Channel"},
     nuclei_layer={"label": "Nuclei Masks (Consensus)"},
+    nuclei_only={"label": "Nuclei Only (discard extranuclear puncta)", "value": True},
     method={
         "label": "Algorithm", 
         "choices": ["Local Maxima", "Laplacian of Gaussian", "Difference of Gaussian", "Radial Symmetry"]
@@ -35,9 +36,10 @@ from ... import constants
 @require_active_session()
 @error_handler("Puncta Detection Failed")
 def _puncta_widget(
-    image_layer: "napari.layers.Image", 
-    nuclei_layer: "napari.layers.Labels", 
-    method: str = "Local Maxima", 
+    image_layer: "napari.layers.Image",
+    nuclei_layer: "napari.layers.Labels",
+    nuclei_only: bool = True,
+    method: str = "Local Maxima",
     use_decon: bool = False, 
     decon_iter: int = 10,
     threshold: float = constants.PUNCTA_THRESHOLD_REL,
@@ -62,8 +64,9 @@ def _puncta_widget(
             'z_scale': z_scale,
             'min_distance': min_distance, 
             'sigma': sigma,
-            'use_tophat': use_tophat, 
-            'tophat_radius': tophat_radius
+            'use_tophat': use_tophat,
+            'tophat_radius': tophat_radius,
+            'nuclei_only': nuclei_only
         }
         
         out_dir = session.get_data("output_dir")
