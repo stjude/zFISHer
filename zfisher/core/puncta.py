@@ -79,11 +79,13 @@ def _detect_spots_dog(image_data, threshold_rel, sigma, z_scale=1.0):
                      threshold=threshold_rel)
     return blobs[:, :3].astype(int) if len(blobs) > 0 else np.empty((0, 3))
 
-def detect_spots_3d(image_data, method="Local Maxima", **kwargs):
+def detect_spots_3d(image_data, method="Local Maxima", progress_callback=None, **kwargs):
     """Main entry point for Step 6 math."""
     if kwargs.get('use_decon', False):
+        if progress_callback: progress_callback(10, "Deconvolving image...")
         image_data = apply_deconvolution(image_data, iterations=kwargs.get('decon_iter', 10))
     if kwargs.get('use_tophat', False):
+        if progress_callback: progress_callback(25, "Subtracting background (top-hat)...")
         image_data = preprocess_white_tophat(image_data, radius=kwargs.get('tophat_radius', 10))
 
     if method == "Radial Symmetry":
@@ -99,19 +101,24 @@ def detect_spots_3d(image_data, method="Local Maxima", **kwargs):
                                  kwargs.get('sigma', 1.0), z_scale=kwargs.get('z_scale', 1.0))
     return np.empty((0, 3))
 
-def process_puncta_detection(image_data, mask_data=None, voxels=None, params=None, output_path=None):
+def process_puncta_detection(image_data, mask_data=None, voxels=None, params=None, output_path=None, progress_callback=None):
     """Orchestrates detection, quality mapping, and session persistence with CSV tags."""
     from . import session
     params = params or {}
-    
+
     if 'z_scale' not in params and voxels is not None:
-        params['z_scale'] = voxels[0] / voxels[2] 
+        params['z_scale'] = voxels[0] / voxels[2]
 
-    coords = detect_spots_3d(image_data, **params)
-    if len(coords) == 0: return np.empty((0, 6))
+    if progress_callback: progress_callback(5, "Detecting spots...")
+    coords = detect_spots_3d(image_data, progress_callback=progress_callback, **params)
+    if len(coords) == 0:
+        if progress_callback: progress_callback(100, "No spots found.")
+        return np.empty((0, 6))
 
+    if progress_callback: progress_callback(50, f"Computing quality metrics for {len(coords)} spots...")
     quality_metrics = calculate_spot_quality(image_data, coords)
 
+    if progress_callback: progress_callback(70, "Assigning nucleus IDs...")
     # Clip coordinates to valid mask/image bounds before indexing
     coords_int = coords.astype(int)
     for dim in range(3):
@@ -122,29 +129,33 @@ def process_puncta_detection(image_data, mask_data=None, voxels=None, params=Non
     # Filter out extranuclear puncta if requested
     nuclei_only = params.get('nuclei_only', True)
     if nuclei_only and mask_data is not None:
+        if progress_callback: progress_callback(80, "Filtering extranuclear puncta...")
         keep = nucleus_ids > 0
         coords = coords[keep]
         nucleus_ids = nucleus_ids[keep]
         quality_metrics = quality_metrics[keep]
         if len(coords) == 0:
+            if progress_callback: progress_callback(100, "No nuclear puncta found.")
             return np.empty((0, 6))
 
     # Combined Data: Z, Y, X, Nucleus_ID, Intensity, SNR
     final_data = np.column_stack([coords, nucleus_ids, quality_metrics])
 
     if output_path:
+        if progress_callback: progress_callback(90, "Saving results...")
         header = "Z,Y,X,Nucleus_ID,Intensity,SNR"
         np.savetxt(output_path, final_data, delimiter=",", header=header, comments='')
-        
+
         # FIX: Pass format metadata so UI knows this is a text CSV, not a pickle
         session.set_processed_file(
-            Path(output_path).stem, 
-            str(output_path), 
-            "points", 
+            Path(output_path).stem,
+            str(output_path),
+            "points",
             metadata={
-                'format': 'csv', 
+                'format': 'csv',
                 'subtype': 'puncta_csv'
             }
         )
-        
+
+    if progress_callback: progress_callback(100, f"Done. Found {len(final_data)} spots.")
     return final_data

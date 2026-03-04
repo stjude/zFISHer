@@ -74,11 +74,12 @@ def _puncta_widget(
 
         # Pass voxel scale for automated z_scale fallback
         results = puncta.process_puncta_detection(
-            image_layer.data, 
+            image_layer.data,
             mask_data=nuclei_layer.data if nuclei_layer else None,
-            voxels=getattr(image_layer, 'scale', (1,1,1)), 
-            params=params, 
-            output_path=csv_path
+            voxels=getattr(image_layer, 'scale', (1,1,1)),
+            params=params,
+            output_path=csv_path,
+            progress_callback=lambda p, t: dialog.update_progress(p, t)
         )
         
         viewer_helpers.add_or_update_puncta_layer(viewer, image_layer, results)
