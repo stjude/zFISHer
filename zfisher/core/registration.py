@@ -29,6 +29,7 @@ import SimpleITK as sitk
 import warnings
 import gc
 import tifffile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from .session import set_processed_file
 
 from . import session
@@ -420,7 +421,7 @@ def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=16
     
     return outTx
 
-def apply_deformable_transform(moving_data, transform, fixed_reference_data, is_label=False):
+def apply_deformable_transform(moving_data, transform, fixed_reference_data, is_label=False, use_bspline=True):
     """
     Applies a calculated SimpleITK transform to an image array.
 
@@ -434,6 +435,10 @@ def apply_deformable_transform(moving_data, transform, fixed_reference_data, is_
         A reference image defining the output grid (size, spacing, origin).
     is_label : bool, optional
         If True, uses nearest-neighbor interpolation.
+    use_bspline : bool, optional
+        If True (default), uses B-spline interpolation for images. If False,
+        uses linear interpolation to avoid ringing artifacts on sparse
+        bright signals like FISH puncta channels.
 
     Returns
     -------
@@ -442,15 +447,23 @@ def apply_deformable_transform(moving_data, transform, fixed_reference_data, is_
     """
     # Convert inputs to SimpleITK
     moving_img = sitk.GetImageFromArray(moving_data.astype(np.float32))
-    
+
     # Optimization: We only need the grid (size/spacing), not the pixel data.
     # Using uint8 zeros saves massive memory compared to casting input to float32.
     fixed_ref = sitk.GetImageFromArray(np.zeros(fixed_reference_data.shape, dtype=np.uint8))
-    
+
     # Setup Resampler
+    # Labels: nearest-neighbor to preserve IDs
+    # DAPI/smooth images: B-spline for best quality
+    # Puncta/sparse channels: Linear to avoid ringing artifacts
     resampler = sitk.ResampleImageFilter()
     resampler.SetReferenceImage(fixed_ref)
-    resampler.SetInterpolator(sitk.sitkNearestNeighbor if is_label else sitk.sitkBSpline)
+    if is_label:
+        resampler.SetInterpolator(sitk.sitkNearestNeighbor)
+    elif use_bspline:
+        resampler.SetInterpolator(sitk.sitkBSpline)
+    else:
+        resampler.SetInterpolator(sitk.sitkLinear)
     resampler.SetDefaultPixelValue(0)
     resampler.SetTransform(transform)
     
@@ -608,38 +621,47 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
             'data': warped_checkerboard, 'name': checker_layer_name, 'meta': checker_meta, 'type': 'image'
         })
     
-    # 3. Per-channel Warping and Saving
+    # 3. Per-channel Warping and Saving (parallelized)
     num_channels = len(aligned_pairs)
     start_progress = 60 if (apply_warp and has_dapi) else 20
 
     if num_channels > 0:
-        for i, (channel_name, pair_data) in enumerate(aligned_pairs.items()):
-            prog = start_progress + int(((i + 1) / num_channels) * (100 - start_progress))
-            update(prog, f"Applying warp to {channel_name}...")
+        update(start_progress, "Warping all channels in parallel...")
+        with ThreadPoolExecutor() as executor:
+            futures = {
+                executor.submit(_process_channel_pair, ch_name, pair_data, transform, output_dir): ch_name
+                for ch_name, pair_data in aligned_pairs.items()
+            }
+            completed = 0
+            for future in as_completed(futures):
+                completed += 1
+                ch_name = futures[future]
+                prog = start_progress + int((completed / num_channels) * (100 - start_progress))
+                update(prog, f"Finished {ch_name} ({completed}/{num_channels})...")
+                result_pair = future.result()
+                results.extend(result_pair)
+        gc.collect()
 
-            # Process the pair (Math + Save)
-            result_pair = _process_channel_pair(channel_name, pair_data, transform, output_dir)
-            results.extend(result_pair)
-            gc.collect()
-        
     update(100, "Canvas generation complete.")
     return results
 
 def _process_channel_pair(channel_name, pair_data, transform, output_dir):
-    """Applies deformable warp if needed and triggers the save."""
+    """Applies deformable warp if needed and saves both layers in parallel."""
     r1_data, r2_data = pair_data['r1_data'], pair_data['r2_data']
     is_label = pair_data['is_label']
-    
+
     final_r2 = r2_data
     r2_prefix = constants.ALIGNED_PREFIX
     if transform:
-        final_r2 = apply_deformable_transform(r2_data, transform, r1_data, is_label=is_label)
+        is_dapi = channel_name == constants.DAPI_CHANNEL_NAME
+        final_r2 = apply_deformable_transform(r2_data, transform, r1_data, is_label=is_label, use_bspline=is_dapi)
         r2_prefix = constants.WARPED_PREFIX
-        
-    # Trigger the Save logic (The I/O part)
-    _save_aligned_layer(r1_data, constants.ALIGNED_PREFIX, "R1", channel_name, output_dir, is_label)
-    _save_aligned_layer(final_r2, r2_prefix, "R2", channel_name, output_dir, is_label)
-        
+
+    # Save both layers in parallel (zlib compression is CPU-bound)
+    with ThreadPoolExecutor(max_workers=2) as save_executor:
+        save_executor.submit(_save_aligned_layer, r1_data, constants.ALIGNED_PREFIX, "R1", channel_name, output_dir, is_label)
+        save_executor.submit(_save_aligned_layer, final_r2, r2_prefix, "R2", channel_name, output_dir, is_label)
+
     r1_result = {'data': r1_data, 'name': f"{constants.ALIGNED_PREFIX} R1 - {channel_name}", 'meta': pair_data['r1_meta'], 'type': 'labels' if is_label else 'image'}
     r2_result = {'data': final_r2, 'name': f"{r2_prefix} R2 - {channel_name}", 'meta': pair_data['r2_meta'], 'type': 'labels' if is_label else 'image'}
     return [r1_result, r2_result]

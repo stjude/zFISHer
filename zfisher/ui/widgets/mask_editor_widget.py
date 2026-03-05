@@ -240,29 +240,47 @@ def delete_mask_under_mouse(viewer):
             _delete_label_inplace(layer, val)
             viewer.status = f"Deleted Nucleus ID {val}"
 
-# Add Tools to Mask Editor
-editor_label = widgets.Label(value="<b>Editing Tools:</b>")
-btn_container = widgets.Container(layout="horizontal", labels=False)
+_divider_style = "<hr style='border: 1px solid #555; margin: 4px 0;'>"
+
+# --- Merge Section ---
+merge_label = widgets.Label(value="<b>Merge Nuclei</b>")
+delete_btn = widgets.PushButton(text="Delete Source ID")
+
+# --- Paint Section ---
+paint_label = widgets.Label(value="<b>Paint New Mask</b>")
 paint_chk = widgets.CheckBox(text="Paint (New ID)")
+extrude_btn = widgets.PushButton(text="Extrude ID (Fill Z)")
+
+# --- Erase Section ---
+erase_label = widgets.Label(value="<b>Erase</b>")
 erase_chk = widgets.CheckBox(text="Erase")
 erase_radius_slider = widgets.Slider(label="Radius", min=1, max=50, value=5)
 erase_depth_slider = widgets.Slider(label="Depth (Z)", min=1, max=20, value=1)
-erase_slider_container = widgets.Container(layout="vertical", labels=False)
+erase_slider_container = widgets.Container(layout="vertical", labels=True)
 erase_slider_container.extend([erase_radius_slider, erase_depth_slider])
-extrude_btn = widgets.PushButton(text="Extrude ID (Fill Z)")
-delete_btn = widgets.PushButton(text="Delete Source ID")
-undo_btn = widgets.PushButton(text="Undo")
 hover_chk = widgets.CheckBox(text="Hover Edit Mode (Red + 'C' to Del)")
+
+# --- Utilities ---
+undo_btn = widgets.PushButton(text="Undo")
 refresh_ids_btn = widgets.PushButton(text="Show/Refresh IDs")
 
-btn_container.extend([paint_chk, erase_chk])
+# Layout with dividers
+_mask_editor_widget.append(widgets.Label(value=_divider_style))
+_mask_editor_widget.append(merge_label)
+_mask_editor_widget.append(delete_btn)
 
-_mask_editor_widget.append(editor_label)
-_mask_editor_widget.append(btn_container)
+_mask_editor_widget.append(widgets.Label(value=_divider_style))
+_mask_editor_widget.append(paint_label)
+_mask_editor_widget.append(paint_chk)
+_mask_editor_widget.append(extrude_btn)
+
+_mask_editor_widget.append(widgets.Label(value=_divider_style))
+_mask_editor_widget.append(erase_label)
+_mask_editor_widget.append(erase_chk)
 _mask_editor_widget.append(erase_slider_container)
 _mask_editor_widget.append(hover_chk)
-_mask_editor_widget.append(extrude_btn)
-_mask_editor_widget.append(delete_btn)
+
+_mask_editor_widget.append(widgets.Label(value=_divider_style))
 _mask_editor_widget.append(undo_btn)
 _mask_editor_widget.append(refresh_ids_btn)
 
@@ -323,6 +341,8 @@ def _cylinder_erase_drag(viewer, event):
     layer = _mask_editor_widget.mask_layer.value
     if not isinstance(layer, napari.layers.Labels):
         return
+    # Block event from reaching napari's pan/zoom handler
+    event.handled = True
     _mask_undo.begin(layer.data)
     _apply_cylinder_erase(layer, event.position)
     yield
@@ -330,6 +350,7 @@ def _cylinder_erase_drag(viewer, event):
         _apply_cylinder_erase(layer, event.position)
         yield
     _mask_undo.end(layer.data)
+    _schedule_save(layer)
 
 @require_active_session("Please start or load a session before editing masks.")
 def _on_erase(value: bool):

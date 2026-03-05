@@ -119,8 +119,11 @@ _METHOD_INFO = {
 }
 
 _method_desc_label = widgets.Label(value="")
+_method_desc_label.native.setWordWrap(True)
 # Insert description label right after the method dropdown
 _puncta_widget.insert(_puncta_widget.index(_puncta_widget.method) + 1, _method_desc_label)
+# Constrain the entire widget to prevent the description from stretching the layout
+_puncta_widget.native.setMaximumWidth(350)
 
 def _update_method_ui(method: str):
     info = _METHOD_INFO.get(method, {})
