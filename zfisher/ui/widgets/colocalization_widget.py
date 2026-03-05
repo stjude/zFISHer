@@ -4,10 +4,20 @@ from pathlib import Path
 from magicgui import magicgui, widgets
 from magicgui.widgets import Container, Label, PushButton, LineEdit
 
+from qtpy.QtWidgets import QFrame
+
 from ...core import session, analysis
 from .. import popups
 from ..decorators import require_active_session, error_handler
 from ... import constants
+
+
+def _make_divider():
+    """Create a horizontal line divider using a native Qt QFrame."""
+    line = QFrame()
+    line.setFixedHeight(2)
+    line.setStyleSheet("background-color: #555; border: none; margin: 8px 0px;")
+    return line
 
 
 # =====================================================================
@@ -220,25 +230,33 @@ header = Label(value="Colocalization Analysis")
 header.native.setObjectName("widgetHeader")
 info = Label(value="<i>Define distance rules between puncta channels, then export a report.</i>")
 
-colocalization_widget.extend([
-    header,
-    info,
-    # --- Pairwise Colocalization ---
-    Label(value="<b>Pairwise Colocalization:</b>"),
-    _rule_builder,
-    Label(value="<b>Active Rules:</b>"),
-    _rules_display,
-    _clear_btn,
-    # --- Tri-Colocalization ---
-    Label(value="<hr>"),
-    Label(value="<b>Tri-Colocalization:</b>"),
-    _tri_rule_builder,
-    Label(value="<b>Active Tri-Coloc Rules:</b>"),
-    _tri_rules_display,
-    _tri_clear_btn,
-    # --- Export ---
-    Label(value="<hr>"),
-    Label(value="<b>Export:</b>"),
-    _filename,
-    _export_btn
-])
+# Build layout using native layout to keep dividers in correct order
+_pairwise_header = Label(value="<b>Pairwise Colocalization:</b>")
+_active_rules_header = Label(value="<b>Active Rules:</b>")
+_tri_header = Label(value="<b>Tri-Colocalization:</b>")
+_tri_active_header = Label(value="<b>Active Tri-Coloc Rules:</b>")
+_export_header = Label(value="<b>Export:</b>")
+
+_layout = colocalization_widget.native.layout()
+_layout.addWidget(header.native)
+_layout.addWidget(info.native)
+# --- Pairwise Colocalization ---
+_layout.addWidget(_pairwise_header.native)
+_layout.addWidget(_rule_builder.native)
+_layout.addWidget(_active_rules_header.native)
+_layout.addWidget(_rules_display.native)
+_layout.addWidget(_clear_btn.native)
+# --- Divider ---
+_layout.addWidget(_make_divider())
+# --- Tri-Colocalization ---
+_layout.addWidget(_tri_header.native)
+_layout.addWidget(_tri_rule_builder.native)
+_layout.addWidget(_tri_active_header.native)
+_layout.addWidget(_tri_rules_display.native)
+_layout.addWidget(_tri_clear_btn.native)
+# --- Divider ---
+_layout.addWidget(_make_divider())
+# --- Export ---
+_layout.addWidget(_export_header.native)
+_layout.addWidget(_filename.native)
+_layout.addWidget(_export_btn.native)

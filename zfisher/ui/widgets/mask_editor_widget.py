@@ -4,7 +4,8 @@ from collections import deque
 from magicgui import magicgui, widgets
 import tifffile
 from pathlib import Path
-from qtpy.QtCore import QTimer
+from qtpy.QtCore import QTimer, Qt
+from qtpy.QtWidgets import QFrame
 
 from ...core import session
 from .. import popups, viewer_helpers
@@ -240,19 +241,30 @@ def delete_mask_under_mouse(viewer):
             _delete_label_inplace(layer, val)
             viewer.status = f"Deleted Nucleus ID {val}"
 
-_divider_style = "<hr style='border: 1px solid #555; margin: 4px 0;'>"
+def _make_divider():
+    """Create a horizontal line divider using a native Qt QFrame."""
+    line = QFrame()
+    line.setFixedHeight(2)
+    line.setStyleSheet("background-color: #555; border: none; margin: 8px 0px;")
+    return line
+
+def _make_section_header(text):
+    """Create a left-aligned bold section header."""
+    label = widgets.Label(value=f"<b>{text}</b>")
+    label.native.setAlignment(Qt.AlignLeft)
+    return label
 
 # --- Merge Section ---
-merge_label = widgets.Label(value="<b>Merge Nuclei</b>")
+merge_label = _make_section_header("Merge Nuclei")
 delete_btn = widgets.PushButton(text="Delete Source ID")
 
 # --- Paint Section ---
-paint_label = widgets.Label(value="<b>Paint New Mask</b>")
+paint_label = _make_section_header("Paint New Mask")
 paint_chk = widgets.CheckBox(text="Paint (New ID)")
 extrude_btn = widgets.PushButton(text="Extrude ID (Fill Z)")
 
 # --- Erase Section ---
-erase_label = widgets.Label(value="<b>Erase</b>")
+erase_label = _make_section_header("Erase")
 erase_chk = widgets.CheckBox(text="Erase")
 erase_radius_slider = widgets.Slider(label="Radius", min=1, max=50, value=5)
 erase_depth_slider = widgets.Slider(label="Depth (Z)", min=1, max=20, value=1)
@@ -264,25 +276,27 @@ hover_chk = widgets.CheckBox(text="Hover Edit Mode (Red + 'C' to Del)")
 undo_btn = widgets.PushButton(text="Undo")
 refresh_ids_btn = widgets.PushButton(text="Show/Refresh IDs")
 
-# Layout with dividers
-_mask_editor_widget.append(widgets.Label(value=_divider_style))
-_mask_editor_widget.append(merge_label)
-_mask_editor_widget.append(delete_btn)
+# Layout with dividers — use native layout throughout to maintain order
+_layout = _mask_editor_widget.native.layout()
 
-_mask_editor_widget.append(widgets.Label(value=_divider_style))
-_mask_editor_widget.append(paint_label)
-_mask_editor_widget.append(paint_chk)
-_mask_editor_widget.append(extrude_btn)
+_layout.addWidget(_make_divider())
+_layout.addWidget(merge_label.native)
+_layout.addWidget(delete_btn.native)
 
-_mask_editor_widget.append(widgets.Label(value=_divider_style))
-_mask_editor_widget.append(erase_label)
-_mask_editor_widget.append(erase_chk)
-_mask_editor_widget.append(erase_slider_container)
-_mask_editor_widget.append(hover_chk)
+_layout.addWidget(_make_divider())
+_layout.addWidget(paint_label.native)
+_layout.addWidget(paint_chk.native)
+_layout.addWidget(extrude_btn.native)
 
-_mask_editor_widget.append(widgets.Label(value=_divider_style))
-_mask_editor_widget.append(undo_btn)
-_mask_editor_widget.append(refresh_ids_btn)
+_layout.addWidget(_make_divider())
+_layout.addWidget(erase_label.native)
+_layout.addWidget(erase_chk.native)
+_layout.addWidget(erase_slider_container.native)
+_layout.addWidget(hover_chk.native)
+
+_layout.addWidget(_make_divider())
+_layout.addWidget(undo_btn.native)
+_layout.addWidget(refresh_ids_btn.native)
 
 @require_active_session("Please start or load a session before editing masks.")
 def _on_paint(value: bool):
@@ -336,19 +350,15 @@ def _apply_cylinder_erase(layer, world_pos):
         slc[clipped] = 0
     layer.refresh()
 
-def _cylinder_erase_drag(viewer, event):
-    """Mouse drag callback that performs cylinder erase on click and drag."""
+def erase_at_cursor(viewer):
+    """Hotkey callback: erases a cylinder at the current cursor position (Shift+E)."""
+    if not erase_chk.value:
+        return
     layer = _mask_editor_widget.mask_layer.value
     if not isinstance(layer, napari.layers.Labels):
         return
-    # Block event from reaching napari's pan/zoom handler
-    event.handled = True
     _mask_undo.begin(layer.data)
-    _apply_cylinder_erase(layer, event.position)
-    yield
-    while event.type == 'mouse_move':
-        _apply_cylinder_erase(layer, event.position)
-        yield
+    _apply_cylinder_erase(layer, viewer.cursor.position)
     _mask_undo.end(layer.data)
     _schedule_save(layer)
 
@@ -365,11 +375,8 @@ def _on_erase(value: bool):
             hover_chk.value = False
             viewer.layers.selection.active = layer
             layer.mode = 'pan_zoom'
-            viewer.mouse_drag_callbacks.append(_cylinder_erase_drag)
-            viewer.status = f"Erase Mode. Radius={erase_radius_slider.value}, Depth={erase_depth_slider.value}"
+            viewer.status = "Erase Mode ON. Hover over mask and press Shift+E to erase."
         else:
-            if _cylinder_erase_drag in viewer.mouse_drag_callbacks:
-                viewer.mouse_drag_callbacks.remove(_cylinder_erase_drag)
             viewer.status = "Erase Mode Off."
 
 @require_active_session("Please start or load a session before editing masks.")

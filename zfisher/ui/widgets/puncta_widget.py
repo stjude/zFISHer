@@ -122,6 +122,13 @@ _method_desc_label = widgets.Label(value="")
 _method_desc_label.native.setWordWrap(True)
 # Insert description label right after the method dropdown
 _puncta_widget.insert(_puncta_widget.index(_puncta_widget.method) + 1, _method_desc_label)
+# Make the description span both columns (label + widget) in the grid layout
+_layout = _puncta_widget.native.layout()
+_desc_idx = _layout.indexOf(_method_desc_label.native)
+if _desc_idx >= 0:
+    _row, _role, _rs, _cs = _layout.getItemPosition(_desc_idx)
+    _layout.removeWidget(_method_desc_label.native)
+    _layout.addWidget(_method_desc_label.native, _row, 0, 1, 2)
 # Constrain the entire widget to prevent the description from stretching the layout
 _puncta_widget.native.setMaximumWidth(350)
 

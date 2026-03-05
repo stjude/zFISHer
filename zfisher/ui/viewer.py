@@ -6,7 +6,7 @@ from pathlib import Path
 from functools import partial
 
 from qtpy.QtWidgets import QApplication, QToolBox, QToolButton, QWidget, QLabel, QVBoxLayout, QDockWidget
-from qtpy.QtGui import QIcon, QPainter, QPalette
+from qtpy.QtGui import QIcon, QPainter, QPalette, QPixmap
 from qtpy.QtCore import Qt, QPoint, QTimer, QEvent
 from magicgui import widgets
 from ..core import session
@@ -23,7 +23,7 @@ from .widgets.puncta_picking_widget import PunctaPickingWidget
 from .widgets.puncta_widget import puncta_widget
 from .widgets.colocalization_widget import colocalization_widget
 from .widgets.export_visualization_widget import ExportVisualizationWidget
-from .widgets.mask_editor_widget import mask_editor_widget, delete_mask_under_mouse
+from .widgets.mask_editor_widget import mask_editor_widget, delete_mask_under_mouse, erase_at_cursor
 from .widgets.puncta_editor_widget import puncta_editor_widget, delete_point_under_mouse
 from .widgets.capture_widget import capture_widget, capture_with_hotkey, region_capture_with_hotkey
 
@@ -167,10 +167,19 @@ class WelcomeWidget(QWidget):
         self.setLayout(QVBoxLayout())
         self.layout().setAlignment(Qt.AlignCenter)
         
+        # Icon
+        icon_path = Path(__file__).parent.parent.parent / "icon.png"
+        if icon_path.exists():
+            icon_label = QLabel()
+            pixmap = QPixmap(str(icon_path)).scaled(128, 128, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            icon_label.setPixmap(pixmap)
+            icon_label.setAlignment(Qt.AlignCenter)
+            self.layout().addWidget(icon_label)
+
         # Branding (Mint and White)
         label_html = (
             f"<h1 {style.WELCOME_WIDGET_STYLE['h1']}>zFISHer</h1>"
-            f"<p {style.WELCOME_WIDGET_STYLE['p']}>Version 2.0</p>"
+            f"<p {style.WELCOME_WIDGET_STYLE['p']}>Version 1.0</p>"
         )
         self.label = QLabel(label_html)
         self.label.setAlignment(Qt.AlignCenter)
@@ -212,18 +221,32 @@ class WelcomeWidget(QWidget):
 
 def create_welcome_widget(viewer):
     container = widgets.Container(labels=False)
-    container.append(widgets.Label(value=f"<h1 {style.CREATE_WELCOME_WIDGET_STYLE['h1']}>Welcome to zFISHer</h1>"))
-    container.append(widgets.Label(value="<em>Multiplexed Sequential FISH Analysis</em>"))
-    container.append(widgets.Label(value="<p>Version 2.0</p>"))
-    container.append(widgets.Label(value="<h3>Workflow:</h3>"))
-    container.append(widgets.Label(value="1. <b>Load Data</b> (.nd2 files)"))
-    container.append(widgets.Label(value="2. <b>Segment Nuclei</b> (DAPI)"))
-    container.append(widgets.Label(value="3. <b>Register Rounds</b> (RANSAC)"))
-    container.append(widgets.Label(value="4. <b>Generate Canvas</b> (Warp)"))
-    container.append(widgets.Label(value="5. <b>Match Nuclei</b>"))
-    container.append(widgets.Label(value="6. <b>Detect Puncta</b> (Spots)"))
-    container.append(widgets.Label(value="7. <b>Analysis Export</b>"))
-    
+
+    mint = style.COLORS['primary']
+    workflow_html = f"""
+    <h2 style='color: {mint}; margin-bottom: 2px;'>Workflow</h2>
+    <table cellpadding='3' cellspacing='0' style='margin-left: 4px;'>
+      <tr><td colspan='2'><b style='color: {mint};'>1. Session &amp; I/O</b></td></tr>
+      <tr><td width='20'></td><td>Load .nd2 or .tif image stacks</td></tr>
+      <tr><td colspan='2'><b style='color: {mint};'>2. Alignment &amp; Consensus</b></td></tr>
+      <tr><td></td><td>Segment DAPI &#8594; Register &#8594; Warp &#8594; Consensus Nuclei</td></tr>
+      <tr><td></td><td>Edit masks (merge, paint, erase)</td></tr>
+      <tr><td colspan='2'><b style='color: {mint};'>3. Puncta Picking</b></td></tr>
+      <tr><td></td><td>Detect puncta on warped channels</td></tr>
+      <tr><td></td><td>Manually add/remove/edit spots</td></tr>
+      <tr><td colspan='2'><b style='color: {mint};'>4. Export &amp; Visualization</b></td></tr>
+      <tr><td></td><td>Colocalization analysis &amp; statistics</td></tr>
+      <tr><td></td><td>Capture &amp; annotate images</td></tr>
+    </table>
+    """
+
+    title_label = widgets.Label(value=f"<h1 {style.CREATE_WELCOME_WIDGET_STYLE['h1']}>Welcome to zFISHer</h1>")
+    subtitle_label = widgets.Label(value=f"<em style='color: {mint};'>Multiplexed Sequential FISH Analysis in Cell Monolayer</em>")
+    version_label = widgets.Label(value="<p>Version 1.0</p>")
+    workflow_label = widgets.Label(value=workflow_html)
+    workflow_label.native.setWordWrap(True)
+    container.extend([title_label, subtitle_label, version_label, workflow_label])
+
     btn_row = widgets.Container(layout="horizontal", labels=False)
     help_btn = widgets.PushButton(text="Open README / Help")
     reset_btn = widgets.PushButton(text="Reset")
@@ -288,7 +311,9 @@ def launch_zfisher():
             pass
     
     # Permanently disable napari's native welcome screen
-    qt_viewer = viewer.window.qt_viewer
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        qt_viewer = viewer.window.qt_viewer
     qt_viewer._show_welcome_screen = False
     if hasattr(qt_viewer, '_welcome_widget'):
         qt_viewer._welcome_widget.set_welcome_visible(False)
@@ -372,5 +397,6 @@ def launch_zfisher():
     viewer.bind_key('Control-A', region_capture_with_hotkey, overwrite=True)
     viewer.bind_key('x', delete_point_under_mouse, overwrite=True)
     viewer.bind_key('c', delete_mask_under_mouse, overwrite=True)
+    viewer.bind_key('Shift-E', erase_at_cursor, overwrite=True)
 
     napari.run()
