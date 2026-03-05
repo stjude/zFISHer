@@ -311,7 +311,7 @@ def calculate_per_nucleus_counts(points_layers_data):
     return pivot
 
 
-def calculate_stats(per_nucleus_df):
+def calculate_stats(per_nucleus_df, total_nuclei=None):
     """
     Computes per-channel summary statistics from the per-nucleus counts table.
 
@@ -320,6 +320,9 @@ def calculate_stats(per_nucleus_df):
     per_nucleus_df : pd.DataFrame
         Pivot table from `calculate_per_nucleus_counts` with Nuclei_ID as first
         column and channel counts as remaining columns.
+    total_nuclei : int, optional
+        Actual number of nuclei in the consensus mask. If None, falls back to
+        counting unique IDs in the dataframe.
 
     Returns
     -------
@@ -331,13 +334,15 @@ def calculate_stats(per_nucleus_df):
         return pd.DataFrame()
 
     channels = [c for c in per_nucleus_df.columns if c != 'Nuclei_ID']
-    total_nuclei = int(per_nucleus_df['Nuclei_ID'].max())
+    if total_nuclei is None:
+        total_nuclei = int(per_nucleus_df['Nuclei_ID'].nunique())
 
     rows = []
     for ch in channels:
         # Extend counts to include nuclei with 0 puncta in this channel
         present = per_nucleus_df[ch].values
-        zeros = np.zeros(total_nuclei - len(present))
+        n_missing = max(total_nuclei - len(present), 0)
+        zeros = np.zeros(n_missing)
         all_counts = np.concatenate([present, zeros])
 
         raw_sum = int(all_counts.sum())
@@ -357,7 +362,7 @@ def calculate_stats(per_nucleus_df):
     return pd.DataFrame(rows)
 
 
-def calculate_distribution(per_nucleus_df):
+def calculate_distribution(per_nucleus_df, total_nuclei=None):
     """
     Bins nuclei by puncta count for each channel.
 
@@ -365,6 +370,9 @@ def calculate_distribution(per_nucleus_df):
     ----------
     per_nucleus_df : pd.DataFrame
         Pivot table from `calculate_per_nucleus_counts`.
+    total_nuclei : int, optional
+        Actual number of nuclei in the consensus mask. If None, falls back to
+        counting unique IDs in the dataframe.
 
     Returns
     -------
@@ -377,12 +385,13 @@ def calculate_distribution(per_nucleus_df):
         return pd.DataFrame()
 
     channels = [c for c in per_nucleus_df.columns if c != 'Nuclei_ID']
-    total_nuclei = int(per_nucleus_df['Nuclei_ID'].max())
+    if total_nuclei is None:
+        total_nuclei = int(per_nucleus_df['Nuclei_ID'].nunique())
 
     rows = []
     for ch in channels:
         present = per_nucleus_df[ch].values
-        zeros_count = total_nuclei - len(present)
+        zeros_count = max(total_nuclei - len(present), 0)
 
         n0 = int((present == 0).sum()) + zeros_count
         n1 = int((present == 1).sum())
@@ -406,7 +415,7 @@ def calculate_distribution(per_nucleus_df):
 # Orchestrator
 # =====================================================================
 
-def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, output_dir, tri_rules=None):
+def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, output_dir, tri_rules=None, total_nuclei=None):
     """
     Core Orchestrator for Step 7 & 8.
     Processes puncta distances and exports the master report.
@@ -432,8 +441,8 @@ def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, 
 
     # 4. Per-nucleus puncta counts + derived stats
     per_nucleus_df = calculate_per_nucleus_counts(layers_data)
-    stats_df = calculate_stats(per_nucleus_df)
-    distribution_df = calculate_distribution(per_nucleus_df)
+    stats_df = calculate_stats(per_nucleus_df, total_nuclei=total_nuclei)
+    distribution_df = calculate_distribution(per_nucleus_df, total_nuclei=total_nuclei)
 
     # 5. Export multi-sheet Excel report
     save_path = Path(output_dir) / filename

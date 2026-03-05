@@ -1,4 +1,5 @@
 import napari
+import numpy as np
 from pathlib import Path
 from magicgui import magicgui, widgets
 from magicgui.widgets import Container, Label, PushButton, LineEdit
@@ -165,6 +166,14 @@ def _on_export():
                 d['nucleus_ids'] = l.features['Nucleus_ID'].values
             points_data.append(d)
 
+        # Count actual nuclei from the consensus mask layer
+        total_nuclei = None
+        for l in viewer.layers:
+            if isinstance(l, napari.layers.Labels) and constants.CONSENSUS_MASKS_NAME in l.name:
+                unique_ids = np.unique(l.data)
+                total_nuclei = int((unique_ids > 0).sum())
+                break
+
         out_dir = Path(session.get_data("output_dir")) / constants.REPORTS_DIR
         out_dir.mkdir(exist_ok=True, parents=True)
 
@@ -175,7 +184,8 @@ def _on_export():
             filename=_filename.value,
             r1_path=session.get_data("r1_path"),
             r2_path=session.get_data("r2_path"),
-            output_dir=out_dir
+            output_dir=out_dir,
+            total_nuclei=total_nuclei
         )
 
         popups.show_info_popup(
