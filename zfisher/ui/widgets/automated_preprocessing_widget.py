@@ -97,12 +97,16 @@ def _automated_preprocessing_magic_widget(
         results = generate_global_canvas(
             r1_layers_data, r2_layers_data, shift, aligned_dir,
             apply_warp=True,
-            progress_callback=lambda p, t: dialog.update_progress(35 + int(p * 0.35), t)
+            progress_callback=lambda p, t: dialog.update_progress(35 + int(p * 0.30), t)
         )
         session.update_data("canvas_scale", voxels)
         r1_layers_data.clear(); r2_layers_data.clear(); gc.collect()
 
-        for layer_info in results:
+        n_results = max(len(results), 1)
+        for i, layer_info in enumerate(results):
+            pct = 65 + int(((i + 1) / n_results) * 5)
+            dialog.update_progress(pct, f"Loading layer: {layer_info['name']}...")
+
             layer_type = layer_info['type']
             meta = layer_info['meta']
             if layer_type == 'labels':

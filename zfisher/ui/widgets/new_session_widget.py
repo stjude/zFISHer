@@ -198,13 +198,21 @@ class NewSessionWidget(Container):
                     if not ch_path.exists():
                         ch_path = aligned_dir / f"Aligned_{rnd}_{ch}.tif"
                     if ch_path.exists():
-                        dialog.update_progress(70 + int((job_i / job_count) * 25), f"Detecting puncta: {rnd} {ch}...")
+                        job_base = 70 + int((job_i / job_count) * 25)
+                        job_span = max(int(25 / job_count), 1)
+                        dialog.update_progress(job_base, f"Detecting puncta: {rnd} {ch}...")
                         csv_out = seg_dir / f"{prefix_str}_{rnd}_{ch}{constants.PUNCTA_SUFFIX}.csv"
+                        puncta_layer_name = f"{prefix_str} {rnd} - {ch}{constants.PUNCTA_SUFFIX}"
                         puncta.process_puncta_detection(
                             image_data=tifffile.imread(ch_path),
                             mask_data=merged_mask,
+                            voxels=r1_sess.voxels,
                             params=puncta_params,
-                            output_path=csv_out
+                            output_path=csv_out,
+                            layer_name=puncta_layer_name,
+                            progress_callback=lambda p, t, _b=job_base, _s=job_span: dialog.update_progress(
+                                _b + int(p / 100 * _s), f"{rnd} {ch}: {t}"
+                            )
                         )
                     job_i += 1
 
@@ -216,8 +224,15 @@ class NewSessionWidget(Container):
 
             self._viewer.layers.clear()
 
+            def _stem_to_layer_name(stem):
+                """Convert file stems like 'Aligned_R1_FITC' to layer names like 'Aligned R1 - FITC'."""
+                parts = stem.split("_", 2)
+                if len(parts) >= 3:
+                    return f"{parts[0]} {parts[1]} - {parts[2]}"
+                return stem
+
             for tif_path in sorted(aligned_dir.glob("*.tif")):
-                name = tif_path.stem
+                name = _stem_to_layer_name(tif_path.stem)
                 data = tifffile.imread(tif_path)
                 if constants.MASKS_SUFFIX.lower() in name.lower():
                     lyr = self._viewer.add_labels(data, name=name, opacity=0.3, scale=voxels, visible=False)
@@ -246,7 +261,8 @@ class NewSessionWidget(Container):
                                                   ids_path, voxels, {'subtype': 'structured_ids'}, [0, 0, 0])
 
             for csv_path in sorted(seg_dir.glob(f"*{constants.PUNCTA_SUFFIX}.csv")):
-                viewer_helpers._load_points_layer(self._viewer, csv_path.stem, csv_path, voxels, {}, [0, 0, 0])
+                layer_name = _stem_to_layer_name(csv_path.stem)
+                viewer_helpers._load_points_layer(self._viewer, layer_name, csv_path, voxels, {'subtype': 'puncta_csv'}, [0, 0, 0])
 
             self._viewer.dims.axis_labels = ("z", "y", "x")
             self._viewer.reset_view()

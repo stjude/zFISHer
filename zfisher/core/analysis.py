@@ -221,15 +221,33 @@ def calculate_tri_colocalization(points_layers_data, tri_rules):
             candidates.sort(key=lambda x: x[0])
             _, best_anchor, best_ch_a, best_ch_a_dist, best_ch_b, best_ch_b_dist = candidates[0]
 
-            # Record hit
+            # Record hit with coordinates and nucleus ID
+            a_coord = anchor_world[best_anchor]
+            ca_coord = ch_a_world[best_ch_a]
+            cb_coord = ch_b_world[best_ch_b]
+
+            anchor_layer = layers_by_name[anchor_name]
+            nuc_ids = anchor_layer.get('nucleus_ids')
+            nuc_id = int(nuc_ids[best_anchor]) if nuc_ids is not None and best_anchor < len(nuc_ids) else None
+
             all_hits.append({
                 'Anchor_Layer': anchor_name,
                 'Anchor_ID': best_anchor,
+                'Nucleus_ID': nuc_id,
+                'Anchor_Z': a_coord[0],
+                'Anchor_Y': a_coord[1],
+                'Anchor_X': a_coord[2],
                 'Channel_A': ch_a_name,
                 'ChA_ID': best_ch_a,
+                'ChA_Z': ca_coord[0],
+                'ChA_Y': ca_coord[1],
+                'ChA_X': ca_coord[2],
                 'ChA_Distance_um': best_ch_a_dist,
                 'Channel_B': ch_b_name,
                 'ChB_ID': best_ch_b,
+                'ChB_Z': cb_coord[0],
+                'ChB_Y': cb_coord[1],
+                'ChB_X': cb_coord[2],
                 'ChB_Distance_um': best_ch_b_dist,
                 'Coloc_Threshold_um': thresh
             })

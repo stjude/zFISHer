@@ -158,22 +158,30 @@ def run_full_zfisher_pipeline(r1_path, r2_path, output_dir, progress_callback=No
             if not ch_path.exists():
                 ch_path = aligned_dir / f"Aligned_{rnd}_{ch}.tif"
             if ch_path.exists():
-                _update(
-                    70 + int((job_i / job_count) * 25),
-                    f"Detecting puncta: {rnd} {ch}..."
-                )
+                job_base = 70 + int((job_i / job_count) * 25)
+                job_span = max(int(25 / job_count), 1)
+                _update(job_base, f"Detecting puncta: {rnd} {ch}...")
                 csv_out = seg_dir / f"{prefix_str}_{rnd}_{ch}{constants.PUNCTA_SUFFIX}.csv"
+                puncta_layer_name = f"{prefix_str} {rnd} - {ch}{constants.PUNCTA_SUFFIX}"
                 puncta.process_puncta_detection(
                     image_data=tifffile.imread(ch_path),
                     mask_data=merged_mask,
+                    voxels=r1_sess.voxels,
                     params=puncta_params,
-                    output_path=csv_out
+                    output_path=csv_out,
+                    layer_name=puncta_layer_name,
+                    progress_callback=lambda p, t, _b=job_base, _s=job_span: _update(
+                        _b + int(p / 100 * _s), f"{rnd} {ch}: {t}"
+                    )
                 )
             job_i += 1
 
     # --- Cleanup ---
     del r1_sess, r2_sess, r1_dapi, r2_dapi, merged_mask
     gc.collect()
+
+    # Ensure the session JSON is fully written before exiting
+    session.save_session()
 
     _update(100, "Done.")
     logger.info("Pipeline complete for %s", output_dir)

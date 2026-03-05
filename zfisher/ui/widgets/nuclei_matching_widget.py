@@ -65,11 +65,15 @@ def _nuclei_matching_widget(
         
         # 4. Update the Viewer
         viewer_helpers.add_consensus_nuclei_to_viewer(
-            viewer, 
-            r1_mask_layer, 
-            merged_mask, 
+            viewer,
+            r1_mask_layer,
+            merged_mask,
             pts1
         )
+
+        # Hide the input mask layers so only the consensus is visible
+        r1_mask_layer.visible = False
+        r2_mask_layer.visible = False
         
         viewer.status = f"Matched {len(pts1) if pts1 else 0} nuclei using {method}."
         dialog.update_progress(100, "Done.")

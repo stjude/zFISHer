@@ -6,33 +6,41 @@ from skimage.morphology import white_tophat, disk
 from skimage import restoration 
 from .. import constants
 
-def calculate_spot_quality(image_data, coords, radius=2):
+def calculate_spot_quality(image_data, coords, radius=2, progress_callback=None,
+                           progress_range=(50, 70)):
     """
     Calculates Signal-to-Noise Ratio (SNR) and Intensity for each puncta.
     Essential for validating counts in crowded fields.
     """
     stats = []
-    # Ensure coords are within image bounds
     z_max, y_max, x_max = image_data.shape
-    
-    for coord in coords:
+    n_coords = len(coords)
+    pmin, pmax = progress_range
+    last_pct = -1
+
+    for i, coord in enumerate(coords):
         z, y, x = coord.astype(int)
-        # Clip to valid image bounds
         z = np.clip(z, 0, z_max - 1)
         y = np.clip(y, 0, y_max - 1)
         x = np.clip(x, 0, x_max - 1)
-        # Define local neighborhood for background estimation
         z_slice = image_data[z]
         y_min, y_max_p = max(0, y-radius), min(y_max, y+radius+1)
         x_min, x_max_p = max(0, x-radius), min(x_max, x+radius+1)
-        
+
         local_crop = z_slice[y_min:y_max_p, x_min:x_max_p]
-        
+
         peak_intensity = image_data[z, y, x]
         background = np.median(local_crop) if local_crop.size > 0 else 1.0
         snr = peak_intensity / background if background > 0 else 0
-        
+
         stats.append([peak_intensity, snr])
+
+        if progress_callback and n_coords > 0:
+            pct = pmin + int((i + 1) / n_coords * (pmax - pmin))
+            if pct != last_pct:
+                last_pct = pct
+                progress_callback(pct, f"Quality metrics: {i + 1}/{n_coords} spots...")
+
     return np.array(stats)
 
 def apply_deconvolution(image_data, iterations=10):
@@ -41,10 +49,21 @@ def apply_deconvolution(image_data, iterations=10):
     img_float = image_data.astype(np.float32)
     return restoration.richardson_lucy(img_float, psf, num_iter=iterations)
 
-def preprocess_white_tophat(image_data, radius=constants.PUNCTA_TOPHAT_RADIUS):
+def preprocess_white_tophat(image_data, radius=constants.PUNCTA_TOPHAT_RADIUS,
+                            progress_callback=None, progress_range=(25, 40)):
     """Applies slice-by-slice background subtraction."""
     selem = disk(radius)
-    processed_slices = [white_tophat(image_slice, selem) for image_slice in image_data]
+    n_slices = len(image_data)
+    pmin, pmax = progress_range
+    processed_slices = []
+    last_pct = -1
+    for i, image_slice in enumerate(image_data):
+        processed_slices.append(white_tophat(image_slice, selem))
+        if progress_callback and n_slices > 0:
+            pct = pmin + int((i + 1) / n_slices * (pmax - pmin))
+            if pct != last_pct:
+                last_pct = pct
+                progress_callback(pct, f"Background subtraction: slice {i + 1}/{n_slices}...")
     return np.stack(processed_slices, axis=0)
 
 def _detect_radial_symmetry(image_data, threshold_rel, sigma):
@@ -86,7 +105,8 @@ def detect_spots_3d(image_data, method="Local Maxima", progress_callback=None, *
         image_data = apply_deconvolution(image_data, iterations=kwargs.get('decon_iter', 10))
     if kwargs.get('use_tophat', False):
         if progress_callback: progress_callback(25, "Subtracting background (top-hat)...")
-        image_data = preprocess_white_tophat(image_data, radius=kwargs.get('tophat_radius', 10))
+        image_data = preprocess_white_tophat(image_data, radius=kwargs.get('tophat_radius', 10),
+                                             progress_callback=progress_callback, progress_range=(25, 40))
 
     if method == "Radial Symmetry":
         return _detect_radial_symmetry(image_data, kwargs.get('threshold_rel', 0.1), kwargs.get('sigma', 1.0))
@@ -101,7 +121,7 @@ def detect_spots_3d(image_data, method="Local Maxima", progress_callback=None, *
                                  kwargs.get('sigma', 1.0), z_scale=kwargs.get('z_scale', 1.0))
     return np.empty((0, 3))
 
-def process_puncta_detection(image_data, mask_data=None, voxels=None, params=None, output_path=None, progress_callback=None):
+def process_puncta_detection(image_data, mask_data=None, voxels=None, params=None, output_path=None, progress_callback=None, layer_name=None):
     """Orchestrates detection, quality mapping, and session persistence with CSV tags."""
     from . import session
     params = params or {}
@@ -109,14 +129,18 @@ def process_puncta_detection(image_data, mask_data=None, voxels=None, params=Non
     if 'z_scale' not in params and voxels is not None:
         params['z_scale'] = voxels[0] / voxels[2]
 
-    if progress_callback: progress_callback(5, "Detecting spots...")
+    method = params.get('method', 'Local Maxima')
+    if progress_callback: progress_callback(5, f"Detecting spots ({method})...")
     coords = detect_spots_3d(image_data, progress_callback=progress_callback, **params)
+    if progress_callback: progress_callback(45, f"Detection complete. Found {len(coords)} candidates.")
     if len(coords) == 0:
         if progress_callback: progress_callback(100, "No spots found.")
         return np.empty((0, 6))
 
     if progress_callback: progress_callback(50, f"Computing quality metrics for {len(coords)} spots...")
-    quality_metrics = calculate_spot_quality(image_data, coords)
+    quality_metrics = calculate_spot_quality(image_data, coords,
+                                             progress_callback=progress_callback,
+                                             progress_range=(50, 70))
 
     if progress_callback: progress_callback(70, "Assigning nucleus IDs...")
     # Clip coordinates to valid mask/image bounds before indexing
@@ -146,9 +170,10 @@ def process_puncta_detection(image_data, mask_data=None, voxels=None, params=Non
         header = "Z,Y,X,Nucleus_ID,Intensity,SNR"
         np.savetxt(output_path, final_data, delimiter=",", header=header, comments='')
 
-        # FIX: Pass format metadata so UI knows this is a text CSV, not a pickle
+        # Use explicit layer_name if provided, otherwise derive from file stem
+        session_key = layer_name if layer_name else Path(output_path).stem
         session.set_processed_file(
-            Path(output_path).stem,
+            session_key,
             str(output_path),
             "points",
             metadata={

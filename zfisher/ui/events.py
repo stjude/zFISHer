@@ -1,6 +1,7 @@
 import logging
 import napari
 import numpy as np
+import pandas as pd
 from pathlib import Path
 from qtpy.QtCore import QTimer
 from ..core import session
@@ -8,31 +9,68 @@ from .. import constants
 
 logger = logging.getLogger(__name__)
 
-# Track layers that already have listeners to prevent duplicate attachment
-_attached_listeners = set()
+# Track layers that already have listeners to prevent duplicate attachment.
+# Maps layer id -> {'layer': layer_ref, 'sync_data': callback, 'sync_color': callback}
+_attached_listeners = {}
 
 def attach_puncta_listener(layer, name):
     """Attaches listeners to a points layer for auto-saving and color syncing."""
     if id(layer) in _attached_listeners:
         return
-    _attached_listeners.add(id(layer))
+
     def sync_data(event=None):
         out_dir = session.get_data("output_dir")
         if out_dir:
-            seg_dir = Path(out_dir) / constants.SEGMENTATION_DIR
-            seg_dir.mkdir(exist_ok=True, parents=True)
-            puncta_path = seg_dir / f"{name}.npy"
-            np.save(puncta_path, layer.data)
-            session.set_processed_file(name, str(puncta_path), layer_type='points', metadata={'subtype': 'puncta'})
-            
+            reports_dir = Path(out_dir) / constants.REPORTS_DIR
+            reports_dir.mkdir(exist_ok=True, parents=True)
+            csv_path = reports_dir / f"{name}.csv"
+            try:
+                coords_df = pd.DataFrame(layer.data, columns=['Z', 'Y', 'X'])
+                features = layer.features.reset_index(drop=True) if hasattr(layer, 'features') and not layer.features.empty else pd.DataFrame()
+                full_df = pd.concat([features, coords_df], axis=1)
+                full_df.to_csv(csv_path, index=False)
+            except Exception:
+                # Fallback: save coordinates only
+                np.savetxt(csv_path, layer.data, delimiter=',', header='Z,Y,X', comments='')
+            session.set_processed_file(name, str(csv_path), layer_type='points', metadata={'subtype': 'puncta_csv'})
+
+    _sync_color_guard = {'active': False}
+
     def sync_color(event=None):
-        # Auto-update all points when layer color properties change
-        layer.face_color = layer.current_face_color
-
-
+        # Guard against re-entrant calls: setting face_color can re-emit
+        # current_face_color events, causing a feedback loop during 2D/3D
+        # mode transitions.
+        if _sync_color_guard['active']:
+            return
+        _sync_color_guard['active'] = True
+        try:
+            layer.face_color = layer.current_face_color
+        finally:
+            _sync_color_guard['active'] = False
 
     layer.events.data.connect(sync_data)
     layer.events.current_face_color.connect(sync_color)
+
+    _attached_listeners[id(layer)] = {
+        'layer': layer,
+        'sync_data': sync_data,
+        'sync_color': sync_color,
+    }
+
+
+def detach_puncta_listener(layer):
+    """Disconnects listeners previously attached to a points layer."""
+    info = _attached_listeners.pop(id(layer), None)
+    if info is None:
+        return
+    try:
+        layer.events.data.disconnect(info['sync_data'])
+    except (TypeError, RuntimeError):
+        pass
+    try:
+        layer.events.current_face_color.disconnect(info['sync_color'])
+    except (TypeError, RuntimeError):
+        pass
 
 def on_layer_inserted(event, widgets):
     """
@@ -109,7 +147,7 @@ def on_layer_removed(event, widgets):
     # Clean up stale session entry and listener tracking for removed points layers
     elif isinstance(layer, napari.layers.Points):
         session.remove_processed_file(layer.name)
-        _attached_listeners.discard(id(layer))
+        detach_puncta_listener(layer)
 
     def update_choices():
         for w in widgets.values():

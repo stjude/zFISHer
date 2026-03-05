@@ -1,4 +1,5 @@
 import napari
+from collections import deque
 from magicgui import magicgui, widgets
 import numpy as np
 import pandas as pd
@@ -8,6 +9,32 @@ from pathlib import Path
 from ...core import session
 from ..decorators import require_active_session
 from ... import constants
+
+
+class _PunctaUndoStack:
+    """Stores full snapshots of (data, features) — points data is small."""
+    def __init__(self, maxlen=10):
+        self._stack = deque(maxlen=maxlen)
+
+    def push(self, layer):
+        self._stack.append((layer.data.copy(), layer.features.copy()))
+
+    def undo(self, layer):
+        if not self._stack:
+            return False
+        data, features = self._stack.pop()
+        layer.data = data
+        layer.features = features
+        return True
+
+    def clear(self):
+        self._stack.clear()
+
+    def __len__(self):
+        return len(self._stack)
+
+
+_puncta_undo = _PunctaUndoStack()
 
 @magicgui(
     call_button="Delete Selected Points",
@@ -33,6 +60,7 @@ def _puncta_editor_widget(
         points_layer.out_of_slice = show_all_z
         points_layer.projection_mode = 'all' if show_all_z else 'none'
         if points_layer.mode == 'select' and len(points_layer.selected_data) > 0:
+            _puncta_undo.push(points_layer)
             points_layer.remove_selected()
 
 @magicgui(call_button="Save Puncta Changes")
@@ -94,8 +122,12 @@ _puncta_editor_widget.insert(1, pe_container)
 def delete_point_under_mouse(viewer):
     layer = _puncta_editor_widget.points_layer.value
     if not layer or not layer.visible: return
-    val = layer.get_value(viewer.cursor.position, view_direction=viewer.camera.view_direction, dims_displayed=list(viewer.dims.displayed), world=True)
+    try:
+        val = layer.get_value(viewer.cursor.position, view_direction=viewer.camera.view_direction, dims_displayed=list(viewer.dims.displayed), world=True)
+    except Exception:
+        return
     if val is not None:
+        _puncta_undo.push(layer)
         layer.selected_data = {val}; layer.remove_selected()
         viewer.status = f"Deleted spot {val}"
 
@@ -107,8 +139,20 @@ def register_editor_hotkeys(viewer):
     @viewer.bind_key('s', overwrite=True)
     def _select_mode(v): pe_select_chk.value = True
 
+_previous_editor_layer = [None]  # mutable container to allow closure mutation
+
 @_puncta_editor_widget.points_layer.changed.connect
 def _on_layer_change(new_layer):
+    # Remove fishing hook from the *previous* layer so callbacks don't accumulate
+    old_layer = _previous_editor_layer[0]
+    if old_layer is not None and old_layer is not new_layer:
+        try:
+            if fishing_hook_callback in old_layer.mouse_drag_callbacks:
+                old_layer.mouse_drag_callbacks.remove(fishing_hook_callback)
+        except (ValueError, RuntimeError):
+            pass
+    _previous_editor_layer[0] = new_layer
+
     if new_layer:
         # Prevent crash if layer has no points, causing mean to be NaN
         mean_val = np.mean(new_layer.size)
@@ -118,7 +162,7 @@ def _on_layer_change(new_layer):
             size = int(mean_val)
 
         _puncta_editor_widget.point_size.value = max(1, size)
-        
+
         if fishing_hook_callback not in new_layer.mouse_drag_callbacks:
             new_layer.mouse_drag_callbacks.append(fishing_hook_callback)
         oos_val = getattr(new_layer, 'out_of_slice_dist', getattr(new_layer, 'out_of_slice', True))
@@ -129,7 +173,12 @@ def _on_layer_change(new_layer):
 def calculate_fishing_hook(img_layer, data_pos, viewer, use_optimization=True, radius_um=0.1):
     """Calculates peak intensity using a data coordinate, not a world coordinate."""
     # 1. Get the camera direction (World Space)
-    view_direction = np.array(viewer.camera.view_direction)
+    try:
+        view_direction = np.array(viewer.camera.view_direction)
+        if view_direction is None or np.any(np.isnan(view_direction)):
+            return None
+    except Exception:
+        return None
     
     # 2. NEW: Convert the direction vector to Data Space (Pixels)
     data_view_dir = view_direction / img_layer.scale
@@ -204,10 +253,11 @@ def fishing_hook_callback(layer, event):
         yield
         
     if target_coord_data is not None:
+        _puncta_undo.push(layer)
         new_data = layer.data.copy()
-        
+
         search_data = new_data[:-1] if layer.mode == 'add' and len(new_data) > 0 else new_data
-        
+
         if len(search_data) > 0:
             dist, _ = cKDTree(search_data).query(target_coord_data, k=1)
             if dist < 1.5:
@@ -261,12 +311,28 @@ def fishing_hook_callback(layer, event):
         layer.refresh()
         viewer.status = f"Algorithmic Snap: ID {next_id}, Pixel {np.round(target_coord_data, 1)}"
 
+# --- Undo Button ---
+pe_undo_btn = widgets.PushButton(text="Undo")
+
+def _on_puncta_undo():
+    viewer = napari.current_viewer()
+    layer = _puncta_editor_widget.points_layer.value
+    if not layer:
+        viewer.status = "No points layer selected."
+        return
+    if _puncta_undo.undo(layer):
+        viewer.status = f"Undo ({len(_puncta_undo)} remaining)."
+    else:
+        viewer.status = "Nothing to undo."
+
+pe_undo_btn.clicked.connect(_on_puncta_undo)
+
 # --- UI Wrapper ---
 puncta_editor_widget = widgets.Container(labels=False)
 header = widgets.Label(value="Puncta Editor")
 header.native.setObjectName("widgetHeader")
 info = widgets.Label(value="<i>Advanced editing of puncta.</i>")
-puncta_editor_widget.extend([header, info, _puncta_editor_widget, _save_widget])
+puncta_editor_widget.extend([header, info, _puncta_editor_widget, pe_undo_btn, _save_widget])
 
 # Link the layer dropdowns
 _save_widget.layer.bind(_puncta_editor_widget.points_layer)

@@ -89,8 +89,25 @@ class ArrowDrawer:
 
     # ---- layer management ----
 
+    def _get_reference_transform(self):
+        """Get scale and translate from the first image layer, or defaults."""
+        ndim = self.viewer.dims.ndim
+        for layer in self.viewer.layers:
+            if isinstance(layer, napari.layers.Image):
+                return np.array(layer.scale), np.array(layer.translate)
+        return np.ones(ndim), np.zeros(ndim)
+
+    def _world_to_data(self, world_pos):
+        """Convert world coordinates to data coordinates using the reference layer transform."""
+        scale, translate = self._get_reference_transform()
+        return (np.array(world_pos) - translate) / scale
+
     def _get_or_create_layer(self):
         if self.arrows_layer and self.arrows_layer.name in self.viewer.layers:
+            # Keep scale/translate in sync with image layers
+            scale, translate = self._get_reference_transform()
+            self.arrows_layer.scale = scale
+            self.arrows_layer.translate = translate
             return self.arrows_layer
 
         for layer in self.viewer.layers:
@@ -99,6 +116,9 @@ class ArrowDrawer:
             if isinstance(layer, napari.layers.Vectors):
                 self.arrows_layer = layer
                 self._sync_endpoints_from_session()
+                scale, translate = self._get_reference_transform()
+                self.arrows_layer.scale = scale
+                self.arrows_layer.translate = translate
                 return layer
             # Old Shapes-based arrows: convert
             if isinstance(layer, napari.layers.Shapes):
@@ -108,9 +128,11 @@ class ArrowDrawer:
 
         ndim = self.viewer.dims.ndim
         empty = np.empty((0, 2, ndim))
+        scale, translate = self._get_reference_transform()
         self.arrows_layer = self.viewer.add_vectors(
             empty, name="Arrows", edge_color='white',
             edge_width=2, opacity=1.0,
+            scale=scale, translate=translate,
         )
         if self._arrow_endpoints:
             self._refresh_layer()
@@ -180,19 +202,19 @@ class ArrowDrawer:
             return
 
         # --- press ---
-        self.start_pos = np.array(event.position)
+        self.start_pos = self._world_to_data(event.position)
         self._refresh_layer(preview_end=self.start_pos)
         self.viewer.status = "Release mouse to finish arrow."
         yield
 
         # --- move ---
         while event.type == 'mouse_move':
-            cursor = np.array(event.position)
+            cursor = self._world_to_data(event.position)
             self._refresh_layer(preview_end=cursor)
             yield
 
         # --- release ---
-        cursor = np.array(event.position)
+        cursor = self._world_to_data(event.position)
         if np.linalg.norm(cursor - self.start_pos) > 1e-3:
             self._arrow_endpoints.append((self.start_pos.copy(), cursor.copy()))
             self.viewer.status = "Arrow drawn."

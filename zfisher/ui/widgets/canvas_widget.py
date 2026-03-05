@@ -69,37 +69,41 @@ def _canvas_widget(
 
     # 5. Execute Core Orchestration with UI Progress Feedback
     with popups.ProgressDialog(viewer.window._qt_window, title="Generating Global Canvas") as dialog:
-        
-        # Call the core logic. Note: No more 'yield' here; we use a callback.
+
+        # Core computation uses 0-85%, layer loading uses 85-100%
         results = registration.generate_global_canvas(
-            r1_layers_data, 
-            r2_layers_data, 
-            shift, 
-            output_dir, 
+            r1_layers_data,
+            r2_layers_data,
+            shift,
+            output_dir,
             apply_warp=apply_warp,
-            progress_callback=lambda p, m: dialog.update_progress(p, m)
+            progress_callback=lambda p, m: dialog.update_progress(int(p * 0.85), m)
         )
 
         # 6. Add resulting layers back to napari
-        for layer_info in results:
+        n_results = max(len(results), 1)
+        for i, layer_info in enumerate(results):
+            pct = 85 + int(((i + 1) / n_results) * 15)
+            dialog.update_progress(pct, f"Loading layer: {layer_info['name']}...")
+
             layer_type = layer_info['type']
             meta = layer_info['meta']
-            
+
             if layer_type == 'labels':
                 layer = viewer.add_labels(
-                    layer_info['data'], 
-                    name=layer_info['name'], 
-                    scale=meta['scale'], 
+                    layer_info['data'],
+                    name=layer_info['name'],
+                    scale=meta['scale'],
                     opacity=0.6
                 )
                 # Use iso_categorical for better 3D rendering of masks alongside points
                 layer.rendering = 'iso_categorical'
             elif layer_type == 'image':
                 viewer.add_image(
-                    layer_info['data'], 
-                    name=layer_info['name'], 
+                    layer_info['data'],
+                    name=layer_info['name'],
                     colormap=meta.get('colormap', 'gray'),
-                    scale=meta['scale'], 
+                    scale=meta['scale'],
                     blending=meta.get('blending', 'additive'),
                     opacity=meta.get('opacity', 1.0)
                 )

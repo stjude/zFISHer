@@ -1,13 +1,5 @@
 import napari
 from pathlib import Path
-from magicgui import magicgui
-from ...core import session, puncta
-from .. import popups, viewer_helpers
-from ..decorators import require_active_session, error_handler
-from ... import constants
-
-import napari
-from pathlib import Path
 from magicgui import magicgui, widgets
 from ...core import session, puncta
 from .. import popups, viewer_helpers
@@ -87,21 +79,71 @@ def _puncta_widget(
 
 # --- Automated UI Event Listeners ---
 
+_METHOD_INFO = {
+    "Local Maxima": {
+        "params": {"min_distance": True,  "z_scale": False, "sigma": True},
+        "desc": (
+            "<b>Local Maxima</b> — Finds intensity peaks separated by a minimum distance. "
+            "Fast and intuitive. Best for well-separated, bright puncta with low background. "
+            "Struggles with crowded fields where spots overlap. "
+            "Use <i>Sigma</i> to pre-blur noisy images before peak finding."
+        ),
+    },
+    "Laplacian of Gaussian": {
+        "params": {"min_distance": False, "z_scale": True,  "sigma": True},
+        "desc": (
+            "<b>Laplacian of Gaussian (LoG)</b> — Scale-space blob detector that matches "
+            "spot size to a Gaussian kernel. Accurate for varying spot sizes and handles "
+            "anisotropic Z-spacing well. Slower than other methods, especially on large volumes. "
+            "Best when spots vary in size or Z-resolution differs from XY."
+        ),
+    },
+    "Difference of Gaussian": {
+        "params": {"min_distance": False, "z_scale": True,  "sigma": True},
+        "desc": (
+            "<b>Difference of Gaussian (DoG)</b> — Approximates LoG using bandpass filtering. "
+            "Nearly as accurate as LoG but significantly faster. Good default for most FISH data. "
+            "Handles anisotropic Z well. Slightly less precise than LoG for spots with highly "
+            "variable sizes."
+        ),
+    },
+    "Radial Symmetry": {
+        "params": {"min_distance": False, "z_scale": False, "sigma": False},
+        "desc": (
+            "<b>Radial Symmetry</b> — Finds all local maxima with minimal filtering "
+            "(min distance = 1px). Designed for high-density transcript fields where spots "
+            "are tightly packed. Very sensitive — will detect faint spots others miss, but may "
+            "over-count in noisy images. Pair with <i>Deconvolve</i> or <i>Top-hat</i> to reduce false positives."
+        ),
+    },
+}
+
+_method_desc_label = widgets.Label(value="")
+# Insert description label right after the method dropdown
+_puncta_widget.insert(_puncta_widget.index(_puncta_widget.method) + 1, _method_desc_label)
+
+def _update_method_ui(method: str):
+    info = _METHOD_INFO.get(method, {})
+    for param_name, visible in info.get("params", {}).items():
+        getattr(_puncta_widget, param_name).visible = visible
+    _method_desc_label.value = info.get("desc", "")
+
+@_puncta_widget.method.changed.connect
+def _on_method_change(method: str):
+    _update_method_ui(method)
+
+# Set initial state
+_update_method_ui(_puncta_widget.method.value)
+
 @_puncta_widget.image_layer.changed.connect
 def _on_image_change(new_layer: "napari.layers.Image"):
     """
     Automatically detects voxel metadata and sets the Z-Anisotropy slider.
-    This ensures the 'Algorithmic' Hub is pre-configured for your specific .nd2 files.
     """
     if new_layer is not None:
-        # napari scale is (z, y, x)
         scale = getattr(new_layer, 'scale', (1, 1, 1))
-        
-        # Calculate dz/dx ratio
         if len(scale) == 3 and scale[2] != 0:
             auto_z_scale = scale[0] / scale[2]
-            
-            # Update the slider value in the UI
             _puncta_widget.z_scale.value = round(float(auto_z_scale), 2)
             napari.current_viewer().status = f"Auto-configured Z-Anisotropy: {round(auto_z_scale, 2)}"
 
