@@ -4,9 +4,7 @@ from magicgui import magicgui, widgets
 import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
-from pathlib import Path
 
-from ...core import session
 from ..decorators import require_active_session
 from ... import constants
 
@@ -39,8 +37,6 @@ _puncta_undo = _PunctaUndoStack()
 @magicgui(
     call_button="Delete Selected Points",
     points_layer={"label": "Layer to Edit"},
-    point_size={"label": "Display Size", "min": 0, "max": 20, "value": 3},
-    show_all_z={"label": "Project All Z (Out of Slice)"},
     fishing_hook={"label": "Enable Fishing Hook", "value": True},
     volume_optimization={"label": "Volume Optimization", "value": True},
     opt_radius={"label": "Opt. Radius (um)", "value": "0.1"}
@@ -48,75 +44,16 @@ _puncta_undo = _PunctaUndoStack()
 @require_active_session()
 def _puncta_editor_widget(
     points_layer: "napari.layers.Points",
-    point_size: int = 3,
-    show_all_z: bool = True,
     fishing_hook: bool = True,
     volume_optimization: bool = True,
     opt_radius: str = "0.1"
 ):
     """Enhanced editor for high-density puncta curation."""
     if points_layer:
-        points_layer.size = point_size
-        points_layer.out_of_slice = show_all_z
-        points_layer.projection_mode = 'all' if show_all_z else 'none'
         if points_layer.mode == 'select' and len(points_layer.selected_data) > 0:
             _puncta_undo.push(points_layer)
             points_layer.remove_selected()
 
-@magicgui(call_button="Save Puncta Changes")
-@require_active_session()
-def _save_widget(layer: "napari.layers.Points"):
-    if not layer:
-        print("No points layer selected to save.")
-        return
-
-    viewer = napari.current_viewer()
-    out_dir = session.get_data("output_dir")
-    if not out_dir:
-        print("No output directory set. Cannot save.")
-        return
-    
-    try:
-        # Combine coordinates and features for saving
-        coords_df = pd.DataFrame(layer.data, columns=['Z', 'Y', 'X'])
-        full_df_to_save = pd.concat([layer.features.reset_index(drop=True), coords_df.reset_index(drop=True)], axis=1)
-
-        # Define path and save
-        reports_dir = Path(out_dir) / constants.REPORTS_DIR
-        reports_dir.mkdir(exist_ok=True)
-        csv_path = reports_dir / f"{layer.name}.csv"
-        
-        full_df_to_save.to_csv(csv_path, index=False)
-        
-        # Update session file to point to this new CSV
-        session.set_processed_file(layer.name, str(csv_path), layer_type='points', metadata={'subtype': 'puncta_csv'})
-        
-        viewer.status = f"Saved {len(full_df_to_save)} puncta for '{layer.name}' to {csv_path.name}"
-        print(f"Saved puncta changes for layer '{layer.name}'")
-
-    except Exception as e:
-        print(f"Error saving puncta layer '{layer.name}': {e}")
-        viewer.status = f"Error saving '{layer.name}': {e}"
-
-# --- UI Connections ---
-@_puncta_editor_widget.point_size.changed.connect
-def _on_size_change(value):
-    if _puncta_editor_widget.points_layer.value: _puncta_editor_widget.points_layer.value.size = value
-
-@_puncta_editor_widget.show_all_z.changed.connect
-def _on_projection_change(value):
-    layer = _puncta_editor_widget.points_layer.value
-    if layer:
-        layer.out_of_slice = value
-        layer.projection_mode = 'all' if value else 'none'
-
-# --- Toolbar Construction ---
-pe_lbl = widgets.Label(value="<b>Editing Hub:</b>")
-pe_container = widgets.Container(layout="horizontal", labels=False)
-pe_add_chk, pe_select_chk, pe_pan_btn = widgets.CheckBox(text="Add (A)"), widgets.CheckBox(text="Select (S)"), widgets.PushButton(text="Pan/Zoom (Z)")
-pe_container.extend([pe_add_chk, pe_select_chk, pe_pan_btn])
-_puncta_editor_widget.insert(0, pe_lbl)
-_puncta_editor_widget.insert(1, pe_container)
 
 # --- Mouse & Hotkey Logic ---
 def delete_point_under_mouse(viewer):
@@ -134,10 +71,6 @@ def delete_point_under_mouse(viewer):
 def register_editor_hotkeys(viewer):
     @viewer.bind_key('x', overwrite=True)
     def _delete_hotkey(v): delete_point_under_mouse(v)
-    @viewer.bind_key('a', overwrite=True)
-    def _add_mode(v): pe_add_chk.value = True
-    @viewer.bind_key('s', overwrite=True)
-    def _select_mode(v): pe_select_chk.value = True
 
 _previous_editor_layer = [None]  # mutable container to allow closure mutation
 
@@ -154,19 +87,8 @@ def _on_layer_change(new_layer):
     _previous_editor_layer[0] = new_layer
 
     if new_layer:
-        # Prevent crash if layer has no points, causing mean to be NaN
-        mean_val = np.mean(new_layer.size)
-        if np.isnan(mean_val):
-            size = 3 # Default size for empty layers
-        else:
-            size = int(mean_val)
-
-        _puncta_editor_widget.point_size.value = max(1, size)
-
         if fishing_hook_callback not in new_layer.mouse_drag_callbacks:
             new_layer.mouse_drag_callbacks.append(fishing_hook_callback)
-        oos_val = getattr(new_layer, 'out_of_slice_dist', getattr(new_layer, 'out_of_slice', True))
-        _puncta_editor_widget.show_all_z.value = bool(oos_val)
 
 # --- 1. Algorithmic Math (Operates strictly on Pixel Arrays) ---
 # --- 1. Algorithmic Math (Operates strictly on Pixel Arrays) ---
@@ -328,11 +250,45 @@ def _on_puncta_undo():
 pe_undo_btn.clicked.connect(_on_puncta_undo)
 
 # --- UI Wrapper ---
+from qtpy.QtWidgets import QFrame
+from ..style import COLORS
+
+def _make_divider():
+    line = QFrame()
+    line.setFixedHeight(2)
+    line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
+    return line
+
 puncta_editor_widget = widgets.Container(labels=False)
 header = widgets.Label(value="Puncta Editor")
 header.native.setObjectName("widgetHeader")
 info = widgets.Label(value="<i>Advanced editing of puncta.</i>")
-puncta_editor_widget.extend([header, info, _puncta_editor_widget, pe_undo_btn, _save_widget])
+info.native.setObjectName("widgetInfo")
 
-# Link the layer dropdowns
-_save_widget.layer.bind(_puncta_editor_widget.points_layer)
+# Insert section headers/dividers into the magicgui form's internal layout
+# Widget order: points_layer(0), fishing_hook(1), volume_opt(2), opt_radius(3), call_button(4)
+_inner = _puncta_editor_widget.native.layout()
+_fishing_hook_header = widgets.Label(value="<b>Fishing Hook:</b>")
+from qtpy.QtWidgets import QLabel
+_fishing_hook_desc = QLabel(
+    "<i>Shift+Click to place a punctum. The algorithm casts a ray through "
+    "the volume along your viewing angle, finds the brightest voxel, then "
+    "refines to the local intensity peak. Ideal for accurate placement in 3D.</i>"
+)
+_fishing_hook_desc.setWordWrap(True)
+_erase_header = widgets.Label(value="<b>Erase:</b>")
+# Insert before fishing_hook (index 1) — pushes everything after it down
+_inner.insertWidget(1, _make_divider())
+_inner.insertWidget(2, _fishing_hook_header.native)
+_inner.insertWidget(3, _fishing_hook_desc)
+# call_button is now at index 7 (was 4, +3 from divider/header/desc inserts)
+_inner.insertWidget(7, _make_divider())
+_inner.insertWidget(8, _erase_header.native)
+
+# Outer layout: add the whole form as one block (preserves tight magicgui spacing)
+_layout = puncta_editor_widget.native.layout()
+_layout.addWidget(header.native)
+_layout.addWidget(info.native)
+_layout.addWidget(_make_divider())
+_layout.addWidget(_puncta_editor_widget.native)
+_layout.addWidget(pe_undo_btn.native)

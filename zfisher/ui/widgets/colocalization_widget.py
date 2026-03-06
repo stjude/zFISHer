@@ -16,7 +16,7 @@ def _make_divider():
     """Create a horizontal line divider using a native Qt QFrame."""
     line = QFrame()
     line.setFixedHeight(2)
-    line.setStyleSheet("background-color: #555; border: none; margin: 8px 0px;")
+    line.setStyleSheet("background-color: #7a6b8a; border: none; margin: 8px 0px;")
     return line
 
 
@@ -229,6 +229,7 @@ colocalization_widget = Container(labels=False)
 header = Label(value="Colocalization Analysis")
 header.native.setObjectName("widgetHeader")
 info = Label(value="<i>Define distance rules between puncta channels, then export a report.</i>")
+info.native.setObjectName("widgetInfo")
 
 # Build layout using native layout to keep dividers in correct order
 _pairwise_header = Label(value="<b>Pairwise Colocalization:</b>")
@@ -240,6 +241,7 @@ _export_header = Label(value="<b>Export:</b>")
 _layout = colocalization_widget.native.layout()
 _layout.addWidget(header.native)
 _layout.addWidget(info.native)
+_layout.addWidget(_make_divider())
 # --- Pairwise Colocalization ---
 _layout.addWidget(_pairwise_header.native)
 _layout.addWidget(_rule_builder.native)

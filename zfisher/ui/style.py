@@ -13,7 +13,7 @@ COLORS = {
     'toolbox_tab_selected_bg': '#352c42',
     'nested_toolbox_tab_bg': '#2c2538',
     'nested_toolbox_tab_selected_bg': '#4d4464',
-    'separator_color': '#555',
+    'separator_color': '#7a6b8a',
 }
 
 # Napari theme
@@ -44,6 +44,13 @@ TOOLBOX_STYLESHEET = f"""
     QToolBox::tab:selected {{
         background: {COLORS['toolbox_tab_selected_bg']};
         border: 1px solid {COLORS['primary']};
+    }}
+    QLabel#widgetHeader {{
+        color: {COLORS['primary']};
+        font-weight: bold;
+    }}
+    QLabel#widgetInfo {{
+        color: {COLORS['primary']};
     }}
 """
 

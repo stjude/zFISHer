@@ -12,6 +12,7 @@ from .. import popups, viewer_helpers
 from ..decorators import require_active_session
 from ...core import segmentation
 from ... import constants
+from ._shared import make_header_divider
 
 
 class _MaskUndoStack:
@@ -245,7 +246,7 @@ def _make_divider():
     """Create a horizontal line divider using a native Qt QFrame."""
     line = QFrame()
     line.setFixedHeight(2)
-    line.setStyleSheet("background-color: #555; border: none; margin: 8px 0px;")
+    line.setStyleSheet("background-color: #7a6b8a; border: none; margin: 8px 0px;")
     return line
 
 def _make_section_header(text):
@@ -518,4 +519,5 @@ mask_editor_widget = widgets.Container(labels=False)
 header = widgets.Label(value="Mask Editor")
 header.native.setObjectName("widgetHeader")
 info = widgets.Label(value="<i>Manual editing of segmentation masks.</i>")
-mask_editor_widget.extend([header, info, _mask_editor_widget])
+info.native.setObjectName("widgetInfo")
+mask_editor_widget.extend([header, info, make_header_divider(), _mask_editor_widget])

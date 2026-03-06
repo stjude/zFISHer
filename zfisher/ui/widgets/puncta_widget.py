@@ -5,6 +5,7 @@ from ...core import session, puncta
 from .. import popups, viewer_helpers
 from ..decorators import require_active_session, error_handler
 from ... import constants
+from ._shared import make_header_divider
 
 @magicgui(
     call_button="Detect Puncta",
@@ -83,7 +84,7 @@ _METHOD_INFO = {
     "Local Maxima": {
         "params": {"min_distance": True,  "z_scale": False, "sigma": True},
         "desc": (
-            "<b>Local Maxima</b> — Finds intensity peaks separated by a minimum distance. "
+            "Finds intensity peaks separated by a minimum distance. "
             "Fast and intuitive. Best for well-separated, bright puncta with low background. "
             "Struggles with crowded fields where spots overlap. "
             "Use <i>Sigma</i> to pre-blur noisy images before peak finding."
@@ -92,7 +93,7 @@ _METHOD_INFO = {
     "Laplacian of Gaussian": {
         "params": {"min_distance": False, "z_scale": True,  "sigma": True},
         "desc": (
-            "<b>Laplacian of Gaussian (LoG)</b> — Scale-space blob detector that matches "
+            "Scale-space blob detector that matches "
             "spot size to a Gaussian kernel. Accurate for varying spot sizes and handles "
             "anisotropic Z-spacing well. Slower than other methods, especially on large volumes. "
             "Best when spots vary in size or Z-resolution differs from XY."
@@ -101,7 +102,7 @@ _METHOD_INFO = {
     "Difference of Gaussian": {
         "params": {"min_distance": False, "z_scale": True,  "sigma": True},
         "desc": (
-            "<b>Difference of Gaussian (DoG)</b> — Approximates LoG using bandpass filtering. "
+            "Approximates LoG using bandpass filtering. "
             "Nearly as accurate as LoG but significantly faster. Good default for most FISH data. "
             "Handles anisotropic Z well. Slightly less precise than LoG for spots with highly "
             "variable sizes."
@@ -110,7 +111,7 @@ _METHOD_INFO = {
     "Radial Symmetry": {
         "params": {"min_distance": False, "z_scale": False, "sigma": False},
         "desc": (
-            "<b>Radial Symmetry</b> — Finds all local maxima with minimal filtering "
+            "Finds all local maxima with minimal filtering "
             "(min distance = 1px). Designed for high-density transcript fields where spots "
             "are tightly packed. Very sensitive — will detect faint spots others miss, but may "
             "over-count in noisy images. Pair with <i>Deconvolve</i> or <i>Top-hat</i> to reduce false positives."
@@ -118,25 +119,15 @@ _METHOD_INFO = {
     },
 }
 
-_method_desc_label = widgets.Label(value="")
-_method_desc_label.native.setWordWrap(True)
-# Insert description label right after the method dropdown
-_puncta_widget.insert(_puncta_widget.index(_puncta_widget.method) + 1, _method_desc_label)
-# Make the description span both columns (label + widget) in the grid layout
-_layout = _puncta_widget.native.layout()
-_desc_idx = _layout.indexOf(_method_desc_label.native)
-if _desc_idx >= 0:
-    _row, _role, _rs, _cs = _layout.getItemPosition(_desc_idx)
-    _layout.removeWidget(_method_desc_label.native)
-    _layout.addWidget(_method_desc_label.native, _row, 0, 1, 2)
-# Constrain the entire widget to prevent the description from stretching the layout
-_puncta_widget.native.setMaximumWidth(350)
+from qtpy.QtWidgets import QLabel
+_method_desc_qlabel = QLabel("")
+_method_desc_qlabel.setWordWrap(True)
 
 def _update_method_ui(method: str):
     info = _METHOD_INFO.get(method, {})
     for param_name, visible in info.get("params", {}).items():
         getattr(_puncta_widget, param_name).visible = visible
-    _method_desc_label.value = info.get("desc", "")
+    _method_desc_qlabel.setText(f"<b>{method}</b><br>{info.get('desc', '')}")
 
 @_puncta_widget.method.changed.connect
 def _on_method_change(method: str):
@@ -157,9 +148,53 @@ def _on_image_change(new_layer: "napari.layers.Image"):
             _puncta_widget.z_scale.value = round(float(auto_z_scale), 2)
             napari.current_viewer().status = f"Auto-configured Z-Anisotropy: {round(auto_z_scale, 2)}"
 
-# --- UI Wrapper ---
+# --- UI Wrapper (native layout like colocalization_widget) ---
+from qtpy.QtWidgets import QFrame
+from ..style import COLORS
+
+def _make_divider():
+    line = QFrame()
+    line.setFixedHeight(2)
+    line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
+    return line
+
 puncta_widget = widgets.Container(labels=False)
 header = widgets.Label(value="Puncta Detection")
 header.native.setObjectName("widgetHeader")
 info = widgets.Label(value="<i>Algorithmic detection of puncta.</i>")
-puncta_widget.extend([header, info, _puncta_widget])
+info.native.setObjectName("widgetInfo")
+
+# Insert section headers into the magicgui form's internal layout
+# Original order: image_layer(0), nuclei_layer(1), nuclei_only(2), method(3),
+#   use_decon(4), decon_iter(5), threshold(6), min_distance(7), sigma(8), z_scale(9),
+#   use_tophat(10), tophat_radius(11), call_button(12)
+_inner = _puncta_widget.native.layout()
+
+# "Algorithm" header + description after nuclei_only (index 3 -> before method)
+_algo_header = widgets.Label(value="<b>Algorithm:</b>")
+_inner.insertWidget(3, _make_divider())
+_inner.insertWidget(4, _algo_header.native)
+# method is now at 5, description after it at 6
+_inner.insertWidget(6, _method_desc_qlabel)
+
+# "Preprocessing" header before use_decon (was 4, now shifted to 7)
+_preproc_header = widgets.Label(value="<b>Preprocessing:</b>")
+_inner.insertWidget(7, _make_divider())
+_inner.insertWidget(8, _preproc_header.native)
+
+# "Detection Parameters" header before threshold (was 6, now shifted to 11)
+_params_header = widgets.Label(value="<b>Detection Parameters:</b>")
+_inner.insertWidget(11, _make_divider())
+_inner.insertWidget(12, _params_header.native)
+
+# "Background Subtraction" header before use_tophat (was 10, now shifted to 17)
+_bg_header = widgets.Label(value="<b>Background Subtraction:</b>")
+_inner.insertWidget(17, _make_divider())
+_inner.insertWidget(18, _bg_header.native)
+
+# Outer layout: whole form as one block
+_layout = puncta_widget.native.layout()
+_layout.addWidget(header.native)
+_layout.addWidget(info.native)
+_layout.addWidget(_make_divider())
+_layout.addWidget(_puncta_widget.native)

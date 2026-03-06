@@ -271,11 +271,18 @@ def match_nuclei_labels(mask1, mask2, threshold=20, progress_callback=None):
     if progress_callback: progress_callback(30, "Finding nearest neighbors...")
     tree = cKDTree(c1)
     dists, idxs = tree.query(c2)
-    
+
+    # Auto-determine threshold from the distance distribution if not explicitly set
+    if threshold is None or threshold <= 0:
+        median_dist = np.median(dists[np.isfinite(dists)])
+        mad = np.median(np.abs(dists[np.isfinite(dists)] - median_dist))
+        threshold = median_dist + 3 * max(mad, 1.0)
+        if progress_callback: progress_callback(40, f"Auto threshold: {threshold:.1f} px")
+
     if progress_callback: progress_callback(50, "Creating ID map...")
     mapping = {}
     next_id = np.max(l1) + 1
-    
+
     for i, (d, idx) in enumerate(zip(dists, idxs)):
         old_label = l2[i]
         if d < threshold:

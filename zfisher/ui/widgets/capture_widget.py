@@ -455,29 +455,18 @@ def region_capture_with_hotkey(viewer: napari.Viewer):
 
 
 # --- Widget Setup ---
-# Add hotkey information and initialize filename
-hotkey_container = widgets.Container(layout="horizontal", labels=False)
-hotkey_container.append(widgets.Label(value="Shift+P: Capture  |  Ctrl+A: Region Capture"))
-_capture_widget.insert(0, hotkey_container)
-
 initial_filename = _get_next_filename()
 _capture_widget.output_filename.value = initial_filename if initial_filename else "capture1.png"
 
-# Add Arrow drawing tool
-arrow_container = widgets.Container(layout="horizontal", labels=False)
+# Arrow drawing checkbox
 arrow_chk = widgets.CheckBox(text="Draw Arrows")
-arrow_container.append(arrow_chk)
-_capture_widget.append(arrow_container)
 
-# Add Scale Bar Options
-sb_container = widgets.Container(layout="horizontal", labels=False)
-sb_label = widgets.Label(value="<b>Scalebar:</b>")
+# Scale Bar Options
 sb_visible = widgets.CheckBox(text="Visible", value=True)
 sb_lock = widgets.CheckBox(text="Lock")
 sb_pixels = widgets.CheckBox(text="Show Pixels")
-
-sb_container.extend([sb_label, sb_visible, sb_lock, sb_pixels])
-_capture_widget.append(sb_container)
+sb_container = widgets.Container(layout="horizontal", labels=False)
+sb_container.extend([sb_visible, sb_lock, sb_pixels])
 
 @sb_visible.changed.connect
 def _on_sb_visible(state: bool):
@@ -525,8 +514,40 @@ def _on_arrow_draw_toggled(state: bool):
     arrow_drawer.set_active(state)
 
 # --- UI Wrapper ---
+from qtpy.QtWidgets import QFrame
+from ..style import COLORS
+
+def _make_divider():
+    line = QFrame()
+    line.setFixedHeight(2)
+    line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
+    return line
+
 capture_widget = widgets.Container(labels=False)
 header = widgets.Label(value="Capture & Annotate")
 header.native.setObjectName("widgetHeader")
 info = widgets.Label(value="<i>Save screenshots and draw annotations.</i>")
-capture_widget.extend([header, info, _capture_widget])
+info.native.setObjectName("widgetInfo")
+_hotkey_label = widgets.Label(value="<i>Shift+P: Capture  |  Ctrl+A: Region Capture</i>")
+
+_capture_header = widgets.Label(value="<b>Capture:</b>")
+_arrow_header = widgets.Label(value="<b>Annotations:</b>")
+_sb_header = widgets.Label(value="<b>Scale Bar:</b>")
+
+_layout = capture_widget.native.layout()
+_layout.addWidget(header.native)
+_layout.addWidget(info.native)
+_layout.addWidget(_make_divider())
+# --- Capture ---
+_layout.addWidget(_capture_header.native)
+_layout.addWidget(_hotkey_label.native)
+_layout.addWidget(_capture_widget.output_filename.native)
+_layout.addWidget(_capture_widget.call_button.native)
+# --- Annotations ---
+_layout.addWidget(_make_divider())
+_layout.addWidget(_arrow_header.native)
+_layout.addWidget(arrow_chk.native)
+# --- Scale Bar ---
+_layout.addWidget(_make_divider())
+_layout.addWidget(_sb_header.native)
+_layout.addWidget(sb_container.native)

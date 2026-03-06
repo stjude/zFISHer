@@ -282,8 +282,11 @@ def launch_zfisher():
     if not ico_path.exists() and png_path.exists():
         try:
             from PIL import Image
-            img = Image.open(png_path)
-            img.save(ico_path, format="ICO", sizes=[(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)])
+            img = Image.open(png_path).convert('RGBA')
+            ico_sizes = [16, 32, 48, 64, 128, 256]
+            icons = [img.resize((s, s), Image.LANCZOS) for s in ico_sizes]
+            icons[0].save(ico_path, format='ICO', append_images=icons[1:],
+                          sizes=[(s, s) for s in ico_sizes])
         except Exception:
             ico_path = png_path
     icon_file = ico_path if ico_path.exists() else png_path
@@ -293,22 +296,34 @@ def launch_zfisher():
     # --- 2. Create Viewer ---
     viewer = napari.Viewer(title="zFISHer - 3D Colocalization", ndisplay=2)
 
-    # Re-apply to the napari QMainWindow directly
-    if not icon.isNull():
-        viewer.window._qt_window.setWindowIcon(icon)
-
-    # Force icon onto the Win32 window handle (bypasses Qt for taskbar)
-    if icon_file.exists() and str(icon_file).lower().endswith('.ico'):
+    # Apply icon — deferred so it runs after napari finishes its own window setup
+    def _apply_icon():
+        if icon.isNull():
+            return
+        qt_win = viewer.window._qt_window
+        qt_win.setWindowIcon(icon)
+        # Force icon onto the Win32 window handle (bypasses Qt for taskbar/title bar)
         try:
             import ctypes
             ICON_SMALL, ICON_BIG, WM_SETICON = 0, 1, 0x80
-            LR_LOADFROMFILE = 0x10
-            hwnd = int(viewer.window._qt_window.winId())
-            hicon = ctypes.windll.user32.LoadImageW(None, str(icon_file), 1, 0, 0, LR_LOADFROMFILE)
-            ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon)
-            ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon)
+            LR_LOADFROMFILE, LR_DEFAULTSIZE = 0x10, 0x40
+            hwnd = int(qt_win.winId())
+            ico_str = str(icon_file)
+            hicon_big = ctypes.windll.user32.LoadImageW(
+                None, ico_str, 1, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE
+            )
+            hicon_small = ctypes.windll.user32.LoadImageW(
+                None, ico_str, 1, 16, 16, LR_LOADFROMFILE
+            )
+            if hicon_big:
+                ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_big)
+            if hicon_small:
+                ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_small)
         except Exception:
             pass
+
+    from qtpy.QtCore import QTimer
+    QTimer.singleShot(500, _apply_icon)
     
     # Permanently disable napari's native welcome screen
     with warnings.catch_warnings():

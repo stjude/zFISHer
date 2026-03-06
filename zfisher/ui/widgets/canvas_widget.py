@@ -8,6 +8,7 @@ from ...core import session, registration # Importing from core
 from .. import popups
 from ..decorators import require_active_session, error_handler
 from ... import constants
+from ._shared import make_header_divider
 
 @magicgui(
     call_button="Generate Global Canvas",
@@ -130,4 +131,5 @@ canvas_widget = Container(labels=False)
 header = Label(value="Global Canvas")
 header.native.setObjectName("widgetHeader")
 info = Label(value="<i>Applies registration and creates aligned layers.</i>")
-canvas_widget.extend([header, info, _canvas_widget])
+info.native.setObjectName("widgetInfo")
+canvas_widget.extend([header, info, make_header_divider(), _canvas_widget])

@@ -8,6 +8,7 @@ from .. import popups, viewer_helpers
 from ..decorators import require_active_session, error_handler
 from ...core.segmentation import segment_nuclei_classical
 from ... import constants
+from ._shared import make_header_divider
 
 @magicgui(
     call_button="Run DAPI Mapping",
@@ -57,4 +58,5 @@ dapi_segmentation_widget = Container(labels=False)
 header = Label(value="DAPI Mapping")
 header.native.setObjectName("widgetHeader")
 info = Label(value="<i>Segments nuclei in DAPI channels.</i>")
-dapi_segmentation_widget.extend([header, info, _dapi_segmentation_widget])
+info.native.setObjectName("widgetInfo")
+dapi_segmentation_widget.extend([header, info, make_header_divider(), _dapi_segmentation_widget])

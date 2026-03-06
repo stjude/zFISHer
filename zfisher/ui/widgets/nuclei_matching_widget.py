@@ -1,14 +1,12 @@
 import napari
-import numpy as np
-from pathlib import Path
 from magicgui import magicgui
 from magicgui.widgets import Container, Label
-from qtpy.QtWidgets import QButtonGroup, QRadioButton # For internal toggle logic if needed
 
-from ...core import session, segmentation 
+from ...core import session, segmentation
 from .. import popups, viewer_helpers
 from ..decorators import require_active_session, error_handler
 from ... import constants
+from ._shared import make_header_divider
 
 @magicgui(
     call_button="Match & Merge Nuclei",
@@ -22,7 +20,6 @@ from ... import constants
         "orientation": "horizontal", # Places buttons side-by-side
         "tooltip": "Intersection: Keep only overlapping pixels. Union: Keep all pixels from both rounds."
     },
-    threshold={"label": "Max Distance (px)", "min": 0, "max": 100, "step": 1}
 )
 @require_active_session("Please start or load a session before matching nuclei.")
 @error_handler("Nuclei Matching Failed")
@@ -30,7 +27,6 @@ def _nuclei_matching_widget(
     r1_mask_layer: "napari.layers.Labels",
     r2_mask_layer: "napari.layers.Labels",
     method: str = "Intersection", # Intersection is now the default
-    threshold: float = 20.0
 ):
     """
     Matches nuclei between two aligned mask layers and syncs their IDs.
@@ -58,8 +54,8 @@ def _nuclei_matching_widget(
             mask1=r1_mask_layer.data,
             mask2=r2_mask_layer.data,
             output_dir=output_dir,
-            threshold=threshold,
-            method=method, 
+            threshold=0,  # Auto-determine from distance distribution
+            method=method,
             progress_callback=lambda p, m: dialog.update_progress(p, m)
         )
         
@@ -83,4 +79,5 @@ nuclei_matching_widget = Container(labels=False)
 header = Label(value="Match Nuclei")
 header.native.setObjectName("widgetHeader")
 info = Label(value="<i>Matches nuclei between rounds.</i>")
-nuclei_matching_widget.extend([header, info, _nuclei_matching_widget])
+info.native.setObjectName("widgetInfo")
+nuclei_matching_widget.extend([header, info, make_header_divider(), _nuclei_matching_widget])

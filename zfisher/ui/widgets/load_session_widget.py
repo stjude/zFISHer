@@ -3,6 +3,7 @@ from magicgui.widgets import Container, PushButton, FileEdit, Label
 import napari
 import numpy as np
 from pathlib import Path
+from qtpy.QtWidgets import QFrame
 
 logger = logging.getLogger(__name__)
 
@@ -10,6 +11,7 @@ from ...core import session
 from .. import popups, viewer_helpers
 from ..decorators import error_handler
 from ._shared import load_raw_data_into_viewer
+from ..style import COLORS
 from .colocalization_widget import refresh_rules_display
 
 class LoadSessionWidget(Container):
@@ -26,17 +28,28 @@ class LoadSessionWidget(Container):
         self._header = Label(value="Load Session")
         self._header.native.setObjectName("widgetHeader")
         self._info = Label(value="<i>Load a previously saved zFISHer session.</i>")
-        self._load_session_file = FileEdit(label="Session File (.json)", filter="*.json")
+        self._info.native.setObjectName("widgetInfo")
+        self._load_session_file = FileEdit(label="Session File:", filter="*.json")
         self._load_session_btn = PushButton(text="Load Session")
 
+    @staticmethod
+    def _make_divider():
+        line = QFrame()
+        line.setFixedHeight(2)
+        line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
+        return line
+
     def _init_layout(self):
-        """Arranges all widgets in the container."""
-        self.extend([
-            self._header,
-            self._info,
-            self._load_session_file,
-            self._load_session_btn,
-        ])
+        """Arranges all widgets in the container using native layout."""
+        self._form = Container(labels=True)
+        self._form.extend([self._load_session_file])
+
+        _layout = self.native.layout()
+        _layout.addWidget(self._header.native)
+        _layout.addWidget(self._info.native)
+        _layout.addWidget(self._make_divider())
+        _layout.addWidget(self._form.native)
+        _layout.addWidget(self._load_session_btn.native)
 
     def _connect_signals(self):
         """Connects widget signals to their corresponding slots."""

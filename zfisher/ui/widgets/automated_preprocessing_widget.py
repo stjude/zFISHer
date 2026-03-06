@@ -23,23 +23,20 @@ def _get_qt_parent(viewer):
 
 @magicgui(
     call_button="Run Automated Preprocessing",
-    viewer={"visible": False, "label": " "},
     r1_dapi_layer={"label": "Round 1 DAPI Layer"},
     r2_dapi_layer={"label": "Round 2 DAPI Layer"},
     match_nuclei={"label": "Create Consensus Nuclei Mask"},
-    match_threshold={"label": "Nuclei Match Distance (px)", "min": 0, "max": 100, "step": 1},
     hide_raw={"label": "Hide Raw Layers After?"}
 )
 @require_active_session("Please start or load a session first.")
 @error_handler("Automated Preprocessing Failed")
 def _automated_preprocessing_magic_widget(
-    viewer: "napari.Viewer",
     r1_dapi_layer: "napari.layers.Image",
     r2_dapi_layer: "napari.layers.Image",
     match_nuclei: bool = True,
-    match_threshold: float = 20.0,
     hide_raw: bool = True
 ):
+    viewer = napari.current_viewer()
     if not r1_dapi_layer or not r2_dapi_layer:
         viewer.status = "Please select both DAPI layers."
         return
@@ -144,7 +141,7 @@ def _automated_preprocessing_magic_widget(
                     mask1=tifffile.imread(r1_mask_path),
                     mask2=tifffile.imread(r2_mask_path),
                     output_dir=output_dir,
-                    threshold=match_threshold,
+                    threshold=0,  # Auto-determine from distance distribution
                     method="Intersection",
                     progress_callback=lambda p, t: dialog.update_progress(70 + int(p * 0.25), t)
                 )
@@ -174,8 +171,30 @@ def _automated_preprocessing_magic_widget(
         viewer.status = "Automated Preprocessing Complete."
 
 # UI Wrapper
+from qtpy.QtWidgets import QFrame
+from ..style import COLORS
+
+def _make_divider():
+    line = QFrame()
+    line.setFixedHeight(2)
+    line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
+    return line
+
+# Insert "Options" header into the magicgui form before match_nuclei
+# Widget order: r1_dapi(0), r2_dapi(1), match_nuclei(2), hide_raw(3), call_button(4)
+_inner = _automated_preprocessing_magic_widget.native.layout()
+_options_header = Label(value="<b>Options:</b>")
+_inner.insertWidget(2, _make_divider())
+_inner.insertWidget(3, _options_header.native)
+
 automated_preprocessing_widget = Container(labels=False)
 header = Label(value="Automated Preprocessing")
 header.native.setObjectName("widgetHeader")
 info = Label(value="<i>Segmentation, Registration, Warping, and Consensus Nuclei.</i>")
-automated_preprocessing_widget.extend([header, info, _automated_preprocessing_magic_widget])
+info.native.setObjectName("widgetInfo")
+
+_layout = automated_preprocessing_widget.native.layout()
+_layout.addWidget(header.native)
+_layout.addWidget(info.native)
+_layout.addWidget(_make_divider())
+_layout.addWidget(_automated_preprocessing_magic_widget.native)

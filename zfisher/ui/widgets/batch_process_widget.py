@@ -4,10 +4,12 @@ import os
 import logging
 import napari
 import pandas as pd
+from qtpy.QtWidgets import QFrame
 
 from ...core import pipeline
 from .. import popups
 from ..decorators import error_handler
+from ..style import COLORS
 
 logger = logging.getLogger(__name__)
 
@@ -30,25 +32,35 @@ class BatchProcessWidget(Container):
             value="<i>Run the full pipeline on multiple datasets from an Excel file.<br>"
                   "Excel columns: <b>Name</b>, <b>R1</b>, <b>R2</b></i>"
         )
+        self._info.native.setObjectName("widgetInfo")
         self._batch_file = FileEdit(
-            label="Batch Excel File",
+            label="Batch File:",
             filter="*.xlsx *.xls"
         )
         self._batch_output_dir = FileEdit(
-            label="Output Directory",
+            label="Output:",
             mode='d',
             value=Path.home() / "zFISHer_Batch_Output"
         )
         self._batch_run_btn = PushButton(text="Run Batch Processing")
 
+    @staticmethod
+    def _make_divider():
+        line = QFrame()
+        line.setFixedHeight(2)
+        line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
+        return line
+
     def _init_layout(self):
-        self.extend([
-            self._header,
-            self._info,
-            self._batch_file,
-            self._batch_output_dir,
-            self._batch_run_btn,
-        ])
+        self._form = Container(labels=True)
+        self._form.extend([self._batch_file, self._batch_output_dir])
+
+        _layout = self.native.layout()
+        _layout.addWidget(self._header.native)
+        _layout.addWidget(self._info.native)
+        _layout.addWidget(self._make_divider())
+        _layout.addWidget(self._form.native)
+        _layout.addWidget(self._batch_run_btn.native)
 
     def _connect_signals(self):
         self._batch_run_btn.clicked.connect(self._on_batch_run)

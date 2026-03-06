@@ -1,8 +1,25 @@
 import napari
 from pathlib import Path
+from magicgui.widgets import Container
 
 from ...core import io
 from .. import viewer_helpers
+from ..style import COLORS
+
+
+def make_header_divider():
+    """Create a full-width divider widget for use after widget title/description."""
+    from qtpy.QtWidgets import QFrame
+    wrapper = Container(labels=False)
+    wrapper.native.setFixedHeight(10)
+    wrapper.native.setContentsMargins(0, 0, 0, 0)
+    line = QFrame()
+    line.setFixedHeight(2)
+    line.setStyleSheet(
+        f"background-color: {COLORS['separator_color']}; border: none; margin: 4px 0px;"
+    )
+    wrapper.native.layout().addWidget(line)
+    return wrapper
 
 def load_raw_data_into_viewer(viewer, round1_path, round2_path, output_dir=None, progress_callback=None):
     """

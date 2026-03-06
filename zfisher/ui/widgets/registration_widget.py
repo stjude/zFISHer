@@ -4,13 +4,7 @@ from magicgui import magicgui, widgets
 from ...core import session, registration #
 from .. import popups
 from ..decorators import require_active_session, error_handler
-
-import napari
-from magicgui import magicgui, widgets
-
-from ...core import session, registration #
-from .. import popups
-from ..decorators import require_active_session, error_handler
+from ._shared import make_header_divider
 
 @magicgui(
     call_button="Calculate Shift (RANSAC)",
@@ -59,4 +53,5 @@ registration_widget = widgets.Container(labels=False)
 header = widgets.Label(value="Registration")
 header.native.setObjectName("widgetHeader")
 info = widgets.Label(value="<i>Calculates shift between rounds.</i>")
-registration_widget.extend([header, info, _registration_widget])
+info.native.setObjectName("widgetInfo")
+registration_widget.extend([header, info, make_header_divider(), _registration_widget])

@@ -5,10 +5,13 @@ import os
 import gc
 import tifffile
 
+from qtpy.QtWidgets import QFrame
+
 from ...core import session, io, segmentation, registration, puncta
 from .. import popups, viewer_helpers
 from ..decorators import error_handler
 from ._shared import load_raw_data_into_viewer
+from ..style import COLORS
 from ... import constants
 
 class NewSessionWidget(Container):
@@ -25,26 +28,36 @@ class NewSessionWidget(Container):
         self._header = Label(value="New Session")
         self._header.native.setObjectName("widgetHeader")
         self._info = Label(value="<i>Start a new zFISHer session from raw data.</i>")
-        self._round1_path = FileEdit(label="Round 1", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path("/Users/sstaller/Desktop/ND2_FILE_INPUTS/1-19-24Fdecon.nd2"))
-        self._round2_path = FileEdit(label="Round 2", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path("/Users/sstaller/Desktop/ND2_FILE_INPUTS/1-17-24Adecon.nd2"))
+        self._info.native.setObjectName("widgetInfo")
+        self._round1_path = FileEdit(label="R1:", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path("/Users/sstaller/Desktop/ND2_FILE_INPUTS/1-19-24Fdecon.nd2"))
+        self._round2_path = FileEdit(label="R2:", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path("/Users/sstaller/Desktop/ND2_FILE_INPUTS/1-17-24Adecon.nd2"))
      #   self._round1_path = FileEdit(label="Round 1", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path("/Users/sstaller/zFISHer_MicroTests/R1_micro.tif"))
      #   self._round2_path = FileEdit(label="Round 2", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path("/Users/sstaller/zFISHer_MicroTests/R2_micro.tif"))
 
-        self._output_dir = FileEdit(label="Output Directory", mode="d", value=Path.home() / "zFISHer_Output")
+        self._output_dir = FileEdit(label="Output:", mode="d", value=Path.home() / "zFISHer_Output")
         self._new_session_btn = PushButton(text="Start New Session")
         self._autorun_btn = PushButton(text="Autorun")
 
+    @staticmethod
+    def _make_divider():
+        line = QFrame()
+        line.setFixedHeight(2)
+        line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
+        return line
+
     def _init_layout(self):
-        """Arranges all widgets in the container."""
-        self.extend([
-            self._header,
-            self._info,
-            self._round1_path,
-            self._round2_path,
-            self._output_dir,
-            self._new_session_btn,
-            self._autorun_btn,
-        ])
+        """Arranges all widgets in the container using native layout."""
+        # Form container with labels for the file inputs
+        self._form = Container(labels=True)
+        self._form.extend([self._round1_path, self._round2_path, self._output_dir])
+
+        _layout = self.native.layout()
+        _layout.addWidget(self._header.native)
+        _layout.addWidget(self._info.native)
+        _layout.addWidget(self._make_divider())
+        _layout.addWidget(self._form.native)
+        _layout.addWidget(self._new_session_btn.native)
+        _layout.addWidget(self._autorun_btn.native)
 
     def _connect_signals(self):
         """Connects widget signals to their corresponding slots."""
