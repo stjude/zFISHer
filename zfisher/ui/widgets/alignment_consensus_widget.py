@@ -5,11 +5,9 @@ from qtpy.QtCore import Qt
 
 # Import the child widgets that this composite widget will manage
 from .automated_preprocessing_widget import automated_preprocessing_widget
-from .dapi_segmentation_widget import dapi_segmentation_widget
 from .registration_widget import registration_widget
 from .canvas_widget import canvas_widget
 from .nuclei_matching_widget import nuclei_matching_widget
-from .mask_editor_widget import mask_editor_widget
 
 from .. import style
 
@@ -25,11 +23,9 @@ class AlignmentConsensusWidget(widgets.Container):
         # Store references to the child widgets. This allows the main viewer.py
         # to access them for event handling (e.g., auto-selecting layers).
         self.automated_widget = automated_preprocessing_widget
-        self.dapi_widget = dapi_segmentation_widget
         self.registration_widget = registration_widget
         self.canvas_widget = canvas_widget
         self.nuclei_matching_widget = nuclei_matching_widget
-        self.mask_editor_widget = mask_editor_widget
 
         # Get the native QWidget's layout and remove any default margins/spacing.
         # This ensures the nested QToolBox fills the entire area, matching the parent.
@@ -56,11 +52,9 @@ class AlignmentConsensusWidget(widgets.Container):
         manual_toolbox.setStyleSheet(style.NESTED_TOOLBOX_STYLESHEET)
 
         # Add each manual step as a separate, collapsible item.
-        manual_toolbox.addItem(self.dapi_widget.native, "DAPI Mapping")
         manual_toolbox.addItem(self.registration_widget.native, "Registration")
         manual_toolbox.addItem(self.canvas_widget.native, "Global Canvas")
         manual_toolbox.addItem(self.nuclei_matching_widget.native, "Match Nuclei")
-        manual_toolbox.addItem(self.mask_editor_widget.native, "Mask Editor")
 
         manual_layout.addWidget(manual_toolbox)
         self.toolbox.addItem(manual_outer_container, "Manual")
@@ -71,8 +65,8 @@ class AlignmentConsensusWidget(widgets.Container):
     def reset_choices(self):
         """Passes the `reset_choices` call to all child widgets."""
         for widget in [
-            self.automated_widget, self.dapi_widget, self.registration_widget,
-            self.canvas_widget, self.nuclei_matching_widget, self.mask_editor_widget
+            self.automated_widget, self.registration_widget,
+            self.canvas_widget, self.nuclei_matching_widget
         ]:
             if hasattr(widget, "reset_choices"):
                 widget.reset_choices()

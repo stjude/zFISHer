@@ -225,7 +225,14 @@ def refresh_rules_display():
 # UI Wrapper
 # =====================================================================
 
-colocalization_widget = Container(labels=False)
+class _ColocalizationContainer(Container):
+    """Wrapper that delegates reset_choices and exposes the inner magicgui."""
+    def reset_choices(self):
+        _rule_builder.reset_choices()
+        _tri_rule_builder.reset_choices()
+
+colocalization_widget = _ColocalizationContainer(labels=False)
+colocalization_widget._rule_builder = _rule_builder
 header = Label(value="Colocalization Analysis")
 header.native.setObjectName("widgetHeader")
 info = Label(value="<i>Define distance rules between puncta channels, then export a report.</i>")

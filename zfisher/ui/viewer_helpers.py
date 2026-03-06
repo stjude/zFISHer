@@ -395,6 +395,9 @@ def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napa
             tifffile.imwrite(mask_path, masks)
             session.set_processed_file(mask_layer_name, str(mask_path), layer_type='labels', metadata={'subtype': 'mask'})
 
+        # Add nucleus ID labels at each mask centroid
+        add_or_update_label_ids(viewer, layer)
+
     if centroids is not None:
         centroid_layer_name = f"{source_layer.name}{constants.CENTROIDS_SUFFIX}"
         ids = np.arange(len(centroids)) + 1

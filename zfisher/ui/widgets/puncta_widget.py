@@ -11,7 +11,7 @@ from ._shared import make_header_divider
     call_button="Detect Puncta",
     layout="vertical",
     image_layer={"label": "Target Channel"},
-    nuclei_layer={"label": "Nuclei Masks (Consensus)"},
+    nuclei_layer={"label": "Nuclei Masks"},
     nuclei_only={"label": "Nuclei Only (discard extranuclear puncta)", "value": True},
     method={
         "label": "Algorithm", 
@@ -140,6 +140,7 @@ _update_method_ui(_puncta_widget.method.value)
 def _on_image_change(new_layer: "napari.layers.Image"):
     """
     Automatically detects voxel metadata and sets the Z-Anisotropy slider.
+    Also auto-selects the appropriate nuclei mask based on the channel's round.
     """
     if new_layer is not None:
         scale = getattr(new_layer, 'scale', (1, 1, 1))
@@ -147,6 +148,48 @@ def _on_image_change(new_layer: "napari.layers.Image"):
             auto_z_scale = scale[0] / scale[2]
             _puncta_widget.z_scale.value = round(float(auto_z_scale), 2)
             napari.current_viewer().status = f"Auto-configured Z-Anisotropy: {round(auto_z_scale, 2)}"
+
+        # Auto-select the matching nuclei mask layer
+        viewer = napari.current_viewer()
+        if viewer is None:
+            return
+        name_upper = new_layer.name.upper()
+        is_aligned = constants.ALIGNED_PREFIX.upper() in name_upper or constants.WARPED_PREFIX.upper() in name_upper
+
+        best_mask = None
+        if is_aligned:
+            # Aligned/Warped channels → use consensus mask
+            best_mask = next(
+                (l for l in viewer.layers
+                 if isinstance(l, napari.layers.Labels)
+                 and constants.CONSENSUS_MASKS_NAME.upper() in l.name.upper()),
+                None
+            )
+        else:
+            # Raw channels → match per-round DAPI mask
+            if "R1" in name_upper:
+                target = "R1"
+            elif "R2" in name_upper:
+                target = "R2"
+            else:
+                target = None
+            if target:
+                best_mask = next(
+                    (l for l in viewer.layers
+                     if isinstance(l, napari.layers.Labels)
+                     and target in l.name.upper()
+                     and constants.DAPI_CHANNEL_NAME.upper() in l.name.upper()
+                     and constants.MASKS_SUFFIX.upper() in l.name.upper()
+                     and constants.ALIGNED_PREFIX.upper() not in l.name.upper()
+                     and constants.WARPED_PREFIX.upper() not in l.name.upper()),
+                    None
+                )
+
+        if best_mask is not None:
+            try:
+                _puncta_widget.nuclei_layer.value = best_mask
+            except (ValueError, AttributeError):
+                pass
 
 # --- UI Wrapper (native layout like colocalization_widget) ---
 from qtpy.QtWidgets import QFrame
@@ -158,7 +201,13 @@ def _make_divider():
     line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
     return line
 
-puncta_widget = widgets.Container(labels=False)
+class _PunctaWidgetContainer(widgets.Container):
+    """Wrapper that delegates reset_choices to the inner magicgui widget."""
+    def reset_choices(self):
+        _puncta_widget.reset_choices()
+
+puncta_widget = _PunctaWidgetContainer(labels=False)
+puncta_widget._puncta_widget = _puncta_widget
 header = widgets.Label(value="Puncta Detection")
 header.native.setObjectName("widgetHeader")
 info = widgets.Label(value="<i>Algorithmic detection of puncta.</i>")

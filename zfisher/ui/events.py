@@ -9,6 +9,63 @@ from .. import constants
 
 logger = logging.getLogger(__name__)
 
+
+def is_layer_locked(layer):
+    """Check whether a layer has been marked as non-deletable."""
+    return getattr(layer, '_locked', False)
+
+
+def lock_layer(layer):
+    """Mark a layer as non-deletable."""
+    layer._locked = True
+
+
+def _should_lock(layer):
+    """Determine if a newly added layer should be automatically locked."""
+    name = layer.name
+    name_upper = name.upper()
+
+    # Raw R1/R2 image channels
+    if isinstance(layer, napari.layers.Image):
+        if "R1" in name_upper or "R2" in name_upper:
+            return True
+
+    # DAPI centroids and mask ID layers
+    if isinstance(layer, napari.layers.Points):
+        if constants.CENTROIDS_SUFFIX.upper() in name_upper:
+            return True
+        if name.endswith("_IDs"):
+            return True
+
+    # DAPI mask layers (raw and aligned/warped)
+    if isinstance(layer, napari.layers.Labels):
+        if (constants.DAPI_CHANNEL_NAME.upper() in name_upper
+                and constants.MASKS_SUFFIX.upper() in name_upper):
+            return True
+
+    return False
+
+
+def install_layer_lock(viewer):
+    """Monkey-patch viewer.layers to prevent deletion of locked layers."""
+    original_remove = viewer.layers.remove
+    original_clear = viewer.layers.clear
+
+    def guarded_remove(layer):
+        if is_layer_locked(layer):
+            viewer.status = f"Cannot delete locked layer: {layer.name}"
+            return
+        return original_remove(layer)
+
+    def guarded_clear():
+        # Unlock all layers before clearing (used by Reset / New Session)
+        for layer in list(viewer.layers):
+            layer._locked = False
+        return original_clear()
+
+    viewer.layers.remove = guarded_remove
+    viewer.layers.clear = guarded_clear
+
 # Track layers that already have listeners to prevent duplicate attachment.
 # Maps layer id -> {'layer': layer_ref, 'sync_data': callback, 'sync_color': callback}
 _attached_listeners = {}
@@ -72,12 +129,28 @@ def detach_puncta_listener(layer):
     except (TypeError, RuntimeError):
         pass
 
+def _try_set(widgets, widget_key, *attr_chain):
+    """Safely traverse a chain of attributes and set the final one.
+    Usage: _try_set(widgets, 'key', 'child_widget', 'param', value)
+    """
+    try:
+        obj = widgets[widget_key]
+        for attr in attr_chain[:-2]:
+            obj = getattr(obj, attr)
+        setattr(getattr(obj, attr_chain[-2]), 'value', attr_chain[-1])
+    except (KeyError, AttributeError):
+        pass
+
 def on_layer_inserted(event, widgets):
     """
     Handles auto-selecting layers in widgets when a new layer is added.
     """
     layer = event.value
-    
+
+    # Auto-lock protected layer types
+    if _should_lock(layer):
+        lock_layer(layer)
+
     def update_widgets():
         # First, refresh all dropdowns to ensure the new layer is in the list
         for w in widgets.values():
@@ -88,42 +161,45 @@ def on_layer_inserted(event, widgets):
         if isinstance(layer, napari.layers.Image):
             if "DAPI" in layer.name.upper():
                 if "R1" in layer.name.upper():
-                    widgets['dapi_segmentation']._dapi_segmentation_widget.r1_layer.value = layer
-                    widgets['automated_preprocessing']._automated_preprocessing_magic_widget.r1_dapi_layer.value = layer
+                    _try_set(widgets, 'dapi_segmentation', '_dapi_segmentation_widget', 'r1_layer', layer)
+                    _try_set(widgets, 'automated_preprocessing', '_automated_preprocessing_magic_widget', 'r1_dapi_layer', layer)
                 elif "R2" in layer.name.upper():
-                    widgets['dapi_segmentation']._dapi_segmentation_widget.r2_layer.value = layer
-                    widgets['automated_preprocessing']._automated_preprocessing_magic_widget.r2_dapi_layer.value = layer
-        
+                    _try_set(widgets, 'dapi_segmentation', '_dapi_segmentation_widget', 'r2_layer', layer)
+                    _try_set(widgets, 'automated_preprocessing', '_automated_preprocessing_magic_widget', 'r2_dapi_layer', layer)
+            else:
+                # Auto-select non-DAPI image layers in puncta detection
+                _try_set(widgets, 'puncta_detection', '_puncta_widget', 'image_layer', layer)
+
         elif isinstance(layer, napari.layers.Points):
             if "centroids" in layer.name.lower():
                 if "R1" in layer.name.upper():
-                    widgets['registration']._registration_widget.r1_points.value = layer
+                    _try_set(widgets, 'registration', '_registration_widget', 'r1_points', layer)
                 elif "R2" in layer.name.upper():
-                    widgets['registration']._registration_widget.r2_points.value = layer
-            
+                    _try_set(widgets, 'registration', '_registration_widget', 'r2_points', layer)
+
             # Auto-select the new points layer in editors/analysis widgets
-            widgets['puncta_editor']._puncta_editor_widget.points_layer.value = layer
-            widgets['colocalization']._rule_builder.source_layer.value = layer
-            
+            _try_set(widgets, 'puncta_editor', '_puncta_editor_widget', 'points_layer', layer)
+            _try_set(widgets, 'colocalization', '_rule_builder', 'source_layer', layer)
+
             # If it's a puncta layer, ensure its listener is attached.
             if "puncta" in layer.name.lower():
                  attach_puncta_listener(layer, layer.name)
-        
+
         elif isinstance(layer, napari.layers.Labels):
             name = layer.name.upper()
             # Heuristic for matching aligned/warped DAPI masks
             if "DAPI" in name and ("ALIGNED" in name or "WARPED" in name):
                 if "R1" in name:
-                    widgets['nuclei_matching']._nuclei_matching_widget.r1_mask_layer.value = layer
+                    _try_set(widgets, 'nuclei_matching', '_nuclei_matching_widget', 'r1_mask_layer', layer)
                 elif "R2" in name:
-                    widgets['nuclei_matching']._nuclei_matching_widget.r2_mask_layer.value = layer
-            
+                    _try_set(widgets, 'nuclei_matching', '_nuclei_matching_widget', 'r2_mask_layer', layer)
+
             # General purpose editors
-            widgets['mask_editor']._mask_editor_widget.mask_layer.value = layer
+            _try_set(widgets, 'mask_editor', '_mask_editor_widget', 'mask_layer', layer)
             # Auto-select a mask for puncta detection, but not other puncta layers
             if "puncta" not in name.lower():
-                widgets['puncta_detection']._puncta_widget.nuclei_layer.value = layer
-    
+                _try_set(widgets, 'puncta_detection', '_puncta_widget', 'nuclei_layer', layer)
+
     # Use a QTimer to delay execution slightly, ensuring the layer is fully added
     QTimer.singleShot(100, update_widgets)
 
@@ -140,7 +216,9 @@ def on_layer_removed(event, widgets):
     if isinstance(layer, napari.layers.Labels):
         ids_name = f"{layer.name}_IDs"
         if viewer and ids_name in viewer.layers:
-            viewer.layers.remove(viewer.layers[ids_name])
+            ids_layer = viewer.layers[ids_name]
+            ids_layer._locked = False  # unlock before cascade removal
+            viewer.layers.remove(ids_layer)
         session.remove_processed_file(layer.name)
         session.remove_processed_file(ids_name)
 
@@ -148,6 +226,13 @@ def on_layer_removed(event, widgets):
     elif isinstance(layer, napari.layers.Points):
         session.remove_processed_file(layer.name)
         detach_puncta_listener(layer)
+        # If this is an _IDs centroids layer, also remove the parent mask
+        if layer.name.endswith("_IDs"):
+            mask_name = layer.name[:-4]  # strip "_IDs"
+            if viewer and mask_name in viewer.layers:
+                mask_layer = viewer.layers[mask_name]
+                mask_layer._locked = False  # unlock before cascade removal
+                viewer.layers.remove(mask_layer)
 
     def update_choices():
         for w in widgets.values():

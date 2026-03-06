@@ -121,6 +121,120 @@ def detect_spots_3d(image_data, method="Local Maxima", progress_callback=None, *
                                  kwargs.get('sigma', 1.0), z_scale=kwargs.get('z_scale', 1.0))
     return np.empty((0, 3))
 
+def transform_puncta_to_aligned_space(raw_puncta, round_id, shift, canvas_offset,
+                                       bspline_transform=None, consensus_mask=None,
+                                       output_path=None, layer_name=None,
+                                       progress_callback=None):
+    """
+    Transform raw-space puncta coordinates into aligned canvas space and
+    reassign nucleus IDs from the consensus mask.
+
+    Parameters
+    ----------
+    raw_puncta : np.ndarray
+        (N, 6) array from process_puncta_detection: Z, Y, X, Nucleus_ID, Intensity, SNR.
+    round_id : str
+        "R1" or "R2".
+    shift : np.ndarray
+        (3,) registration shift vector (Z, Y, X).
+    canvas_offset : np.ndarray
+        (3,) canvas offset from align_and_pad_images (typically negative or zero).
+    bspline_transform : SimpleITK.Transform, optional
+        The B-spline transform for R2 warping (fixed->moving direction). Ignored for R1.
+    consensus_mask : np.ndarray, optional
+        3D label array in aligned space for nucleus ID reassignment.
+    output_path : Path, optional
+        If provided, saves the transformed puncta CSV.
+    layer_name : str, optional
+        Session key for the saved file.
+    progress_callback : callable, optional
+        ``callback(pct, msg)``
+
+    Returns
+    -------
+    np.ndarray
+        (M, 6) array: Z, Y, X, Nucleus_ID, Intensity, SNR in aligned space.
+    """
+    from . import session
+
+    if progress_callback:
+        progress_callback(0, "Transforming puncta coordinates...")
+
+    if len(raw_puncta) == 0:
+        if progress_callback:
+            progress_callback(100, "No puncta to transform.")
+        return np.empty((0, 6))
+
+    coords = raw_puncta[:, :3].copy()  # Z, Y, X
+    quality = raw_puncta[:, 4:6].copy()  # Intensity, SNR (keep from raw detection)
+
+    # Apply rigid transform to canvas space
+    shift = np.asarray(shift, dtype=float)
+    canvas_offset = np.asarray(canvas_offset, dtype=float)
+
+    if round_id == "R1":
+        aligned_coords = coords - canvas_offset
+    else:  # R2
+        aligned_coords = coords + shift - canvas_offset
+
+        # Apply inverse B-spline warp
+        if bspline_transform is not None:
+            if progress_callback:
+                progress_callback(20, f"Inverting B-spline for {len(aligned_coords)} points...")
+            from .registration import transform_points_inverse_bspline
+            aligned_coords = transform_points_inverse_bspline(aligned_coords, bspline_transform)
+
+    if progress_callback:
+        progress_callback(60, "Reassigning nucleus IDs from consensus mask...")
+
+    # Reassign nucleus IDs from consensus mask
+    if consensus_mask is not None:
+        mask_shape = np.array(consensus_mask.shape)
+        coords_int = np.round(aligned_coords).astype(int)
+
+        # Bounds check
+        in_bounds = np.all((coords_int >= 0) & (coords_int < mask_shape), axis=1)
+
+        # Clip for safe indexing, then zero out-of-bounds
+        for dim in range(3):
+            coords_int[:, dim] = np.clip(coords_int[:, dim], 0, mask_shape[dim] - 1)
+
+        indices = tuple(coords_int.T)
+        nucleus_ids = consensus_mask[indices]
+        nucleus_ids[~in_bounds] = 0
+
+        # Filter to nuclear puncta only
+        keep = nucleus_ids > 0
+        aligned_coords = aligned_coords[keep]
+        nucleus_ids = nucleus_ids[keep]
+        quality = quality[keep]
+
+        if len(aligned_coords) == 0:
+            if progress_callback:
+                progress_callback(100, "No puncta in consensus nuclei.")
+            return np.empty((0, 6))
+    else:
+        nucleus_ids = np.zeros(len(aligned_coords))
+
+    final_data = np.column_stack([aligned_coords, nucleus_ids, quality])
+
+    if output_path:
+        if progress_callback:
+            progress_callback(90, "Saving transformed puncta...")
+        header = "Z,Y,X,Nucleus_ID,Intensity,SNR"
+        np.savetxt(output_path, final_data, delimiter=",", header=header, comments='')
+
+        session_key = layer_name if layer_name else Path(output_path).stem
+        session.set_processed_file(
+            session_key, str(output_path), "points",
+            metadata={'format': 'csv', 'subtype': 'puncta_csv'}
+        )
+
+    if progress_callback:
+        progress_callback(100, f"Done. {len(final_data)} puncta in aligned space.")
+    return final_data
+
+
 def process_puncta_detection(image_data, mask_data=None, voxels=None, params=None, output_path=None, progress_callback=None, layer_name=None):
     """Orchestrates detection, quality mapping, and session persistence with CSV tags."""
     from . import session

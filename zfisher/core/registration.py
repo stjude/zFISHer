@@ -547,17 +547,59 @@ def create_checkerboard_image(image_shape, box_size=50):
 
 # ... (existing imports)
 
+def transform_points_inverse_bspline(points_zyx, bspline_transform, max_iter=20, tol=0.5):
+    """
+    Transform points from rigidly-aligned moving space to warped (fixed) space
+    using iterative inversion of the B-spline transform.
+
+    The B-spline transform maps fixed->moving. We need moving->fixed (inverse).
+    Uses fixed-point iteration: p_{n+1} = p_n + (q - T(p_n))
+
+    Parameters
+    ----------
+    points_zyx : np.ndarray
+        (N, 3) array of points in ZYX order (rigidly-aligned moving space).
+    bspline_transform : SimpleITK.Transform
+        The B-spline transform (fixed->moving direction).
+
+    Returns
+    -------
+    np.ndarray
+        (N, 3) array of transformed points in ZYX order (warped/fixed space).
+    """
+    results = np.empty_like(points_zyx, dtype=float)
+    for i, pt_zyx in enumerate(points_zyx):
+        # SimpleITK uses XYZ order
+        q_xyz = pt_zyx[::-1].astype(float)
+        p = q_xyz.copy()
+        for _ in range(max_iter):
+            tp = np.array(bspline_transform.TransformPoint(p.tolist()))
+            error = q_xyz - tp
+            p = p + error
+            if np.linalg.norm(error) < tol:
+                break
+        results[i] = p[::-1]  # Back to ZYX
+    return results
+
 def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, apply_warp=True, progress_callback=None):
     """
     Core Orchestrator: Aligns, warps, and saves all channels.
     Headless-ready (uses callback instead of yield).
+
+    Returns
+    -------
+    tuple
+        (results, transform, canvas_offset_pixels) where results is a list of
+        layer dicts, transform is the B-spline SimpleITK transform (or None),
+        and canvas_offset_pixels is a (3,) ndarray (or None).
     """
     def update(val, msg):
         if progress_callback:
             progress_callback(val, msg)
 
     results = []
-    
+    final_canvas_offset = None
+
     # 1. Rigid Alignment
     update(0, "Matching and aligning channels...")
     aligned_pairs = {}
@@ -566,7 +608,7 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
     if num_raw_layers > 0:
         for i, r1 in enumerate(r1_layers_data):
             channel_name = r1['name'].split("-")[-1].strip()
-            
+
             prog = int(((i + 1) / num_raw_layers) * 20)  # This part takes up to 20%
             update(prog, f"Rigidly aligning {channel_name}...")
 
@@ -578,6 +620,7 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
                 if not canvas_offset_saved:
                     logger.debug("generate_canvas: saving canvas_offset_pixels to session: %s", canvas_offset_pixels.tolist())
                     session.update_data("canvas_offset_pixels", canvas_offset_pixels.tolist())
+                    final_canvas_offset = canvas_offset_pixels
                     canvas_offset_saved = True
                 aligned_pairs[channel_name] = {
                     'r1_data': aligned_r1, 'r2_data': aligned_r2,
@@ -643,7 +686,7 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
         gc.collect()
 
     update(100, "Canvas generation complete.")
-    return results
+    return results, transform, final_canvas_offset
 
 def _process_channel_pair(channel_name, pair_data, transform, output_dir):
     """Applies deformable warp if needed and saves both layers in parallel."""

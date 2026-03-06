@@ -259,7 +259,13 @@ def _make_divider():
     line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
     return line
 
-puncta_editor_widget = widgets.Container(labels=False)
+class _PunctaEditorWidgetContainer(widgets.Container):
+    """Wrapper that delegates reset_choices to the inner magicgui widget."""
+    def reset_choices(self):
+        _puncta_editor_widget.reset_choices()
+
+puncta_editor_widget = _PunctaEditorWidgetContainer(labels=False)
+puncta_editor_widget._puncta_editor_widget = _puncta_editor_widget
 header = widgets.Label(value="Puncta Editor")
 header.native.setObjectName("widgetHeader")
 info = widgets.Label(value="<i>Advanced editing of puncta.</i>")

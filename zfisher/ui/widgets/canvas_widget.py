@@ -4,8 +4,8 @@ from pathlib import Path
 from magicgui import magicgui
 from magicgui.widgets import Container, Label
 
-from ...core import session, registration # Importing from core
-from .. import popups
+from ...core import session, registration, puncta # Importing from core
+from .. import popups, viewer_helpers
 from ..decorators import require_active_session, error_handler
 from ... import constants
 from ._shared import make_header_divider
@@ -71,20 +71,20 @@ def _canvas_widget(
     # 5. Execute Core Orchestration with UI Progress Feedback
     with popups.ProgressDialog(viewer.window._qt_window, title="Generating Global Canvas") as dialog:
 
-        # Core computation uses 0-85%, layer loading uses 85-100%
-        results = registration.generate_global_canvas(
+        # Core computation uses 0-70%, layer loading uses 70-80%, puncta transform 80-100%
+        results, bspline_transform, canvas_offset = registration.generate_global_canvas(
             r1_layers_data,
             r2_layers_data,
             shift,
             output_dir,
             apply_warp=apply_warp,
-            progress_callback=lambda p, m: dialog.update_progress(int(p * 0.85), m)
+            progress_callback=lambda p, m: dialog.update_progress(int(p * 0.70), m)
         )
 
         # 6. Add resulting layers back to napari
         n_results = max(len(results), 1)
         for i, layer_info in enumerate(results):
-            pct = 85 + int(((i + 1) / n_results) * 15)
+            pct = 70 + int(((i + 1) / n_results) * 10)
             dialog.update_progress(pct, f"Loading layer: {layer_info['name']}...")
 
             layer_type = layer_info['type']
@@ -118,7 +118,86 @@ def _canvas_widget(
                     edge_color='cyan'
                 )
 
-    # 7. Final UI Tidy Up
+        # 7. Transform existing puncta layers into aligned/warped space
+        puncta_layers = [
+            l for l in list(viewer.layers)
+            if isinstance(l, napari.layers.Points)
+            and constants.PUNCTA_SUFFIX in l.name
+            and constants.ALIGNED_PREFIX not in l.name
+            and constants.WARPED_PREFIX not in l.name
+        ]
+        if puncta_layers:
+            import pandas as pd
+            base_output = Path(base_output_dir)
+            reports_dir = base_output / constants.REPORTS_DIR
+            reports_dir.mkdir(exist_ok=True, parents=True)
+            voxels = session.get_data("canvas_scale")
+            if not voxels:
+                # Fallback: use scale from the first R1 image layer
+                ref = next((l for l in viewer.layers if isinstance(l, napari.layers.Image) and "R1" in l.name), None)
+                voxels = tuple(ref.scale) if ref else (1, 1, 1)
+            else:
+                voxels = tuple(voxels)
+
+            n_puncta = max(len(puncta_layers), 1)
+            for pi, pts_layer in enumerate(puncta_layers):
+                pct = 80 + int(((pi + 1) / n_puncta) * 18)
+                dialog.update_progress(pct, f"Transforming puncta: {pts_layer.name}...")
+
+                name_upper = pts_layer.name.upper()
+                if "R1" in name_upper:
+                    round_id = "R1"
+                elif "R2" in name_upper:
+                    round_id = "R2"
+                else:
+                    continue
+
+                coords = np.array(pts_layer.data)
+                if len(coords) == 0:
+                    continue
+                feats = pts_layer.features if hasattr(pts_layer, 'features') and isinstance(pts_layer.features, pd.DataFrame) and not pts_layer.features.empty else None
+                if feats is not None and len(feats) == len(coords):
+                    nuc_ids = feats['Nucleus_ID'].values if 'Nucleus_ID' in feats.columns else np.zeros(len(coords))
+                    intensity = feats['Intensity'].values if 'Intensity' in feats.columns else np.zeros(len(coords))
+                    snr = feats['SNR'].values if 'SNR' in feats.columns else np.zeros(len(coords))
+                else:
+                    nuc_ids = np.zeros(len(coords))
+                    intensity = np.zeros(len(coords))
+                    snr = np.zeros(len(coords))
+                raw_puncta = np.column_stack([coords, nuc_ids, intensity, snr])
+
+                prefix_str = constants.ALIGNED_PREFIX if round_id == "R1" else constants.WARPED_PREFIX
+                base_name = pts_layer.name.replace(constants.PUNCTA_SUFFIX, "")
+                aligned_layer_name = f"{prefix_str} {base_name.strip()}{constants.PUNCTA_SUFFIX}"
+                csv_out = reports_dir / f"{aligned_layer_name.replace(' ', '_')}.csv"
+
+                transformed = puncta.transform_puncta_to_aligned_space(
+                    raw_puncta=raw_puncta,
+                    round_id=round_id,
+                    shift=shift,
+                    canvas_offset=canvas_offset,
+                    bspline_transform=bspline_transform if round_id == "R2" else None,
+                    consensus_mask=None,
+                    output_path=csv_out,
+                    layer_name=aligned_layer_name,
+                )
+
+                if transformed is not None and len(transformed) > 0:
+                    ref = type('_ref', (), {
+                        'name': aligned_layer_name.replace(constants.PUNCTA_SUFFIX, ''),
+                        'scale': voxels,
+                        'translate': (0,) * len(voxels),
+                    })()
+                    viewer_helpers.add_or_update_puncta_layer(viewer, ref, transformed)
+
+                try:
+                    viewer.layers.remove(pts_layer)
+                except ValueError:
+                    pass
+
+        dialog.update_progress(100, "Complete.")
+
+    # 8. Final UI Tidy Up
     if hide_raw:
         for layer in viewer.layers:
             # Show the new results, hide the raw rounds
@@ -127,7 +206,12 @@ def _canvas_widget(
     viewer.status = "Global Canvas Generation Complete."
 
 # --- UI Wrapper ---
-canvas_widget = Container(labels=False)
+class _CanvasContainer(Container):
+    """Wrapper that delegates reset_choices."""
+    def reset_choices(self):
+        _canvas_widget.reset_choices()
+
+canvas_widget = _CanvasContainer(labels=False)
 header = Label(value="Global Canvas")
 header.native.setObjectName("widgetHeader")
 info = Label(value="<i>Applies registration and creates aligned layers.</i>")

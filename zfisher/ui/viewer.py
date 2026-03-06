@@ -14,6 +14,7 @@ from ..core import session
 # --- RESTORED IMPORTS ---
 # Import all the individual widgets from their own scripts
 from .widgets.start_session_widget import StartSessionWidget
+from .widgets.nuclei_segmentation_widget import NucleiSegmentationWidget
 from .widgets.alignment_consensus_widget import AlignmentConsensusWidget
 from .widgets.dapi_segmentation_widget import dapi_segmentation_widget
 from .widgets.registration_widget import registration_widget
@@ -228,13 +229,18 @@ def create_welcome_widget(viewer):
     <table cellpadding='3' cellspacing='0' style='margin-left: 4px;'>
       <tr><td colspan='2'><b style='color: {mint};'>1. Session &amp; I/O</b></td></tr>
       <tr><td width='20'></td><td>Load .nd2 or .tif image stacks</td></tr>
-      <tr><td colspan='2'><b style='color: {mint};'>2. Alignment &amp; Consensus</b></td></tr>
-      <tr><td></td><td>Segment DAPI &#8594; Register &#8594; Warp &#8594; Consensus Nuclei</td></tr>
+      <tr><td colspan='2'><b style='color: {mint};'>2. Nuclei Segmentation</b></td></tr>
+      <tr><td></td><td>Segment DAPI channels &#8594; per-round masks</td></tr>
       <tr><td></td><td>Edit masks (merge, paint, erase)</td></tr>
       <tr><td colspan='2'><b style='color: {mint};'>3. Puncta Picking</b></td></tr>
-      <tr><td></td><td>Detect puncta on warped channels</td></tr>
-      <tr><td></td><td>Manually add/remove/edit spots</td></tr>
-      <tr><td colspan='2'><b style='color: {mint};'>4. Export &amp; Visualization</b></td></tr>
+      <tr><td></td><td>Detect puncta on raw channels</td></tr>
+      <tr><td></td><td>Manually add, remove, or edit spots</td></tr>
+      <tr><td colspan='2'><b style='color: {mint};'>4. Alignment &amp; Consensus</b></td></tr>
+      <tr><td></td><td>Register rounds &#8594; Warp to common space</td></tr>
+      <tr><td></td><td>Transform puncta into aligned coordinates</td></tr>
+      <tr><td></td><td>Match nuclei &#8594; Consensus mask</td></tr>
+      <tr><td></td><td>Remove extranuclear puncta</td></tr>
+      <tr><td colspan='2'><b style='color: {mint};'>5. Export &amp; Visualization</b></td></tr>
       <tr><td></td><td>Colocalization analysis &amp; statistics</td></tr>
       <tr><td></td><td>Capture &amp; annotate images</td></tr>
     </table>
@@ -283,14 +289,17 @@ def launch_zfisher():
         try:
             from PIL import Image
             img = Image.open(png_path).convert('RGBA')
-            ico_sizes = [16, 32, 48, 64, 128, 256]
-            icons = [img.resize((s, s), Image.LANCZOS) for s in ico_sizes]
-            icons[0].save(ico_path, format='ICO', append_images=icons[1:],
-                          sizes=[(s, s) for s in ico_sizes])
+            ico_sizes = [(s, s) for s in [16, 32, 48, 64, 128, 256]]
+            img.save(ico_path, format='ICO', sizes=ico_sizes)
         except Exception:
             ico_path = png_path
+    # Prefer the full-res PNG for Qt (handles high-DPI natively); .ico for Win32 API
     icon_file = ico_path if ico_path.exists() else png_path
-    icon = QIcon(str(icon_file)) if icon_file.exists() else QIcon()
+    icon = QIcon()
+    if png_path.exists():
+        icon.addFile(str(png_path))
+    elif icon_file.exists():
+        icon.addFile(str(icon_file))
     app.setWindowIcon(icon)
 
     # --- 2. Create Viewer ---
@@ -306,14 +315,21 @@ def launch_zfisher():
         try:
             import ctypes
             ICON_SMALL, ICON_BIG, WM_SETICON = 0, 1, 0x80
-            LR_LOADFROMFILE, LR_DEFAULTSIZE = 0x10, 0x40
+            LR_LOADFROMFILE = 0x10
+            # Query actual system icon sizes (DPI-aware) instead of hardcoding
+            SM_CXICON, SM_CYICON = 11, 12      # big icon
+            SM_CXSMICON, SM_CYSMICON = 49, 50  # small icon
+            big_w = ctypes.windll.user32.GetSystemMetrics(SM_CXICON) or 48
+            big_h = ctypes.windll.user32.GetSystemMetrics(SM_CYICON) or 48
+            small_w = ctypes.windll.user32.GetSystemMetrics(SM_CXSMICON) or 16
+            small_h = ctypes.windll.user32.GetSystemMetrics(SM_CYSMICON) or 16
             hwnd = int(qt_win.winId())
-            ico_str = str(icon_file)
+            ico_str = str(ico_path if ico_path.exists() else icon_file)
             hicon_big = ctypes.windll.user32.LoadImageW(
-                None, ico_str, 1, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE
+                None, ico_str, 1, big_w, big_h, LR_LOADFROMFILE
             )
             hicon_small = ctypes.windll.user32.LoadImageW(
-                None, ico_str, 1, 16, 16, LR_LOADFROMFILE
+                None, ico_str, 1, small_w, small_h, LR_LOADFROMFILE
             )
             if hicon_big:
                 ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_big)
@@ -352,17 +368,18 @@ def launch_zfisher():
     scale_bar_widget = DraggableScaleBar(viewer, parent=viewer_canvas_native)
     viewer.window.custom_scale_bar = scale_bar_widget
     
+    nuclei_segmentation_widget = NucleiSegmentationWidget(viewer)
     alignment_consensus_widget = AlignmentConsensusWidget(viewer)
     puncta_picking_widget = PunctaPickingWidget(viewer)
     export_visualization_widget = ExportVisualizationWidget(viewer)
-    
+
     widget_map = {
-        # Child widgets are now accessed via the parent composite widget
-        "dapi_segmentation": alignment_consensus_widget.dapi_widget,
+        # Child widgets accessed via parent composite widgets
+        "dapi_segmentation": nuclei_segmentation_widget.dapi_widget,
+        "mask_editor": nuclei_segmentation_widget.mask_editor_widget,
         "registration": alignment_consensus_widget.registration_widget,
         "canvas": alignment_consensus_widget.canvas_widget,
         "nuclei_matching": alignment_consensus_widget.nuclei_matching_widget,
-        "mask_editor": alignment_consensus_widget.mask_editor_widget,
         "automated_preprocessing": alignment_consensus_widget.automated_widget,
         # Other top-level widgets
         "puncta_detection": puncta_picking_widget.algorithmic_widget,
@@ -370,7 +387,8 @@ def launch_zfisher():
         "colocalization": export_visualization_widget.export_widget,
         "capture": export_visualization_widget.capture_widget,
         "start_session": StartSessionWidget(viewer),
-        "alignment_consensus": alignment_consensus_widget, # The parent itself
+        "nuclei_segmentation": nuclei_segmentation_widget,
+        "alignment_consensus": alignment_consensus_widget,
         "puncta_picking": puncta_picking_widget,
         "export_visualization": export_visualization_widget,
     }
@@ -378,9 +396,10 @@ def launch_zfisher():
     widgets_to_add = [
         (create_welcome_widget(viewer), "zFISHer Home"),
         (StartSessionWidget(viewer), "1. Session && I/O"),
-        (alignment_consensus_widget, "2. Alignment && Consensus"),
+        (nuclei_segmentation_widget, "2. Nuclei Segmentation"),
         (puncta_picking_widget, "3. Puncta Picking"),
-        (export_visualization_widget, "4. Export && Visualization")
+        (alignment_consensus_widget, "4. Alignment && Consensus"),
+        (export_visualization_widget, "5. Export && Visualization")
     ]
 
     # --- 3. Sidebar Toolbox Styling ---
@@ -405,6 +424,7 @@ def launch_zfisher():
     QTimer.singleShot(1000, lock_ui)
 
     # Event Binding
+    events.install_layer_lock(viewer)
     viewer.layers.events.inserted.connect(partial(events.on_layer_inserted, widgets=widget_map))
     viewer.layers.events.removed.connect(partial(events.on_layer_removed, widgets=widget_map))
 

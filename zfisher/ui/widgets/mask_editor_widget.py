@@ -515,7 +515,13 @@ def _on_mask_layer_changed(new_layer: "napari.layers.Labels"):
         _mask_editor_widget._current_callback = None
 
 # --- UI Wrapper ---
-mask_editor_widget = widgets.Container(labels=False)
+class _MaskEditorContainer(widgets.Container):
+    """Wrapper that delegates reset_choices and exposes the inner magicgui."""
+    def reset_choices(self):
+        _mask_editor_widget.reset_choices()
+
+mask_editor_widget = _MaskEditorContainer(labels=False)
+mask_editor_widget._mask_editor_widget = _mask_editor_widget
 header = widgets.Label(value="Mask Editor")
 header.native.setObjectName("widgetHeader")
 info = widgets.Label(value="<i>Manual editing of segmentation masks.</i>")

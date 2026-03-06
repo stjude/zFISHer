@@ -6,7 +6,7 @@ from pathlib import Path
 from magicgui import magicgui
 from magicgui.widgets import Container, Label
 
-from ...core import session, segmentation, registration
+from ...core import session, segmentation, registration, puncta
 from .. import popups, viewer_helpers
 from ..decorators import require_active_session, error_handler
 from ...core.registration import generate_global_canvas
@@ -91,7 +91,7 @@ def _automated_preprocessing_magic_widget(
         aligned_dir = output_dir / constants.ALIGNED_DIR
         aligned_dir.mkdir(exist_ok=True, parents=True)
 
-        results = generate_global_canvas(
+        results, bspline_transform, canvas_offset = generate_global_canvas(
             r1_layers_data, r2_layers_data, shift, aligned_dir,
             apply_warp=True,
             progress_callback=lambda p, t: dialog.update_progress(35 + int(p * 0.30), t)
@@ -125,6 +125,7 @@ def _automated_preprocessing_magic_widget(
                 )
 
         # === STEP 4: CONSENSUS NUCLEI ===
+        merged_mask = None
         if match_nuclei:
             r1_mask_path = aligned_dir / f"Aligned_R1_{constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}.tif"
             r2_mask_path = aligned_dir / f"Warped_R2_{constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}.tif"
@@ -163,6 +164,79 @@ def _automated_preprocessing_magic_widget(
                     )
                     lyr.rendering = 'iso_categorical'
 
+        # === STEP 5: TRANSFORM EXISTING PUNCTA LAYERS ===
+        # Find any raw puncta Points layers in the viewer and transform them
+        # into aligned/warped space, renaming them accordingly.
+        puncta_layers = [
+            l for l in list(viewer.layers)
+            if isinstance(l, napari.layers.Points)
+            and constants.PUNCTA_SUFFIX in l.name
+            and constants.ALIGNED_PREFIX not in l.name
+            and constants.WARPED_PREFIX not in l.name
+        ]
+        if puncta_layers:
+            import pandas as pd
+            reports_dir = output_dir / constants.REPORTS_DIR
+            reports_dir.mkdir(exist_ok=True, parents=True)
+            n_puncta = max(len(puncta_layers), 1)
+            for pi, pts_layer in enumerate(puncta_layers):
+                pct = 92 + int(((pi + 1) / n_puncta) * 6)
+                dialog.update_progress(pct, f"Transforming puncta: {pts_layer.name}...")
+
+                # Determine round from layer name
+                name_upper = pts_layer.name.upper()
+                if "R1" in name_upper:
+                    round_id = "R1"
+                elif "R2" in name_upper:
+                    round_id = "R2"
+                else:
+                    continue
+
+                # Build raw_puncta array: Z, Y, X, Nucleus_ID, Intensity, SNR
+                coords = np.array(pts_layer.data)
+                if len(coords) == 0:
+                    continue
+                feats = pts_layer.features if hasattr(pts_layer, 'features') and isinstance(pts_layer.features, pd.DataFrame) and not pts_layer.features.empty else None
+                if feats is not None and len(feats) == len(coords):
+                    nuc_ids = feats['Nucleus_ID'].values if 'Nucleus_ID' in feats.columns else np.zeros(len(coords))
+                    intensity = feats['Intensity'].values if 'Intensity' in feats.columns else np.zeros(len(coords))
+                    snr = feats['SNR'].values if 'SNR' in feats.columns else np.zeros(len(coords))
+                else:
+                    nuc_ids = np.zeros(len(coords))
+                    intensity = np.zeros(len(coords))
+                    snr = np.zeros(len(coords))
+                raw_puncta = np.column_stack([coords, nuc_ids, intensity, snr])
+
+                prefix_str = constants.ALIGNED_PREFIX if round_id == "R1" else constants.WARPED_PREFIX
+                base_name = pts_layer.name.replace(constants.PUNCTA_SUFFIX, "")
+                aligned_layer_name = f"{prefix_str} {base_name.strip()}{constants.PUNCTA_SUFFIX}"
+                csv_out = reports_dir / f"{aligned_layer_name.replace(' ', '_')}.csv"
+
+                transformed = puncta.transform_puncta_to_aligned_space(
+                    raw_puncta=raw_puncta,
+                    round_id=round_id,
+                    shift=shift,
+                    canvas_offset=canvas_offset,
+                    bspline_transform=bspline_transform if round_id == "R2" else None,
+                    consensus_mask=merged_mask if match_nuclei else None,
+                    output_path=csv_out,
+                    layer_name=aligned_layer_name,
+                )
+
+                if transformed is not None and len(transformed) > 0:
+                    ref = type('_ref', (), {
+                        'name': aligned_layer_name.replace(constants.PUNCTA_SUFFIX, ''),
+                        'scale': voxels,
+                        'translate': (0,) * len(voxels),
+                    })()
+                    viewer_helpers.add_or_update_puncta_layer(viewer, ref, transformed)
+
+                # Remove the original raw puncta layer now that it's been transformed
+                try:
+                    viewer.layers.remove(pts_layer)
+                except ValueError:
+                    pass
+
         if hide_raw:
             for layer in viewer.layers:
                 layer.visible = any(x in layer.name for x in ["Aligned", "Warped", "Consensus"])
@@ -187,7 +261,15 @@ _options_header = Label(value="<b>Options:</b>")
 _inner.insertWidget(2, _make_divider())
 _inner.insertWidget(3, _options_header.native)
 
-automated_preprocessing_widget = Container(labels=False)
+class _AutomatedPreprocessingContainer(Container):
+    """Wrapper that delegates reset_choices and exposes the inner magicgui."""
+    _automated_preprocessing_magic_widget = None
+
+    def reset_choices(self):
+        _automated_preprocessing_magic_widget.reset_choices()
+
+automated_preprocessing_widget = _AutomatedPreprocessingContainer(labels=False)
+automated_preprocessing_widget._automated_preprocessing_magic_widget = _automated_preprocessing_magic_widget
 header = Label(value="Automated Preprocessing")
 header.native.setObjectName("widgetHeader")
 info = Label(value="<i>Segmentation, Registration, Warping, and Consensus Nuclei.</i>")

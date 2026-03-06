@@ -49,7 +49,13 @@ _registration_widget.result_label = widgets.Label(value="")
 _registration_widget.append(_registration_widget.result_label)
 
 # --- UI Wrapper ---
-registration_widget = widgets.Container(labels=False)
+class _RegistrationContainer(widgets.Container):
+    """Wrapper that delegates reset_choices and exposes the inner magicgui."""
+    def reset_choices(self):
+        _registration_widget.reset_choices()
+
+registration_widget = _RegistrationContainer(labels=False)
+registration_widget._registration_widget = _registration_widget
 header = widgets.Label(value="Registration")
 header.native.setObjectName("widgetHeader")
 info = widgets.Label(value="<i>Calculates shift between rounds.</i>")

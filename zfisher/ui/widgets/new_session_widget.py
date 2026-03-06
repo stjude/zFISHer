@@ -29,8 +29,8 @@ class NewSessionWidget(Container):
         self._header.native.setObjectName("widgetHeader")
         self._info = Label(value="<i>Start a new zFISHer session from raw data.</i>")
         self._info.native.setObjectName("widgetInfo")
-        self._round1_path = FileEdit(label="R1:", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path("/Users/sstaller/Desktop/ND2_FILE_INPUTS/1-19-24Fdecon.nd2"))
-        self._round2_path = FileEdit(label="R2:", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path("/Users/sstaller/Desktop/ND2_FILE_INPUTS/1-17-24Adecon.nd2"))
+        self._round1_path = FileEdit(label="R1:", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path(r"..."))
+        self._round2_path = FileEdit(label="R2:", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path(r"..."))
      #   self._round1_path = FileEdit(label="Round 1", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path("/Users/sstaller/zFISHer_MicroTests/R1_micro.tif"))
      #   self._round2_path = FileEdit(label="Round 2", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path("/Users/sstaller/zFISHer_MicroTests/R2_micro.tif"))
 
@@ -139,10 +139,47 @@ class NewSessionWidget(Container):
             r2_dapi = io.get_channel_data(r2_sess, constants.DAPI_CHANNEL_NAME)
             seg_results = segmentation.process_session_dapi(
                 r1_data=r1_dapi, r2_data=r2_dapi, output_dir=out_val,
-                progress_callback=lambda p, t: dialog.update_progress(15 + int(p * 0.2), t)
+                progress_callback=lambda p, t: dialog.update_progress(15 + int(p * 0.10), t)
             )
 
-            # --- 4. Registration ---
+            # --- 4. Puncta Detection on Raw Images (per-round masks) ---
+            seg_dir = out_val / constants.SEGMENTATION_DIR
+            puncta_channels = [ch for ch in r1_sess.channels if ch.upper() != constants.DAPI_CHANNEL_NAME.upper()]
+            puncta_params = {
+                'threshold_rel': constants.PUNCTA_THRESHOLD_REL,
+                'min_distance': constants.PUNCTA_MIN_DISTANCE,
+                'method': "Local Maxima"
+            }
+
+            r1_mask_path = seg_dir / f"R1 - {constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}.tif"
+            r2_mask_path = seg_dir / f"R2 - {constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}.tif"
+            r1_mask = tifffile.imread(r1_mask_path) if r1_mask_path.exists() else None
+            r2_mask = tifffile.imread(r2_mask_path) if r2_mask_path.exists() else None
+
+            raw_puncta_results = {}
+            channel_jobs = [("R1", r1_mask), ("R2", r2_mask)]
+            total_jobs = len(channel_jobs) * len(puncta_channels)
+            job_count = max(total_jobs, 1)
+            job_i = 0
+            for rnd, rnd_mask, sess_obj in [("R1", r1_mask, r1_sess), ("R2", r2_mask, r2_sess)]:
+                for ch in puncta_channels:
+                    ch_idx = list(sess_obj.channels).index(ch)
+                    ch_data = sess_obj.data[:, ch_idx, :, :]
+                    job_base = 25 + int((job_i / job_count) * 10)
+                    dialog.update_progress(job_base, f"Detecting puncta (raw): {rnd} {ch}...")
+                    result = puncta.process_puncta_detection(
+                        image_data=ch_data,
+                        mask_data=rnd_mask,
+                        voxels=sess_obj.voxels,
+                        params=puncta_params,
+                        progress_callback=lambda p, t, _b=job_base: dialog.update_progress(
+                            _b + int(p / 100 * 2), f"{rnd} {ch}: {t}"
+                        )
+                    )
+                    raw_puncta_results[(rnd, ch)] = result
+                    job_i += 1
+
+            # --- 5. Registration ---
             shift, _ = registration.calculate_session_registration(
                 seg_results['R1'][1], seg_results['R2'][1],
                 voxels=r1_sess.voxels,
@@ -155,13 +192,12 @@ class NewSessionWidget(Container):
                 )
                 return
 
-            # --- 5. Canvas Generation ---
+            # --- 6. Canvas Generation ---
             r1_layers = [{'name': f"R1 - {ch}", 'data': r1_sess.data[:, i, :, :], 'scale': r1_sess.voxels, 'is_label': False}
                          for i, ch in enumerate(r1_sess.channels)]
             r2_layers = [{'name': f"R2 - {ch}", 'data': r2_sess.data[:, i, :, :], 'scale': r2_sess.voxels, 'is_label': False}
                          for i, ch in enumerate(r2_sess.channels)]
 
-            seg_dir = out_val / constants.SEGMENTATION_DIR
             for prefix, sess_obj, layer_list in [("R1", r1_sess, r1_layers), ("R2", r2_sess, r2_layers)]:
                 mask_name = f"{prefix} - {constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}"
                 mask_path = seg_dir / f"{mask_name}.tif"
@@ -169,14 +205,14 @@ class NewSessionWidget(Container):
                     layer_list.append({'name': mask_name, 'data': tifffile.imread(mask_path), 'scale': sess_obj.voxels, 'is_label': True})
 
             aligned_dir = out_val / constants.ALIGNED_DIR
-            registration.generate_global_canvas(
+            _, bspline_transform, canvas_offset = registration.generate_global_canvas(
                 r1_layers_data=r1_layers, r2_layers_data=r2_layers,
                 shift=shift, output_dir=aligned_dir, apply_warp=True,
                 progress_callback=lambda p, t: dialog.update_progress(45 + int(p * 0.15), t)
             )
             session.update_data("canvas_scale", r1_sess.voxels)
 
-            # --- 6. Consensus Nuclei ---
+            # --- 7. Consensus Nuclei ---
             r1_aligned_mask = aligned_dir / f"Aligned_R1_{constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}.tif"
             r2_warped_mask = aligned_dir / f"Warped_R2_{constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}.tif"
             if not r2_warped_mask.exists():
@@ -195,39 +231,30 @@ class NewSessionWidget(Container):
                 progress_callback=lambda p, t: dialog.update_progress(60 + int(p * 0.1), t)
             )
 
-            # --- 7. Puncta Detection ---
-            puncta_channels = [ch for ch in r1_sess.channels if ch.upper() != constants.DAPI_CHANNEL_NAME.upper()]
-            puncta_params = {
-                'threshold_rel': constants.PUNCTA_THRESHOLD_REL,
-                'min_distance': constants.PUNCTA_MIN_DISTANCE,
-                'method': "Local Maxima"
-            }
-            channel_jobs = [(rnd, pfx) for rnd, pfx in [("R1", "Aligned"), ("R2", "Warped")] for _ in puncta_channels]
-            job_count = max(len(channel_jobs), 1)
+            # --- 8. Transform Puncta to Aligned Space ---
+            job_count = max(len(raw_puncta_results), 1)
             job_i = 0
-            for rnd, prefix_str in [("R1", "Aligned"), ("R2", "Warped")]:
-                for ch in puncta_channels:
-                    ch_path = aligned_dir / f"{prefix_str}_{rnd}_{ch}.tif"
-                    if not ch_path.exists():
-                        ch_path = aligned_dir / f"Aligned_{rnd}_{ch}.tif"
-                    if ch_path.exists():
-                        job_base = 70 + int((job_i / job_count) * 25)
-                        job_span = max(int(25 / job_count), 1)
-                        dialog.update_progress(job_base, f"Detecting puncta: {rnd} {ch}...")
-                        csv_out = seg_dir / f"{prefix_str}_{rnd}_{ch}{constants.PUNCTA_SUFFIX}.csv"
-                        puncta_layer_name = f"{prefix_str} {rnd} - {ch}{constants.PUNCTA_SUFFIX}"
-                        puncta.process_puncta_detection(
-                            image_data=tifffile.imread(ch_path),
-                            mask_data=merged_mask,
-                            voxels=r1_sess.voxels,
-                            params=puncta_params,
-                            output_path=csv_out,
-                            layer_name=puncta_layer_name,
-                            progress_callback=lambda p, t, _b=job_base, _s=job_span: dialog.update_progress(
-                                _b + int(p / 100 * _s), f"{rnd} {ch}: {t}"
-                            )
-                        )
-                    job_i += 1
+            for (rnd, ch), raw_data in raw_puncta_results.items():
+                prefix_str = constants.ALIGNED_PREFIX if rnd == "R1" else constants.WARPED_PREFIX
+                job_base = 70 + int((job_i / job_count) * 25)
+                job_span = max(int(25 / job_count), 1)
+                dialog.update_progress(job_base, f"Transforming puncta: {rnd} {ch}...")
+                csv_out = seg_dir / f"{prefix_str}_{rnd}_{ch}{constants.PUNCTA_SUFFIX}.csv"
+                puncta_layer_name = f"{prefix_str} {rnd} - {ch}{constants.PUNCTA_SUFFIX}"
+                puncta.transform_puncta_to_aligned_space(
+                    raw_puncta=raw_data,
+                    round_id=rnd,
+                    shift=shift,
+                    canvas_offset=canvas_offset,
+                    bspline_transform=bspline_transform if rnd == "R2" else None,
+                    consensus_mask=merged_mask,
+                    output_path=csv_out,
+                    layer_name=puncta_layer_name,
+                    progress_callback=lambda p, t, _b=job_base, _s=job_span: dialog.update_progress(
+                        _b + int(p / 100 * _s), f"{rnd} {ch}: {t}"
+                    )
+                )
+                job_i += 1
 
             # --- 8. Load Results into Viewer ---
             dialog.update_progress(95, "Loading results into viewer...")
