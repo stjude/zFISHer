@@ -60,14 +60,13 @@ def calculate_session_registration(r1_centroids, r2_centroids, voxels=None, prog
 
     return shift, rmsd
 
-def _find_rough_shift_nearest_neighbor(fixed_points, moving_points, n_limit=constants.RANSAC_N_LIMIT, bin_size=constants.RANSAC_BIN_SIZE):
+def _find_rough_shift_vector_voting(fixed_points, moving_points, n_limit=constants.RANSAC_N_LIMIT, bin_size=constants.RANSAC_BIN_SIZE):
     """
-    Finds a rough alignment shift via nearest-neighbor median voting.
+    Finds a rough alignment shift via vector voting (difference histogram peak).
 
-    For each point in the smaller cloud, finds its nearest neighbor in the
-    larger cloud and records the difference vector. The median of these
-    vectors gives a robust initial shift estimate that is resistant to
-    outliers, unmatched points, and centroid quantization artifacts.
+    Computes all pairwise difference vectors between subsampled point clouds,
+    bins them, and returns the most-voted bin center. This is robust to outliers
+    and unequal point counts between rounds.
 
     Parameters
     ----------
@@ -84,25 +83,21 @@ def _find_rough_shift_nearest_neighbor(fixed_points, moving_points, n_limit=cons
     if len(fixed_points) < 1 or len(moving_points) < 1:
         return np.array([0.0, 0.0, 0.0])
 
-    # Subsample for speed
+    # Subsample to keep pairwise computation tractable
     rng = np.random.default_rng(42)
     vote_limit = min(500, n_limit)
     fp = fixed_points if len(fixed_points) <= vote_limit else fixed_points[rng.choice(len(fixed_points), vote_limit, replace=False)]
     mp = moving_points if len(moving_points) <= vote_limit else moving_points[rng.choice(len(moving_points), vote_limit, replace=False)]
 
-    # Use the smaller cloud as query points for efficiency
-    if len(fp) <= len(mp):
-        tree = cKDTree(mp)
-        dists, idxs = tree.query(fp)
-        diffs = fp - mp[idxs]  # fixed - moving = shift to add to moving
-    else:
-        tree = cKDTree(fp)
-        dists, idxs = tree.query(mp)
-        diffs = fp[idxs] - mp  # fixed - moving = shift to add to moving
+    # All pairwise difference vectors (N*M, 3)
+    diffs = (fp[:, np.newaxis, :] - mp[np.newaxis, :, :]).reshape(-1, 3)
 
-    # Median is robust to outlier matches (unmatched nuclei pairing with
-    # distant wrong neighbors). Mean would be biased by these.
-    return np.median(diffs, axis=0)
+    # Bin into histogram and return the peak bin center
+    binned = np.round(diffs / bin_size).astype(np.int32)
+    unique_bins, counts = np.unique(binned, axis=0, return_counts=True)
+    peak = unique_bins[np.argmax(counts)]
+
+    return peak.astype(float) * bin_size
 
 def _get_nearest_neighbor_pairs(fixed_points, moving_points, rough_shift, search_radius=constants.RANSAC_SEARCH_RADIUS, voxels=None):
     """
@@ -241,10 +236,10 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, voxel
         - The calculated (Z, Y, X) shift vector.
         - The calculated RMSD of the inlier points.
     """
-    # 1. Nearest-neighbor median voting to find rough shift
+    # 1. Brute-force Vector Voting to find rough shift
     if progress_callback: progress_callback(10, "Finding rough alignment...")
     logger.debug("Starting registration alignment")
-    rough_shift = _find_rough_shift_nearest_neighbor(fixed_points, moving_points)
+    rough_shift = _find_rough_shift_vector_voting(fixed_points, moving_points)
     
     # 2. Refine using Nearest Neighbors
     if progress_callback: progress_callback(40, "Matching nearest neighbors...")
@@ -388,36 +383,51 @@ def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=16
         The calculated B-spline transform.
     """
     logger.info("Downsampling data by %dx (BinShrink) for registration calculation...", downsample_factor)
-    
+
     # Convert to SimpleITK images (Full Resolution)
     # ITK handles dimensions as (X, Y, Z) from numpy (Z, Y, X)
     fixed_img_full = sitk.GetImageFromArray(fixed_data.astype(np.float32))
     moving_img_full = sitk.GetImageFromArray(moving_data.astype(np.float32))
-    
+    logger.debug("Full-res fixed: size=%s spacing=%s origin=%s", fixed_img_full.GetSize(), fixed_img_full.GetSpacing(), fixed_img_full.GetOrigin())
+    logger.debug("Full-res moving: size=%s spacing=%s origin=%s", moving_img_full.GetSize(), moving_img_full.GetSpacing(), moving_img_full.GetOrigin())
+
     # Use BinShrink for proper downsampling (averaging) and spacing handling
     # Shrink X and Y by factor, keep Z resolution (1)
     shrink_factors = [downsample_factor, downsample_factor, 1]
     fixed_img = sitk.BinShrink(fixed_img_full, shrink_factors)
     moving_img = sitk.BinShrink(moving_img_full, shrink_factors)
-    
+    logger.debug("BinShrunk fixed: size=%s spacing=%s origin=%s", fixed_img.GetSize(), fixed_img.GetSpacing(), fixed_img.GetOrigin())
+    logger.debug("BinShrunk moving: size=%s spacing=%s origin=%s", moving_img.GetSize(), moving_img.GetSpacing(), moving_img.GetOrigin())
+
+    # Create a mask of the overlap region (where BOTH images have signal).
+    # Without this, the B-spline fits to zero-padded borders from align_and_pad_images,
+    # producing wild deformations at the edges that propagate inward.
+    fixed_mask = sitk.BinaryThreshold(fixed_img, lowerThreshold=1.0)
+    moving_mask = sitk.BinaryThreshold(moving_img, lowerThreshold=1.0)
+    overlap_mask = sitk.And(fixed_mask, moving_mask)
+
     # Initialize B-Spline Transform
     # Mesh size determines flexibility (lower = more rigid, higher = more flexible)
     transformDomainMeshSize = [constants.DEFORMABLE_MESH_SIZE] * fixed_img.GetDimension()
     tx = sitk.BSplineTransformInitializer(fixed_img, transformDomainMeshSize)
-    
+    logger.debug("B-spline mesh size: %s, transform domain: %s", transformDomainMeshSize, tx.GetTransformDomainPhysicalDimensions())
+
     # Set up Registration Method
     R = sitk.ImageRegistrationMethod()
-    R.SetMetricAsCorrelation() 
+    R.SetMetricAsCorrelation()
     R.SetMetricSamplingStrategy(R.RANDOM)
     R.SetMetricSamplingPercentage(constants.DEFORMABLE_SAMPLING_PERC)
-    R.SetOptimizerAsLBFGSB(gradientConvergenceTolerance=1e-5, numberOfIterations=constants.DEFORMABLE_ITERATIONS)
+    R.SetMetricFixedMask(overlap_mask)
+    R.SetOptimizerAsLBFGSB(gradientConvergenceTolerance=1e-5, numberOfIterations=constants.DEFORMABLE_ITERATIONS,
+                           costFunctionConvergenceFactor=1e4)
     R.SetInitialTransform(tx, True)
     R.SetInterpolator(sitk.sitkLinear)
-    
+
     logger.info("Starting B-Spline optimization on %s volume...", fixed_img.GetSize())
     # Execute Registration
     outTx = R.Execute(fixed_img, moving_img)
-    logger.info("Registration finished.")
+    logger.info("Registration finished. Final metric: %.6f, Stop condition: %s",
+                R.GetMetricValue(), R.GetOptimizerStopConditionDescription())
     
     return outTx
 
@@ -451,6 +461,9 @@ def apply_deformable_transform(moving_data, transform, fixed_reference_data, is_
     # Optimization: We only need the grid (size/spacing), not the pixel data.
     # Using uint8 zeros saves massive memory compared to casting input to float32.
     fixed_ref = sitk.GetImageFromArray(np.zeros(fixed_reference_data.shape, dtype=np.uint8))
+
+    logger.debug("apply_deformable: moving size=%s spacing=%s, ref size=%s spacing=%s",
+                 moving_img.GetSize(), moving_img.GetSpacing(), fixed_ref.GetSize(), fixed_ref.GetSpacing())
 
     # Setup Resampler
     # Labels: nearest-neighbor to preserve IDs
@@ -669,21 +682,12 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
     start_progress = 60 if (apply_warp and has_dapi) else 20
 
     if num_channels > 0:
-        update(start_progress, "Warping all channels in parallel...")
-        with ThreadPoolExecutor() as executor:
-            futures = {
-                executor.submit(_process_channel_pair, ch_name, pair_data, transform, output_dir): ch_name
-                for ch_name, pair_data in aligned_pairs.items()
-            }
-            completed = 0
-            for future in as_completed(futures):
-                completed += 1
-                ch_name = futures[future]
-                prog = start_progress + int((completed / num_channels) * (100 - start_progress))
-                update(prog, f"Finished {ch_name} ({completed}/{num_channels})...")
-                result_pair = future.result()
-                results.extend(result_pair)
-        gc.collect()
+        for i, (channel_name, pair_data) in enumerate(aligned_pairs.items()):
+            prog = start_progress + int(((i + 1) / num_channels) * (100 - start_progress))
+            update(prog, f"Applying warp to {channel_name}...")
+            result_pair = _process_channel_pair(channel_name, pair_data, transform, output_dir)
+            results.extend(result_pair)
+            gc.collect()
 
     update(100, "Canvas generation complete.")
     return results, transform, final_canvas_offset
