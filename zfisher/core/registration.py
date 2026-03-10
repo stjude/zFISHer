@@ -362,7 +362,7 @@ def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
     
     return padded_fixed, padded_moving, canvas_offset_pixels
 
-def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=16):
+def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=16, use_mask=True):
     """
     Calculates a B-Spline deformable transform using SimpleITK.
 
@@ -376,6 +376,9 @@ def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=16
         The (Z, Y, X) image data to be warped.
     downsample_factor : int, optional
         The factor by which to downsample XY dimensions for faster registration.
+    use_mask : bool, optional
+        If True (default), restricts the metric to the overlap region where
+        both images have signal, preventing edge artifacts from zero-padding.
 
     Returns
     -------
@@ -399,13 +402,6 @@ def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=16
     logger.debug("BinShrunk fixed: size=%s spacing=%s origin=%s", fixed_img.GetSize(), fixed_img.GetSpacing(), fixed_img.GetOrigin())
     logger.debug("BinShrunk moving: size=%s spacing=%s origin=%s", moving_img.GetSize(), moving_img.GetSpacing(), moving_img.GetOrigin())
 
-    # Create a mask of the overlap region (where BOTH images have signal).
-    # Without this, the B-spline fits to zero-padded borders from align_and_pad_images,
-    # producing wild deformations at the edges that propagate inward.
-    fixed_mask = sitk.BinaryThreshold(fixed_img, lowerThreshold=1.0)
-    moving_mask = sitk.BinaryThreshold(moving_img, lowerThreshold=1.0)
-    overlap_mask = sitk.And(fixed_mask, moving_mask)
-
     # Initialize B-Spline Transform
     # Mesh size determines flexibility (lower = more rigid, higher = more flexible)
     transformDomainMeshSize = [constants.DEFORMABLE_MESH_SIZE] * fixed_img.GetDimension()
@@ -417,9 +413,14 @@ def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=16
     R.SetMetricAsCorrelation()
     R.SetMetricSamplingStrategy(R.RANDOM)
     R.SetMetricSamplingPercentage(constants.DEFORMABLE_SAMPLING_PERC)
-    R.SetMetricFixedMask(overlap_mask)
-    R.SetOptimizerAsLBFGSB(gradientConvergenceTolerance=1e-5, numberOfIterations=constants.DEFORMABLE_ITERATIONS,
-                           costFunctionConvergenceFactor=1e4)
+    if use_mask:
+        # Restrict metric to the overlap region where both images have signal.
+        # Prevents B-spline from fitting to zero-padded borders from align_and_pad_images.
+        fixed_mask = sitk.BinaryThreshold(fixed_img, lowerThreshold=1.0)
+        moving_mask = sitk.BinaryThreshold(moving_img, lowerThreshold=1.0)
+        overlap_mask = sitk.And(fixed_mask, moving_mask)
+        R.SetMetricFixedMask(overlap_mask)
+    R.SetOptimizerAsLBFGSB(gradientConvergenceTolerance=1e-5, numberOfIterations=constants.DEFORMABLE_ITERATIONS)
     R.SetInitialTransform(tx, True)
     R.SetInterpolator(sitk.sitkLinear)
 
@@ -428,7 +429,7 @@ def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=16
     outTx = R.Execute(fixed_img, moving_img)
     logger.info("Registration finished. Final metric: %.6f, Stop condition: %s",
                 R.GetMetricValue(), R.GetOptimizerStopConditionDescription())
-    
+
     return outTx
 
 def apply_deformable_transform(moving_data, transform, fixed_reference_data, is_label=False, use_bspline=True):
@@ -542,18 +543,26 @@ def create_checkerboard_image(image_shape, box_size=50):
     image_shape : tuple
         The shape (Z, Y, X) of the output image.
     box_size : int
-        The size of each checkerboard cube in pixels.
+        The size of each checkerboard cube in XY pixels.
+        Z box size is automatically scaled so the checkerboard has
+        roughly cubic cells in physical space, with a minimum of
+        3 Z-transitions to make deformation visible across all slices.
 
     Returns
     -------
     np.ndarray
         A 3D NumPy array with a checkerboard pattern of 0s and 255s.
     """
+    nz = image_shape[0]
+    # Ensure at least 3 full Z-transitions so deformation is visible
+    # across all slices, not just at one boundary.
+    z_box = max(1, min(box_size, nz // 4))
+
     z, y, x = np.mgrid[0:image_shape[0], 0:image_shape[1], 0:image_shape[2]]
-    
+
     # Integer division creates the checkerboard pattern
-    checkerboard = (z // box_size % 2) ^ (y // box_size % 2) ^ (x // box_size % 2)
-    
+    checkerboard = (z // z_box % 2) ^ (y // box_size % 2) ^ (x // box_size % 2)
+
     # Scale to image intensity range (e.g., uint8)
     return (checkerboard * 255).astype(np.uint8)
 # zfisher/core/registration.py
@@ -647,17 +656,22 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
     if apply_warp and has_dapi:
         update(20, "Calculating deformable registration on DAPI...")
         dapi_pair = aligned_pairs[constants.DAPI_CHANNEL_NAME]
-        transform = calculate_deformable_transform(dapi_pair['r1_data'], dapi_pair['r2_data'])
+        transform = calculate_deformable_transform(dapi_pair['r1_data'], dapi_pair['r2_data'], use_mask=True)
         update(50, "Deformable registration complete.")
 
         # --- DEFORMATION VISUALIZATION ---
+        # Separate unmasked transform for visualization so the checkerboard
+        # shows full Z-varying deformation (the mask weakens Z-deformation).
+        update(52, "Computing visualization transform...")
+        viz_transform = calculate_deformable_transform(dapi_pair['r1_data'], dapi_pair['r2_data'], use_mask=False)
+
         update(55, "Generating deformation field...")
-        deformation_vectors = create_deformation_field(dapi_pair['r1_data'].shape, transform, grid_spacing=constants.DEFORMATION_GRID_SPACING)
+        deformation_vectors = create_deformation_field(dapi_pair['r1_data'].shape, viz_transform, grid_spacing=constants.DEFORMATION_GRID_SPACING)
         vector_layer_name = constants.DEFORMATION_FIELD_NAME
         vector_path = output_dir / f"{vector_layer_name}.npy"
         np.save(vector_path, deformation_vectors)
         set_processed_file(vector_layer_name, str(vector_path), layer_type='vectors')
-        
+
         vector_meta = {'scale': dapi_pair['r1_meta']['scale']}
         results.append({
             'data': deformation_vectors, 'name': vector_layer_name, 'meta': vector_meta, 'type': 'vectors'
@@ -665,7 +679,7 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
 
         update(60, "Generating warped checkerboard...")
         checkerboard_img = create_checkerboard_image(dapi_pair['r1_data'].shape, box_size=constants.DEFORMATION_GRID_SPACING)
-        warped_checkerboard = apply_deformable_transform(checkerboard_img, transform, dapi_pair['r1_data'], is_label=False)
+        warped_checkerboard = apply_deformable_transform(checkerboard_img, viz_transform, dapi_pair['r1_data'], is_label=False)
         
         checker_layer_name = constants.WARPED_CHECKERBOARD_NAME
         checker_path = output_dir / f"{checker_layer_name}.tif"
