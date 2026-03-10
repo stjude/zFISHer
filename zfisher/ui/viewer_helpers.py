@@ -301,7 +301,7 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
     if layer_name in viewer.layers:
         # Update existing layer
         pts_layer = viewer.layers[layer_name]
-        
+
         # Get existing data and features
         existing_coords = pts_layer.data
         existing_features = pts_layer.features
@@ -312,18 +312,30 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
             next_id = int(max_id) + 1 if pd.notna(max_id) else 0
         else:
             next_id = 0
-            
+
         # Assign new unique IDs to the new data
         new_features['puncta_id'] = np.arange(next_id, next_id + len(new_features))
 
         # Merge data
         combined_coords = segmentation.merge_puncta(existing_coords, coords)
         combined_features = pd.concat([existing_features, new_features], ignore_index=True)
-        
-        # Update layer
-        pts_layer.data = combined_coords
-        pts_layer.features = combined_features
-        pts_layer.text = text_params
+
+        # Remove and recreate the layer atomically to avoid vispy OpenGL
+        # access violations caused by intermediate redraws between separate
+        # .data / .features / .text assignments.
+        layer_scale = pts_layer.scale
+        layer_translate = pts_layer.translate
+        viewer.layers.remove(pts_layer)
+        viewer.add_points(
+            combined_coords,
+            name=layer_name,
+            size=3,
+            face_color="yellow",
+            scale=layer_scale,
+            translate=layer_translate,
+            features=combined_features,
+            text=text_params,
+        )
 
     else:
         # Create new layer

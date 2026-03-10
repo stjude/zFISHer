@@ -117,7 +117,7 @@ def _nuclei_matching_widget(
                     removed_total += n_removed
                     coords = coords[inside_mask]
                     if not features.empty:
-                        features = features.iloc[inside_mask].reset_index(drop=True)
+                        features = features[inside_mask].reset_index(drop=True)
 
                 pts_layer.data = coords
                 if not features.empty:

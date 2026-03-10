@@ -303,7 +303,7 @@ def launch_zfisher():
     app.setWindowIcon(icon)
 
     # --- 2. Create Viewer ---
-    viewer = napari.Viewer(title="zFISHer - 3D Colocalization", ndisplay=2)
+    viewer = napari.Viewer(title="zFISHer - 3D Colocalization of Sequential Multiplexed FISH in Cell Monolayer", ndisplay=2)
 
     # Apply icon — deferred so it runs after napari finishes its own window setup
     def _apply_icon():
