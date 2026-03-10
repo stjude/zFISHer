@@ -26,7 +26,7 @@ from .widgets.colocalization_widget import colocalization_widget
 from .widgets.export_visualization_widget import ExportVisualizationWidget
 from .widgets.mask_editor_widget import mask_editor_widget, delete_mask_under_mouse, erase_at_cursor
 from .widgets.puncta_editor_widget import puncta_editor_widget, delete_point_under_mouse
-from .widgets.capture_widget import capture_widget, capture_with_hotkey, region_capture_with_hotkey
+from .widgets.capture_widget import capture_widget, capture_with_hotkey, region_capture_with_hotkey, ArrowOverlay
 
 # Import the event handlers
 from . import events, style
@@ -367,6 +367,9 @@ def launch_zfisher():
 
     scale_bar_widget = DraggableScaleBar(viewer, parent=viewer_canvas_native)
     viewer.window.custom_scale_bar = scale_bar_widget
+
+    arrow_overlay = ArrowOverlay(viewer, parent=viewer_canvas_native)
+    viewer.window.arrow_overlay = arrow_overlay
     
     nuclei_segmentation_widget = NucleiSegmentationWidget(viewer)
     alignment_consensus_widget = AlignmentConsensusWidget(viewer)

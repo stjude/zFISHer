@@ -1,71 +1,289 @@
 import napari
 import numpy as np
+import warnings as _warnings
 from pathlib import Path
 from magicgui import magicgui, widgets
 from qtpy.QtWidgets import QWidget
-from qtpy.QtGui import QPainter, QPen, QBrush, QColor
-from qtpy.QtCore import Qt, QRect
+from qtpy.QtGui import QPainter, QPen, QBrush, QColor, QPolygonF
+from qtpy.QtCore import Qt, QRect, QPointF, QEvent
 
 from ...core import session
 from .. import popups
 from ..decorators import require_active_session
 from ... import constants
 
-# --- Arrow Drawing (Vectors-based, lightweight, works in 2D and 3D) ---
+# --- Arrow Overlay (QPainter-based, world-anchored, screen-rendered) ---
 
-def _build_vectors(start, end, head_fraction=0.25, head_width_ratio=0.5):
-    """Return (N, 2, D) vectors array for one arrow: shaft + two barbs.
+class ArrowOverlay(QWidget):
+    """Transparent widget that draws arrows on top of the napari canvas.
 
-    Vectors format: each row is [start_point, direction_vector].
+    Arrow endpoints are stored in *data* coordinates (matching the image
+    layers) and projected to screen space via the vispy camera transform
+    on every repaint.  This keeps arrows anchored to their 3-D positions
+    while rendering them as clean 2-D graphics that are never occluded.
     """
-    direction = end - start
-    length = np.linalg.norm(direction)
-    if length < 1e-6:
+
+    def __init__(self, viewer, parent=None):
+        super().__init__(parent)
+        self.viewer = viewer
+        self._arrow_endpoints = []   # list of (start, end) np arrays in data coords
+        self._preview_start = None   # set while an arrow is being drawn
+        self._preview_end = None
+        self._synced = False         # True once sync_from_session has run
+
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+        # Repaint whenever the camera or displayed slice changes
+        viewer.camera.events.connect(self._on_camera_change)
+        viewer.dims.events.current_step.connect(self._on_camera_change)
+
+        if parent:
+            parent.installEventFilter(self)
+            self.resize(parent.size())
+            self.move(0, 0)
+
+        self.show()
+        self.raise_()
+
+    def eventFilter(self, obj, event):
+        if obj is self.parent() and event.type() == QEvent.Resize:
+            self.resize(self.parent().size())
+            self.move(0, 0)
+        return super().eventFilter(obj, event)
+
+    def _on_camera_change(self, event=None):
+        # Skip repaint when hidden or when there are no arrows to draw
+        if not self.isVisible():
+            return
+        if not self._arrow_endpoints and self._preview_start is None:
+            return
+        self.update()
+
+    # ---- coordinate transforms ----
+
+    def _get_reference_transform(self):
+        """Scale and translate from the first image layer, or defaults."""
+        ndim = self.viewer.dims.ndim
+        for layer in self.viewer.layers:
+            if isinstance(layer, napari.layers.Image):
+                return np.array(layer.scale), np.array(layer.translate)
+        return np.ones(ndim), np.zeros(ndim)
+
+    def _data_to_world(self, data_point):
+        scale, translate = self._get_reference_transform()
+        return np.asarray(data_point) * scale + translate
+
+    def _get_scene_transform(self):
+        """Return the vispy scene-to-canvas Transform, or *None*."""
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("ignore", FutureWarning)
+            qt_viewer = self.viewer.window.qt_viewer
+
+        # Strategy 1 – use any layer's vispy visual node (most reliable)
+        layer_to_visual = getattr(qt_viewer, 'layer_to_visual', None)
+        if layer_to_visual is not None:
+            for layer in self.viewer.layers:
+                try:
+                    visual = layer_to_visual[layer]
+                    return visual.node.get_transform(
+                        map_from='scene', map_to='canvas'
+                    )
+                except (KeyError, AttributeError):
+                    continue
+
+        # Strategy 2 – get the ViewBox from the canvas or qt_viewer
+        for src in (
+            getattr(qt_viewer, 'canvas', None),
+            qt_viewer,
+        ):
+            view = getattr(src, 'view', None) or getattr(src, '_view', None)
+            if view is not None and hasattr(view, 'scene'):
+                return view.scene.get_transform(map_to='canvas')
+
         return None
 
-    unit = direction / length
-    h_len = np.clip(length * head_fraction, 1.5, length * 0.4)
-    h_half_w = h_len * head_width_ratio
-    base = end - h_len * unit
+    def _device_pixel_ratio(self):
+        """Return the device-pixel-ratio for the canvas widget."""
+        try:
+            with _warnings.catch_warnings():
+                _warnings.simplefilter("ignore", FutureWarning)
+                native = self.viewer.window.qt_viewer.canvas.native
+            return float(getattr(native, 'devicePixelRatio', lambda: 1.0)())
+        except Exception:
+            return 1.0
 
-    # Perpendicular in YX plane
-    ndim = len(direction)
-    perp = np.zeros(ndim)
-    if ndim >= 3:
-        dy, dx = direction[-2], direction[-1]
-        yx_len = np.hypot(dy, dx)
-        if yx_len > 1e-6:
-            perp[-2], perp[-1] = -dx / yx_len, dy / yx_len
-        else:
-            perp[-2] = 1.0
-    else:
-        dy, dx = direction[0], direction[1]
-        yx_len = np.hypot(dy, dx)
-        if yx_len > 1e-6:
-            perp[0], perp[1] = -dx / yx_len, dy / yx_len
-        else:
-            perp[0] = 1.0
+    def _build_projection(self):
+        """Pre-compute everything needed to project data→screen coords.
 
-    barb_l = base + h_half_w * perp
-    barb_r = base - h_half_w * perp
+        Returns a callable  ``project(data_point) -> (sx, sy) | (None, None)``
+        that is cheap to call per-point, or *None* if projection is impossible.
+        """
+        scale, translate = self._get_reference_transform()
+        displayed = list(self.viewer.dims.displayed)
+        rev_displayed = list(reversed(displayed))
 
-    return np.array([
-        [start, direction],          # shaft
-        [end, barb_l - end],         # left barb
-        [end, barb_r - end],         # right barb
-    ])
+        # Try vispy scene transform first
+        try:
+            tr = self._get_scene_transform()
+        except Exception:
+            tr = None
+
+        if tr is not None:
+            dpr = self._device_pixel_ratio()
+            buf = np.zeros(4)
+            buf[3] = 1.0
+            nd = len(rev_displayed)
+
+            def _project_vispy(data_point):
+                world = np.asarray(data_point) * scale + translate
+                for i, d in enumerate(rev_displayed):
+                    buf[i] = world[d]
+                screen = tr.map(buf)
+                return float(screen[0]) / dpr, float(screen[1]) / dpr
+
+            return _project_vispy
+
+        # Fallback: manual 2-D
+        if self.viewer.dims.ndisplay == 2:
+            with _warnings.catch_warnings():
+                _warnings.simplefilter("ignore", FutureWarning)
+                native = self.viewer.window.qt_viewer.canvas.native
+            canvas_w = native.width()
+            canvas_h = native.height()
+            center = self.viewer.camera.center
+            zoom = self.viewer.camera.zoom
+            ydim, xdim = displayed
+
+            def _project_manual(data_point):
+                world = np.asarray(data_point) * scale + translate
+                sx = (world[xdim] - center[xdim]) * zoom + canvas_w / 2
+                sy = (world[ydim] - center[ydim]) * zoom + canvas_h / 2
+                return sx, sy
+
+            return _project_manual
+
+        return None
+
+    # ---- session sync ----
+
+    def sync_from_session(self):
+        """Load saved arrow endpoints from the session's .npy file."""
+        if self._synced:
+            return
+        self._synced = True
+        out_dir = session.get_data("output_dir")
+        if not out_dir:
+            return
+        arrows_path = Path(out_dir) / constants.SEGMENTATION_DIR / "Arrows.npy"
+        if arrows_path.exists():
+            data = np.load(arrows_path)
+            if data.ndim == 3 and data.shape[1] == 2 and data.shape[0] > 0:
+                self._arrow_endpoints = [
+                    (data[i, 0].copy(), data[i, 1].copy())
+                    for i in range(len(data))
+                ]
+                self.update()
+        _update_arrow_count()
+
+    # ---- rendering ----
+
+    def paintEvent(self, event):
+        arrows = list(self._arrow_endpoints)
+        has_preview = (
+            self._preview_start is not None and self._preview_end is not None
+        )
+        if has_preview:
+            arrows.append((self._preview_start, self._preview_end))
+
+        if not arrows:
+            return
+
+        # Build projection once for the whole frame
+        project = self._build_projection()
+        if project is None:
+            return
+
+        # Pre-compute slice filter values (only needed in 2D)
+        is_2d = self.viewer.dims.ndisplay == 2
+        if is_2d:
+            displayed = set(self.viewer.dims.displayed)
+            current_step = self.viewer.dims.current_step
+            non_displayed = [d for d in range(self.viewer.dims.ndim) if d not in displayed]
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        committed_pen = QPen(QColor(255, 255, 255), 2)
+        committed_brush = QBrush(QColor(255, 255, 255))
+        preview_pen = QPen(QColor(255, 255, 255, 128), 2, Qt.DashLine)
+
+        n_committed = len(self._arrow_endpoints)
+
+        for i, (start_data, end_data) in enumerate(arrows):
+            is_preview = i >= n_committed
+
+            # Slice filter (2D only, skip for preview)
+            if not is_preview and is_2d:
+                on_slice = True
+                for d in non_displayed:
+                    arrow_z = (start_data[d] + end_data[d]) * 0.5
+                    if abs(arrow_z - current_step[d]) > 0.5:
+                        on_slice = False
+                        break
+                if not on_slice:
+                    continue
+
+            sx, sy = project(start_data)
+            ex, ey = project(end_data)
+
+            if is_preview:
+                painter.setPen(preview_pen)
+                painter.setBrush(Qt.NoBrush)
+            else:
+                painter.setPen(committed_pen)
+                painter.setBrush(committed_brush)
+
+            # Shaft
+            painter.drawLine(int(sx), int(sy), int(ex), int(ey))
+
+            # Arrowhead
+            dx, dy = ex - sx, ey - sy
+            length = (dx * dx + dy * dy) ** 0.5
+            if length < 2:
+                continue
+            ux, uy = dx / length, dy / length
+            head_len = min(15, length * 0.3)
+            head_w = head_len * 0.5
+            px, py = -uy, ux
+            bx = ex - head_len * ux
+            by = ey - head_len * uy
+            triangle = QPolygonF([
+                QPointF(ex, ey),
+                QPointF(bx + head_w * px, by + head_w * py),
+                QPointF(bx - head_w * px, by - head_w * py),
+            ])
+            painter.drawPolygon(triangle)
+
+        painter.end()
 
 
 class ArrowDrawer:
-    """Draw arrows on a napari Vectors layer (works in both 2D and 3D)."""
+    """Keyboard-driven arrow drawing that feeds an ArrowOverlay."""
 
-    def __init__(self, viewer: napari.Viewer):
+    def __init__(self, viewer: napari.Viewer, overlay: ArrowOverlay):
         self.viewer = viewer
+        self.overlay = overlay
         self.start_pos = None
-        self.arrows_layer = None
         self._is_active = False
-        self._arrow_endpoints = []          # list of (start, end) np arrays
         self._save_callback = self._create_save_callback()
+
+        # Load any previously saved arrows into the overlay
+        self.overlay.sync_from_session()
+
+    @property
+    def _arrow_endpoints(self):
+        return self.overlay._arrow_endpoints
 
     # ---- persistence ----
 
@@ -83,14 +301,14 @@ class ArrowDrawer:
                 np.save(arrows_path, data)
                 session.set_processed_file(
                     "Arrows", str(arrows_path),
-                    layer_type='vectors', metadata={'subtype': 'arrows'}
+                    layer_type='arrows', metadata={'subtype': 'arrows'}
                 )
+            _update_arrow_count()
         return _save
 
-    # ---- layer management ----
+    # ---- coordinate helpers ----
 
     def _get_reference_transform(self):
-        """Get scale and translate from the first image layer, or defaults."""
         ndim = self.viewer.dims.ndim
         for layer in self.viewer.layers:
             if isinstance(layer, napari.layers.Image):
@@ -98,87 +316,8 @@ class ArrowDrawer:
         return np.ones(ndim), np.zeros(ndim)
 
     def _world_to_data(self, world_pos):
-        """Convert world coordinates to data coordinates using the reference layer transform."""
         scale, translate = self._get_reference_transform()
         return (np.array(world_pos) - translate) / scale
-
-    def _get_or_create_layer(self):
-        if self.arrows_layer and self.arrows_layer.name in self.viewer.layers:
-            # Keep scale/translate in sync with image layers
-            scale, translate = self._get_reference_transform()
-            self.arrows_layer.scale = scale
-            self.arrows_layer.translate = translate
-            return self.arrows_layer
-
-        for layer in self.viewer.layers:
-            if layer.name != "Arrows":
-                continue
-            if isinstance(layer, napari.layers.Vectors):
-                self.arrows_layer = layer
-                self._sync_endpoints_from_session()
-                scale, translate = self._get_reference_transform()
-                self.arrows_layer.scale = scale
-                self.arrows_layer.translate = translate
-                return layer
-            # Old Shapes-based arrows: convert
-            if isinstance(layer, napari.layers.Shapes):
-                self.viewer.layers.remove(layer)
-                self._sync_endpoints_from_session()
-                break
-
-        ndim = self.viewer.dims.ndim
-        empty = np.empty((0, 2, ndim))
-        scale, translate = self._get_reference_transform()
-        self.arrows_layer = self.viewer.add_vectors(
-            empty, name="Arrows", edge_color='white',
-            edge_width=2, opacity=1.0,
-            scale=scale, translate=translate,
-        )
-        if self._arrow_endpoints:
-            self._refresh_layer()
-            self._save_callback()
-        return self.arrows_layer
-
-    def _sync_endpoints_from_session(self):
-        if self._arrow_endpoints:
-            return
-        out_dir = session.get_data("output_dir")
-        if not out_dir:
-            return
-        arrows_path = Path(out_dir) / constants.SEGMENTATION_DIR / "Arrows.npy"
-        if arrows_path.exists():
-            data = np.load(arrows_path)
-            if data.ndim == 3 and data.shape[1] == 2 and data.shape[0] > 0:
-                self._arrow_endpoints = [
-                    (data[i, 0].copy(), data[i, 1].copy()) for i in range(len(data))
-                ]
-
-    # ---- rendering ----
-
-    def _build_all_vectors(self, preview_end=None):
-        """Build (N, 2, D) vectors array for all arrows + optional preview."""
-        parts = []
-        for start, end in self._arrow_endpoints:
-            vecs = _build_vectors(start, end)
-            if vecs is not None:
-                parts.append(vecs)
-
-        if self.start_pos is not None and preview_end is not None:
-            # Preview: just a single shaft vector, no arrowhead
-            direction = preview_end - self.start_pos
-            parts.append(np.array([[self.start_pos, direction]]))
-
-        if parts:
-            return np.concatenate(parts, axis=0)
-
-        ndim = self.viewer.dims.ndim
-        return np.empty((0, 2, ndim))
-
-    def _refresh_layer(self, preview_end=None):
-        """Update the Vectors layer data."""
-        if self.arrows_layer is None:
-            return
-        self.arrows_layer.data = self._build_all_vectors(preview_end)
 
     # ---- key interaction ----
 
@@ -186,10 +325,15 @@ class ArrowDrawer:
         """Press 'a' to set start point, press 'a' again to set end point."""
         if not self._is_active:
             return
+        if viewer.dims.ndisplay != 2:
+            viewer.status = "Switch to 2D slice view to draw arrows."
+            return
         cursor = self._world_to_data(viewer.cursor.position)
         if self.start_pos is None:
             self.start_pos = cursor.copy()
-            self._refresh_layer(preview_end=self.start_pos)
+            self.overlay._preview_start = self.start_pos
+            self.overlay._preview_end = self.start_pos.copy()
+            self.overlay.update()
             viewer.status = "Arrow start set. Press 'A' at end point, 'Escape' to cancel, Ctrl+Z to undo."
         else:
             if np.linalg.norm(cursor - self.start_pos) > 1e-3:
@@ -198,7 +342,9 @@ class ArrowDrawer:
             else:
                 viewer.status = "Arrow too small, cancelled."
             self.start_pos = None
-            self._refresh_layer()
+            self.overlay._preview_start = None
+            self.overlay._preview_end = None
+            self.overlay.update()
             self._save_callback()
 
     def _on_key_escape(self, viewer):
@@ -206,7 +352,9 @@ class ArrowDrawer:
             return
         if self.start_pos is not None:
             self.start_pos = None
-            self._refresh_layer()
+            self.overlay._preview_start = None
+            self.overlay._preview_end = None
+            self.overlay.update()
             viewer.status = "Arrow cancelled."
 
     def _on_key_undo(self, viewer):
@@ -215,27 +363,52 @@ class ArrowDrawer:
         if self._arrow_endpoints:
             self._arrow_endpoints.pop()
             self.start_pos = None
-            self._refresh_layer()
+            self.overlay._preview_start = None
+            self.overlay._preview_end = None
+            self.overlay.update()
             self._save_callback()
             viewer.status = "Removed last arrow."
+
+    def _on_key_delete(self, viewer):
+        """Delete the arrow closest to the cursor."""
+        if not self._is_active or not self._arrow_endpoints:
+            return
+        cursor = self._world_to_data(viewer.cursor.position)
+        # Find the arrow whose midpoint is nearest to the cursor
+        best_idx = None
+        best_dist = float('inf')
+        for i, (start, end) in enumerate(self._arrow_endpoints):
+            midpoint = (start + end) / 2.0
+            dist = np.linalg.norm(cursor - midpoint)
+            if dist < best_dist:
+                best_dist = dist
+                best_idx = i
+        if best_idx is not None:
+            self._arrow_endpoints.pop(best_idx)
+            self.overlay.update()
+            self._save_callback()
+            viewer.status = "Deleted nearest arrow."
 
     # ---- activation ----
 
     def set_active(self, active: bool):
         self._is_active = active
         if active:
-            self._get_or_create_layer()
-            self.viewer.status = "Arrow drawing ON. Press 'A' to set start, 'A' again to set end. Ctrl+Z to undo."
+            self.overlay.sync_from_session()
+            self.viewer.status = "Arrow drawing ON. 'A': draw | 'D': delete nearest | Ctrl+Z: undo | Esc: cancel"
             self.viewer.bind_key('a', self._on_key_a, overwrite=True)
+            self.viewer.bind_key('d', self._on_key_delete, overwrite=True)
             self.viewer.bind_key('Escape', self._on_key_escape, overwrite=True)
             self.viewer.bind_key('Control-z', self._on_key_undo, overwrite=True)
         else:
             if self.start_pos is not None:
                 self.start_pos = None
-                self._refresh_layer()
+                self.overlay._preview_start = None
+                self.overlay._preview_end = None
+                self.overlay.update()
             self.viewer.status = "Arrow drawing OFF."
-            # Unbind by setting to None
             self.viewer.bind_key('a', None, overwrite=True)
+            self.viewer.bind_key('d', None, overwrite=True)
             self.viewer.bind_key('Escape', None, overwrite=True)
             self.viewer.bind_key('Control-z', None, overwrite=True)
 
@@ -455,8 +628,46 @@ def region_capture_with_hotkey(viewer: napari.Viewer):
 initial_filename = _get_next_filename()
 _capture_widget.output_filename.value = initial_filename if initial_filename else "capture1.png"
 
-# Arrow drawing checkbox
+# Arrow checkboxes and tally
 arrow_chk = widgets.CheckBox(text="Draw Arrows")
+arrow_show_chk = widgets.CheckBox(text="Show Arrows", value=True)
+arrow_count_label = widgets.Label(value="Arrows: 0")
+arrow_clear_btn = widgets.PushButton(text="Clear All Arrows")
+
+def _update_arrow_count():
+    """Refresh the arrow tally label from the overlay."""
+    viewer = napari.current_viewer()
+    overlay = getattr(viewer.window, 'arrow_overlay', None) if viewer else None
+    n = len(overlay._arrow_endpoints) if overlay else 0
+    arrow_count_label.value = f"Arrows: {n}"
+
+@arrow_clear_btn.changed.connect
+def _on_clear_arrows():
+    global arrow_drawer
+    viewer = napari.current_viewer()
+    if not viewer:
+        return
+    overlay = getattr(viewer.window, 'arrow_overlay', None)
+    if overlay is None:
+        return
+    overlay._arrow_endpoints.clear()
+    overlay._preview_start = None
+    overlay._preview_end = None
+    overlay._synced = True  # prevent reload from stale file
+    overlay.update()
+    if arrow_drawer is not None:
+        arrow_drawer.start_pos = None
+        arrow_drawer._save_callback()
+    else:
+        # Save empty arrows to disk even without an active drawer
+        out_dir = session.get_data("output_dir")
+        if out_dir:
+            seg_dir = Path(out_dir) / constants.SEGMENTATION_DIR
+            seg_dir.mkdir(exist_ok=True, parents=True)
+            arrows_path = seg_dir / "Arrows.npy"
+            np.save(arrows_path, np.empty((0, 2, viewer.dims.ndim)))
+    _update_arrow_count()
+    viewer.status = "All arrows cleared."
 
 # Scale Bar Options
 sb_visible = widgets.CheckBox(text="Visible", value=True)
@@ -492,8 +703,8 @@ def _on_sb_pixels(state: bool):
         viewer.window.custom_scale_bar.show_pixels = state
         viewer.window.custom_scale_bar.recalculate() # Recalculate text
 
-# This needs a viewer instance, so we can't do it until the viewer is created.
-# A bit of a hack: we'll check for the viewer when the checkbox is clicked.
+# Arrow drawer is created lazily; the overlay is created in viewer.py at startup
+# and stored on viewer.window.arrow_overlay.
 arrow_drawer = None
 
 @arrow_chk.changed.connect
@@ -502,13 +713,24 @@ def _on_arrow_draw_toggled(state: bool):
     viewer = napari.current_viewer()
     if not viewer:
         arrow_chk.value = False
-        print("Cannot activate arrow drawing without a viewer.")
         return
-    
+
+    overlay = getattr(viewer.window, 'arrow_overlay', None)
+    if overlay is None:
+        arrow_chk.value = False
+        print("Arrow overlay not initialised — cannot draw arrows.")
+        return
+
     if arrow_drawer is None:
-        arrow_drawer = ArrowDrawer(viewer)
-        
+        arrow_drawer = ArrowDrawer(viewer, overlay)
+
     arrow_drawer.set_active(state)
+
+@arrow_show_chk.changed.connect
+def _on_arrow_show_toggled(state: bool):
+    viewer = napari.current_viewer()
+    if viewer and hasattr(viewer.window, 'arrow_overlay'):
+        viewer.window.arrow_overlay.setVisible(state)
 
 # --- UI Wrapper ---
 from qtpy.QtWidgets import QFrame
@@ -544,6 +766,9 @@ _layout.addWidget(_capture_widget.call_button.native)
 _layout.addWidget(_make_divider())
 _layout.addWidget(_arrow_header.native)
 _layout.addWidget(arrow_chk.native)
+_layout.addWidget(arrow_show_chk.native)
+_layout.addWidget(arrow_count_label.native)
+_layout.addWidget(arrow_clear_btn.native)
 # --- Scale Bar ---
 _layout.addWidget(_make_divider())
 _layout.addWidget(_sb_header.native)

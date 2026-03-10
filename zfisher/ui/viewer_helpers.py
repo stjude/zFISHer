@@ -159,6 +159,11 @@ def _load_image_layer(viewer, name, path, scale, file_info, translate):
     viewer.add_image(data, name=name, blending='additive', scale=scale, colormap=c_map, translate=translate)
 
 def _load_vectors_layer(viewer, name, path, scale, file_info, translate):
+    # Arrow annotations are handled by the ArrowOverlay, not a Vectors layer
+    if file_info.get('subtype') == 'arrows':
+        _sync_arrow_overlay(viewer)
+        return
+
     data = np.load(path, allow_pickle=True)
     vector_params = {
         'data': data, 'name': name, 'opacity': 1.0, 'edge_width': 1,
@@ -173,32 +178,20 @@ def _load_vectors_layer(viewer, name, path, scale, file_info, translate):
 
 def _load_shapes_layer(viewer, name, path, scale, file_info, translate):
     """Load a Shapes layer from a saved .npy file (e.g. arrow annotations)."""
-    from .widgets.capture_widget import build_arrow_shapes
-
-    data = np.load(path, allow_pickle=True)
     subtype = file_info.get('subtype')
 
-    if subtype == 'arrows' and data.ndim == 3 and data.shape[1] == 2:
-        shapes = []
-        shape_types = []
-        for i in range(len(data)):
-            start, end = data[i, 0], data[i, 1]
-            shaft, head = build_arrow_shapes(start, end)
-            if shaft is not None:
-                shapes.append(shaft)
-                shape_types.append('line')
-                shapes.append(head)
-                shape_types.append('polygon')
+    # Arrow annotations are now rendered by the ArrowOverlay
+    if subtype == 'arrows':
+        _sync_arrow_overlay(viewer)
+        return
 
-        if shapes:
-            viewer.add_shapes(
-                data=shapes, shape_type=shape_types, name=name,
-                edge_color='white', face_color='white',
-                edge_width=2, opacity=1.0,
-                scale=scale, translate=translate,
-            )
-    else:
-        logger.warning("Unknown shapes subtype '%s' for layer '%s'.", subtype, name)
+    logger.warning("Unknown shapes subtype '%s' for layer '%s'.", subtype, name)
+
+def _sync_arrow_overlay(viewer):
+    """Trigger the ArrowOverlay to reload endpoints from the session file."""
+    overlay = getattr(viewer.window, 'arrow_overlay', None)
+    if overlay is not None:
+        overlay.sync_from_session()
 
 def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, default_scale: tuple, canvas_offset_pixels: list = None, progress_callback=None):
     """
@@ -259,6 +252,8 @@ def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, defau
                 _load_vectors_layer(viewer, name, path, default_scale, file_info, translate)
             elif layer_type == 'shapes':
                 _load_shapes_layer(viewer, name, path, default_scale, file_info, translate)
+            elif layer_type == 'arrows':
+                _sync_arrow_overlay(viewer)
             else:
                 logger.warning("Unknown layer type '%s' for layer '%s'.", layer_type, name)
 
