@@ -62,10 +62,13 @@ def calculate_distances(points_layers_data):
             dists, idxs = tree.query(src_data)
 
             # Collect results
+            src_nuc_ids = source.get('nucleus_ids')
             for i, (d, idx) in enumerate(zip(dists, idxs)):
+                nuc_id = int(src_nuc_ids[i]) if src_nuc_ids is not None and i < len(src_nuc_ids) else None
                 results.append({
                     "Source_Layer": source['name'],
                     "Source_ID": i,
+                    "Nucleus_ID": nuc_id,
                     "Target_Layer": target['name'],
                     "Target_ID": idx,
                     "Distance_um": d,
