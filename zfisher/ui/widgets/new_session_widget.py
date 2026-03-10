@@ -3,6 +3,7 @@ from pathlib import Path
 import napari
 import os
 import gc
+import numpy as np
 import tifffile
 
 from qtpy.QtWidgets import QFrame
@@ -264,6 +265,9 @@ class NewSessionWidget(Container):
 
             self._viewer.layers.clear()
 
+            # Calculate world-space translate from canvas offset
+            canvas_translate = (np.array(canvas_offset) * np.array(voxels)).tolist() if canvas_offset is not None else [0, 0, 0]
+
             def _stem_to_layer_name(stem):
                 """Convert file stems like 'Aligned_R1_FITC' to layer names like 'Aligned R1 - FITC'."""
                 parts = stem.split("_", 2)
@@ -275,34 +279,35 @@ class NewSessionWidget(Container):
                 name = _stem_to_layer_name(tif_path.stem)
                 data = tifffile.imread(tif_path)
                 if constants.MASKS_SUFFIX.lower() in name.lower():
-                    lyr = self._viewer.add_labels(data, name=name, opacity=0.3, scale=voxels, visible=False)
+                    lyr = self._viewer.add_labels(data, name=name, opacity=0.3, scale=voxels, translate=canvas_translate, visible=False)
                     lyr.rendering = 'iso_categorical'
                 else:
                     cmap = next((c for k, c in constants.CHANNEL_COLORS.items() if k.upper() in name.upper()), 'gray')
                     self._viewer.add_image(data, name=name, blending='additive', colormap=cmap, scale=voxels,
+                                           translate=canvas_translate,
                                            visible=constants.DAPI_CHANNEL_NAME.upper() in name.upper())
 
             # Deformation field (.npy vectors) from aligned_dir
             deform_path = aligned_dir / f"{constants.DEFORMATION_FIELD_NAME}.npy"
             if deform_path.exists():
                 viewer_helpers._load_vectors_layer(self._viewer, constants.DEFORMATION_FIELD_NAME,
-                                                   deform_path, voxels, {}, [0, 0, 0])
+                                                   deform_path, voxels, {}, canvas_translate)
 
             consensus_path = seg_dir / f"{constants.CONSENSUS_MASKS_NAME}.tif"
             if consensus_path.exists():
                 data = tifffile.imread(consensus_path)
-                lyr = self._viewer.add_labels(data, name=constants.CONSENSUS_MASKS_NAME, opacity=0.5, scale=voxels, visible=False)
+                lyr = self._viewer.add_labels(data, name=constants.CONSENSUS_MASKS_NAME, opacity=0.5, scale=voxels, translate=canvas_translate, visible=False)
                 lyr.rendering = 'iso_categorical'
 
             # Consensus nuclei ID points (.npy structured array)
             ids_path = seg_dir / f"{constants.CONSENSUS_MASKS_NAME}{constants.CONSENSUS_IDS_SUFFIX}.npy"
             if ids_path.exists():
                 viewer_helpers._load_points_layer(self._viewer, f"{constants.CONSENSUS_MASKS_NAME}{constants.CONSENSUS_IDS_SUFFIX}",
-                                                  ids_path, voxels, {'subtype': 'structured_ids'}, [0, 0, 0])
+                                                  ids_path, voxels, {'subtype': 'structured_ids'}, canvas_translate)
 
             for csv_path in sorted(seg_dir.glob(f"*{constants.PUNCTA_SUFFIX}.csv")):
                 layer_name = _stem_to_layer_name(csv_path.stem)
-                viewer_helpers._load_points_layer(self._viewer, layer_name, csv_path, voxels, {'subtype': 'puncta_csv'}, [0, 0, 0])
+                viewer_helpers._load_points_layer(self._viewer, layer_name, csv_path, voxels, {'subtype': 'puncta_csv'}, canvas_translate)
 
             self._viewer.dims.axis_labels = ("z", "y", "x")
             self._viewer.reset_view()

@@ -99,6 +99,10 @@ def _automated_preprocessing_magic_widget(
         session.update_data("canvas_scale", voxels)
         r1_layers_data.clear(); r2_layers_data.clear(); gc.collect()
 
+        # Calculate world-space translate from canvas offset for aligned layers
+        canvas_translate = np.array(canvas_offset) * np.array(voxels) if canvas_offset is not None else None
+        translate_arg = tuple(canvas_translate) if canvas_translate is not None else None
+
         n_results = max(len(results), 1)
         for i, layer_info in enumerate(results):
             pct = 65 + int(((i + 1) / n_results) * 5)
@@ -109,19 +113,21 @@ def _automated_preprocessing_magic_widget(
             if layer_type == 'labels':
                 lyr = viewer.add_labels(
                     layer_info['data'].astype(np.uint32), name=layer_info['name'],
-                    scale=meta['scale'], opacity=0.6
+                    scale=meta['scale'], translate=translate_arg, opacity=0.6
                 )
                 lyr.rendering = 'iso_categorical'
             elif layer_type == 'image':
                 viewer.add_image(
                     layer_info['data'], name=layer_info['name'],
                     colormap=meta.get('colormap', 'gray'), scale=meta['scale'],
+                    translate=translate_arg,
                     blending=meta.get('blending', 'additive'), opacity=meta.get('opacity', 1.0)
                 )
             elif layer_type == 'vectors':
                 viewer.add_vectors(
                     layer_info['data'], name=layer_info['name'],
-                    scale=meta['scale'], edge_width=0.2, length=2.5, edge_color='cyan'
+                    scale=meta['scale'], translate=translate_arg,
+                    edge_width=0.2, length=2.5, edge_color='cyan'
                 )
 
         # === STEP 4: CONSENSUS NUCLEI ===
@@ -158,9 +164,11 @@ def _automated_preprocessing_magic_widget(
                 if ref_layer:
                     viewer_helpers.add_consensus_nuclei_to_viewer(viewer, ref_layer, merged_mask, pts1)
                 else:
+                    # Compute world-space translate from canvas offset
+                    translate = np.array(canvas_offset) * np.array(voxels) if canvas_offset is not None else (0,) * len(voxels)
                     lyr = viewer.add_labels(
                         merged_mask, name=constants.CONSENSUS_MASKS_NAME,
-                        scale=voxels, opacity=0.5
+                        scale=voxels, translate=translate, opacity=0.5
                     )
                     lyr.rendering = 'iso_categorical'
 
