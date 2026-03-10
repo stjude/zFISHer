@@ -1,3 +1,4 @@
+import logging
 import napari
 import numpy as np
 from collections import deque
@@ -13,6 +14,8 @@ from ..decorators import require_active_session
 from ...core import segmentation
 from ... import constants
 from ._shared import make_header_divider
+
+logger = logging.getLogger(__name__)
 
 
 class _MaskUndoStack:
@@ -54,13 +57,50 @@ class _MaskUndoStack:
 _mask_undo = _MaskUndoStack()
 
 class MaskHighlighter:
-    """Highlights the hovered nucleus by setting its color to red via the Labels layer color dict."""
+    """Highlights the hovered nucleus by setting its color to red.
+
+    napari 0.6.x uses a CyclicLabelColormap with a fixed-size colors array
+    (default 50).  Labels are coloured by ``label_id % num_colors``, so
+    different IDs can share a slot.  On enable we expand the colormap so every
+    label in the mask gets its own unique slot, eliminating collisions.
+    """
+
+    _RED = np.array([1.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
     def __init__(self, viewer):
         self.viewer = viewer
         self.last_layer = None
         self.last_id = None
         self._original_color = None
         self.active = False
+        self._expanded_layer = None  # track which layer we expanded
+
+    # ---- colormap expansion ------------------------------------------------
+
+    @staticmethod
+    def _ensure_unique_colormap(layer):
+        """Expand the cyclic colormap so every label ID has a unique slot."""
+        from napari.utils.colormaps.colormap import CyclicLabelColormap
+
+        max_id = int(layer.data.max())
+        num_colors = len(layer.colormap.colors)
+        if num_colors > max_id:
+            return  # already large enough
+
+        old_colors = layer.colormap.colors.copy()
+        num_old = len(old_colors)
+        num_new = max_id + 1
+        new_colors = np.empty((num_new, 4), dtype=np.float32)
+        for i in range(num_new):
+            new_colors[i] = old_colors[i % num_old]
+
+        layer.colormap = CyclicLabelColormap(
+            colors=new_colors,
+            seed=layer.colormap.seed,
+            background_value=layer.colormap.background_value,
+        )
+
+    # ---- enable / disable --------------------------------------------------
 
     def enable(self):
         if not self.active:
@@ -74,28 +114,48 @@ class MaskHighlighter:
             self.reset_highlight()
             self.active = False
 
+    # ---- highlight / reset -------------------------------------------------
+
     def reset_highlight(self):
         """Restores the original color of the last highlighted label."""
         if self.last_layer is not None and self.last_id is not None:
             if self._original_color is not None:
-                self.last_layer.color = {self.last_id: self._original_color}
+                self._set_label_color(self.last_layer, self.last_id, self._original_color)
             self._original_color = None
         self.last_layer = None
         self.last_id = None
 
+    @staticmethod
+    def _set_label_color(layer, label_id, color):
+        """Write into the colormap colors array and trigger a GPU refresh."""
+        num_colors = len(layer.colormap.colors)
+        idx = int(label_id) % num_colors
+        layer.colormap.colors[idx] = np.asarray(color, dtype=np.float32)
+        layer.events.colormap()
+
     def perform_highlight(self, layer, label_id):
         """Sets the hovered label to opaque red."""
+        # Expand colormap if this is a new layer or IDs exceed its size
+        if layer is not self._expanded_layer:
+            self._ensure_unique_colormap(layer)
+            self._expanded_layer = layer
+
+        num_colors = len(layer.colormap.colors)
+        idx = int(label_id) % num_colors
+
         # Restore previous highlight first
         if self.last_id is not None and self.last_id != label_id and self._original_color is not None:
-            layer.color = {self.last_id: self._original_color}
+            self._set_label_color(layer, self.last_id, self._original_color)
 
         # Store original color before overriding
-        self._original_color = layer.get_color(label_id).copy()
-        layer.color = {label_id: np.array([1.0, 0.0, 0.0, 1.0])}
+        self._original_color = layer.colormap.colors[idx].copy()
+        self._set_label_color(layer, label_id, self._RED)
 
         self.last_layer = layer
         self.last_id = label_id
         self.viewer.status = f"Hovering Nucleus ID: {label_id} (Press 'C' to delete)"
+
+    # ---- mouse callback ----------------------------------------------------
 
     def on_mouse_move(self, viewer, event):
         if not self.active:
@@ -107,15 +167,18 @@ class MaskHighlighter:
                 self.reset_highlight()
             return
 
-        id_under_cursor = layer.get_value(
-            event.position,
-            view_direction=event.view_direction,
-            dims_displayed=list(event.dims_displayed),
-            world=True
-        )
+        try:
+            id_under_cursor = layer.get_value(
+                event.position,
+                view_direction=event.view_direction,
+                dims_displayed=list(event.dims_displayed),
+                world=True
+            )
+        except Exception:
+            return
 
         if id_under_cursor == self.last_id:
-            return  # still over same nucleus, nothing to do
+            return
 
         if id_under_cursor is None or id_under_cursor == 0:
             if self.last_id is not None:
@@ -428,7 +491,7 @@ def _on_hover_mode(value: bool):
     global _highlighter
     if _highlighter is None:
         _highlighter = MaskHighlighter(viewer)
-    
+
     if value:
         _highlighter.enable()
         viewer.status = "Hover Edit Mode ON. Nuclei turn red. Press 'C' to delete."
