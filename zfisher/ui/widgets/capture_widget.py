@@ -180,50 +180,44 @@ class ArrowDrawer:
             return
         self.arrows_layer.data = self._build_all_vectors(preview_end)
 
-    # ---- mouse interaction ----
+    # ---- key interaction ----
 
-    def on_mouse_drag(self, viewer, event):
-        """Generator-based mouse-drag handler for drawing arrows."""
+    def _on_key_a(self, viewer):
+        """Press 'a' to set start point, press 'a' again to set end point."""
         if not self._is_active:
             return
-
-        # Right-click: delete last arrow
-        if event.type == 'mouse_press' and event.button == 2:
-            if self._arrow_endpoints:
-                self._arrow_endpoints.pop()
-                self._refresh_layer()
-                self._save_callback()
-                self.viewer.status = "Removed last arrow."
-            yield
-            return
-
-        # Ctrl+Shift + Left-click to draw (combo is unused by napari)
-        if not ('Control' in event.modifiers and 'Shift' in event.modifiers) or event.button != 1:
-            return
-
-        # --- press ---
-        self.start_pos = self._world_to_data(event.position)
-        self._refresh_layer(preview_end=self.start_pos)
-        self.viewer.status = "Release mouse to finish arrow."
-        yield
-
-        # --- move ---
-        while event.type == 'mouse_move':
-            cursor = self._world_to_data(event.position)
-            self._refresh_layer(preview_end=cursor)
-            yield
-
-        # --- release ---
-        cursor = self._world_to_data(event.position)
-        if np.linalg.norm(cursor - self.start_pos) > 1e-3:
-            self._arrow_endpoints.append((self.start_pos.copy(), cursor.copy()))
-            self.viewer.status = "Arrow drawn."
+        cursor = self._world_to_data(viewer.cursor.position)
+        if self.start_pos is None:
+            self.start_pos = cursor.copy()
+            self._refresh_layer(preview_end=self.start_pos)
+            viewer.status = "Arrow start set. Press 'A' at end point, 'Escape' to cancel, Ctrl+Z to undo."
         else:
-            self.viewer.status = "Arrow too small, cancelled."
+            if np.linalg.norm(cursor - self.start_pos) > 1e-3:
+                self._arrow_endpoints.append((self.start_pos.copy(), cursor.copy()))
+                viewer.status = "Arrow drawn."
+            else:
+                viewer.status = "Arrow too small, cancelled."
+            self.start_pos = None
+            self._refresh_layer()
+            self._save_callback()
 
-        self.start_pos = None
-        self._refresh_layer()
-        self._save_callback()
+    def _on_key_escape(self, viewer):
+        if not self._is_active:
+            return
+        if self.start_pos is not None:
+            self.start_pos = None
+            self._refresh_layer()
+            viewer.status = "Arrow cancelled."
+
+    def _on_key_undo(self, viewer):
+        if not self._is_active:
+            return
+        if self._arrow_endpoints:
+            self._arrow_endpoints.pop()
+            self.start_pos = None
+            self._refresh_layer()
+            self._save_callback()
+            viewer.status = "Removed last arrow."
 
     # ---- activation ----
 
@@ -231,16 +225,19 @@ class ArrowDrawer:
         self._is_active = active
         if active:
             self._get_or_create_layer()
-            self.viewer.status = "Arrow drawing ON. Ctrl+Shift+drag to draw, right-click to remove last."
-            if self.on_mouse_drag not in self.viewer.mouse_drag_callbacks:
-                self.viewer.mouse_drag_callbacks.insert(0, self.on_mouse_drag)
+            self.viewer.status = "Arrow drawing ON. Press 'A' to set start, 'A' again to set end. Ctrl+Z to undo."
+            self.viewer.bind_key('a', self._on_key_a, overwrite=True)
+            self.viewer.bind_key('Escape', self._on_key_escape, overwrite=True)
+            self.viewer.bind_key('Control-z', self._on_key_undo, overwrite=True)
         else:
             if self.start_pos is not None:
                 self.start_pos = None
                 self._refresh_layer()
             self.viewer.status = "Arrow drawing OFF."
-            if self.on_mouse_drag in self.viewer.mouse_drag_callbacks:
-                self.viewer.mouse_drag_callbacks.remove(self.on_mouse_drag)
+            # Unbind by setting to None
+            self.viewer.bind_key('a', None, overwrite=True)
+            self.viewer.bind_key('Escape', None, overwrite=True)
+            self.viewer.bind_key('Control-z', None, overwrite=True)
 
 # --- State for auto-incrementing filename ---
 capture_count = 1
