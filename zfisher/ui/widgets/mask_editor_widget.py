@@ -219,8 +219,11 @@ def _mask_editor_widget(
         return
         
     _mask_undo.begin(mask_layer.data)
-    mask_layer.data = segmentation.merge_labels(mask_layer.data, source_id, target_id)
+    mask_layer.data[mask_layer.data == source_id] = target_id
     _mask_undo.end(mask_layer.data)
+    mask_layer.refresh()
+    _remove_id_from_points_layer(mask_layer, source_id)
+    _schedule_save(mask_layer)
 
     viewer.status = f"Merged ID {source_id} into {target_id} ({count} pixels)."
 
@@ -236,7 +239,12 @@ def _delete_label_inplace(layer, label_id):
     _schedule_save(layer)
 
 def _remove_id_from_points_layer(mask_layer, deleted_id):
-    """Remove a single ID from the IDs points layer without recomputing centroids."""
+    """Remove a single ID from the IDs points layer without recomputing centroids.
+
+    Uses remove-and-recreate to avoid vispy GL access violations caused by
+    setting .data and .properties separately (napari bug with stale
+    _indices_view / GPU buffers).
+    """
     viewer = napari.current_viewer()
     if not viewer:
         return
@@ -248,8 +256,27 @@ def _remove_id_from_points_layer(mask_layer, deleted_id):
     if len(labels) == 0:
         return
     keep = labels != deleted_id
-    pts_layer.data = pts_layer.data[keep]
-    pts_layer.properties = {'label': labels[keep]}
+    new_data = pts_layer.data[keep]
+    new_labels = labels[keep]
+
+    # Preserve layer state before removal
+    layer_idx = list(viewer.layers).index(pts_layer)
+    scale = pts_layer.scale
+    translate = pts_layer.translate
+    out_of_slice = pts_layer.out_of_slice_display
+
+    viewer.layers.remove(pts_layer)
+
+    if len(new_data) > 0:
+        new_layer = viewer.add_points(
+            new_data, name=ids_name, size=1, face_color='transparent',
+            scale=scale, translate=translate,
+            properties={'label': new_labels},
+            text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
+            blending='translucent_no_depth',
+        )
+        new_layer.out_of_slice_display = out_of_slice
+        viewer.layers.move(len(viewer.layers) - 1, layer_idx)
 
 _save_timer = QTimer()
 _save_timer.setSingleShot(True)

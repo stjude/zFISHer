@@ -17,6 +17,8 @@ class ProgressDialog(QProgressDialog):
     """
     def __init__(self, parent=None, title="Processing...", text="Please wait..."):
         super().__init__(text, None, 0, 100, parent)
+        self._canvas_frozen = False
+        self._canvas_ref = None
         self.setWindowTitle(title)
         self.setWindowModality(Qt.WindowModal)
         self.setMinimumDuration(0)  # Show immediately
@@ -30,12 +32,38 @@ class ProgressDialog(QProgressDialog):
         if text:
             self.setLabelText(text)
         self.setValue(value)
-        QApplication.processEvents()  # Ensure UI updates are visible
-    
+        if not self._canvas_frozen:
+            QApplication.processEvents()  # Ensure UI updates are visible
+
+    def freeze_canvas(self):
+        """Freeze the vispy canvas to prevent GL draws during layer mutations.
+
+        Call this before adding/removing layers inside a processEvents loop.
+        The canvas is automatically unfrozen when the dialog closes.
+        """
+        import napari
+        viewer = napari.current_viewer()
+        if viewer and not self._canvas_frozen:
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", FutureWarning)
+                self._canvas_ref = viewer.window.qt_viewer.canvas
+            self._canvas_ref.freeze()
+            self._canvas_frozen = True
+
+    def unfreeze_canvas(self):
+        """Unfreeze the vispy canvas so normal rendering resumes."""
+        if self._canvas_frozen and self._canvas_ref is not None:
+            self._canvas_ref.freeze()  # vispy freeze is a toggle
+            self._canvas_ref.update()  # force a single clean redraw
+            self._canvas_ref = None
+            self._canvas_frozen = False
+
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        self.unfreeze_canvas()
         self.close()
 
 class BatchProgressDialog(QDialog):

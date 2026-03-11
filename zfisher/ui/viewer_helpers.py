@@ -461,9 +461,19 @@ def add_consensus_nuclei_to_viewer(viewer: napari.Viewer, r1_mask_layer: napari.
         labels = np.array([p['label'] for p in pts1])
 
         if ids_layer_name in viewer.layers:
-            ids_layer = viewer.layers[ids_layer_name]
-            ids_layer.data = coords
-            ids_layer.properties = {'label': labels}
+            # Remove and recreate to avoid vispy GL access violations
+            old = viewer.layers[ids_layer_name]
+            layer_idx = list(viewer.layers).index(old)
+            viewer.layers.remove(old)
+            points_layer = viewer.add_points(
+                coords, name=ids_layer_name, size=1, face_color='transparent',
+                scale=r1_mask_layer.scale, translate=r1_mask_layer.translate,
+                properties={'label': labels},
+                text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
+                blending='translucent_no_depth'
+            )
+            points_layer.out_of_slice_display = True
+            viewer.layers.move(len(viewer.layers) - 1, layer_idx)
         else:
             points_layer = viewer.add_points(
                 coords, name=ids_layer_name, size=1, face_color='transparent',
@@ -498,9 +508,22 @@ def add_or_update_label_ids(viewer: napari.Viewer, labels_layer: napari.layers.L
     labels = np.array([p['label'] for p in pts_data]) if pts_data else np.empty(0)
     
     if name in viewer.layers:
-        viewer.layers[name].data = coords
-        viewer.layers[name].properties = {'label': labels}
-        viewer.layers[name].out_of_slice_display = True
+        # Remove and recreate to avoid vispy GL access violations caused by
+        # setting .data and .properties separately (napari stale _indices_view bug).
+        old = viewer.layers[name]
+        layer_idx = list(viewer.layers).index(old)
+        scale = old.scale
+        translate = old.translate
+        viewer.layers.remove(old)
+        if len(coords) > 0:
+            new_layer = viewer.add_points(
+                coords, name=name, size=1, face_color='transparent', scale=scale,
+                translate=translate, properties={'label': labels},
+                text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
+                blending='translucent_no_depth'
+            )
+            new_layer.out_of_slice_display = True
+            viewer.layers.move(len(viewer.layers) - 1, layer_idx)
     elif len(coords) > 0:
         layer = viewer.add_points(
             coords, name=name, size=1, face_color='transparent', scale=labels_layer.scale,

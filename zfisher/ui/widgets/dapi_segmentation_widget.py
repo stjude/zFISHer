@@ -49,6 +49,10 @@ def _dapi_segmentation_widget(
             masks, centroids = segment_nuclei_classical(layer.data, progress_callback=on_progress)
             results.append((layer, masks, centroids))
 
+        # Freeze vispy canvas before adding layers to prevent GL access
+        # violations from processEvents triggering draws mid-mutation.
+        dialog.freeze_canvas()
+
         # Load results into viewer with progress feedback
         for i, (layer, masks, centroids) in enumerate(results):
             pct = seg_pct + int(((i + 1) / len(results)) * (100 - seg_pct))

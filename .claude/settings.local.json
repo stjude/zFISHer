@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Read(//c/Users/Zev/anaconda3/envs/zFISHer/lib/site-packages/napari/utils/**)"
-    ]
-  }
-}

@@ -5,7 +5,7 @@ import warnings
 from pathlib import Path
 from functools import partial
 
-from qtpy.QtWidgets import QApplication, QToolBox, QToolButton, QWidget, QLabel, QVBoxLayout, QDockWidget
+from qtpy.QtWidgets import QApplication, QToolBox, QToolButton, QPushButton, QWidget, QLabel, QVBoxLayout, QDockWidget
 from qtpy.QtGui import QIcon, QPainter, QPalette, QPixmap
 from qtpy.QtCore import Qt, QPoint, QTimer, QEvent
 from magicgui import widgets
@@ -274,10 +274,23 @@ def create_welcome_widget(viewer):
             
     return container
 
+def _patch_vispy_arcball():
+    """Fix vispy arcball bug: _arcball receives 3D coords but expects 2D."""
+    try:
+        import vispy.scene.cameras.arcball as _ab
+        _orig = _ab._arcball
+        def _safe_arcball(xy, wh):
+            return _orig(xy[:2], wh)
+        _ab._arcball = _safe_arcball
+    except Exception:
+        pass
+
 def launch_zfisher():
+    _patch_vispy_arcball()
+
     # FIX: Ensure QApplication is initialized properly
     app = QApplication.instance() or QApplication([])
-    
+
     # --- 1. Amethyst & Mint Theme (RE-ENABLED) ---
     theme_name = style.register_napari_theme()
 
@@ -356,6 +369,12 @@ def launch_zfisher():
         print(f"Could not apply theme: {e}")
 
     viewer.scale_bar.visible = False
+
+    # Hide the menu bar and remove all Alt+key shortcuts so it can't be reopened
+    menu_bar = viewer.window._qt_window.menuBar()
+    menu_bar.setVisible(False)
+    for action in menu_bar.actions():
+        action.setShortcut("")
     
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", FutureWarning)
@@ -417,14 +436,76 @@ def launch_zfisher():
 
     dock_widget = viewer.window.add_dock_widget(toolbox, area="right", name="zFISHer Workflow")
 
-    def lock_ui():
-        if dock_widget:
-            dock_widget.setFeatures(QDockWidget.NoDockWidgetFeatures)
-            empty_title = QWidget()
-            empty_title.setFixedHeight(0)
-            dock_widget.setTitleBarWidget(empty_title)
+    def _hide_title_bar_buttons(dock):
+        """Hide float/hide/close buttons in a dock's napari custom title bar."""
+        title_bar = dock.titleBarWidget()
+        if title_bar is not None:
+            for btn in title_bar.findChildren(QPushButton):
+                obj_name = btn.objectName()
+                if obj_name in ('QTitleBarHideButton', 'QTitleBarFloatButton', 'QTitleBarCloseButton'):
+                    btn.hide()
 
-    QTimer.singleShot(1000, lock_ui)
+    def _patch_dock_visibility(dock):
+        """Monkey-patch _on_visibility_changed so title bar buttons stay hidden
+        even after napari recreates the title bar."""
+        if getattr(dock, '_lock_patched', False):
+            return
+        orig = getattr(dock, '_on_visibility_changed', None)
+        if orig is not None:
+            def _patched(visible, _orig=orig, _dock=dock):
+                _orig(visible)
+                _hide_title_bar_buttons(_dock)
+            dock._on_visibility_changed = _patched
+            # Reconnect the signal to the patched version
+            try:
+                dock.visibilityChanged.disconnect(orig)
+            except (TypeError, RuntimeError):
+                pass
+            dock.visibilityChanged.connect(_patched)
+        dock._lock_patched = True
+
+    def lock_ui():
+        # Lock every dock widget: disable float/close but keep titles visible
+        qt_window = viewer.window._qt_window
+        for child in qt_window.findChildren(QDockWidget):
+            child.setFeatures(QDockWidget.NoDockWidgetFeatures)
+            _hide_title_bar_buttons(child)
+            _patch_dock_visibility(child)
+            # In QtViewerButtons: keep only home and 2D/3D, centered with spacing
+            # In QtLayerButtons: keep only trash can
+            for w in child.findChildren(QWidget):
+                class_name = w.__class__.__name__
+                if class_name == 'QtViewerButtons':
+                    layout = w.layout()
+                    if layout:
+                        home_btn = nd_btn = None
+                        for btn in w.findChildren(QPushButton):
+                            mode = btn.property('mode')
+                            if mode == 'home':
+                                home_btn = btn
+                            elif mode == 'ndisplay_button':
+                                nd_btn = btn
+                            else:
+                                btn.hide()
+                        # Clear layout and rebuild centered with spacing
+                        if home_btn and nd_btn:
+                            while layout.count():
+                                layout.takeAt(0)
+                            layout.addStretch(1)
+                            layout.addWidget(home_btn)
+                            layout.addSpacing(12)
+                            layout.addWidget(nd_btn)
+                            layout.addStretch(1)
+                elif class_name == 'QtLayerButtons':
+                    for btn in w.findChildren(QPushButton):
+                        tooltip = (btn.toolTip() or '').lower()
+                        if 'delete' not in tooltip:
+                            btn.hide()
+
+    # Run immediately so the user never sees the controls flash
+    lock_ui()
+    # Run again after Qt finishes layout in case napari adds docks lazily
+    QTimer.singleShot(0, lock_ui)
 
     # Event Binding
     events.install_layer_lock(viewer)
