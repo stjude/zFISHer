@@ -394,7 +394,13 @@ def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napa
 
     if masks is not None:
         mask_layer_name = f"{source_layer.name}{constants.MASKS_SUFFIX}"
-        layer = viewer.add_labels(masks, name=mask_layer_name, opacity=0.3, visible=False, scale=source_layer.scale)
+        if mask_layer_name in viewer.layers:
+            layer = viewer.layers[mask_layer_name]
+            layer.data = masks
+            layer.scale = source_layer.scale
+            layer.refresh()
+        else:
+            layer = viewer.add_labels(masks, name=mask_layer_name, opacity=0.3, visible=False, scale=source_layer.scale)
         # Use iso_categorical for better 3D rendering of masks alongside points
         layer.rendering = 'iso_categorical'
         if seg_dir:
@@ -408,7 +414,14 @@ def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napa
     if centroids is not None:
         centroid_layer_name = f"{source_layer.name}{constants.CENTROIDS_SUFFIX}"
         ids = np.arange(len(centroids)) + 1
-        viewer.add_points(
+        if centroid_layer_name in viewer.layers:
+            # Remove and recreate to avoid vispy stale-buffer issues
+            old = viewer.layers[centroid_layer_name]
+            layer_idx = list(viewer.layers).index(old)
+            viewer.layers.remove(old)
+        else:
+            layer_idx = None
+        new_pts = viewer.add_points(
             centroids,
             name=centroid_layer_name,
             size=5,
@@ -418,6 +431,8 @@ def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napa
             text={'string': '{id}', 'size': 8, 'color': 'white', 'translation': np.array([0, -5, 0])},
             blending='translucent_no_depth'
         )
+        if layer_idx is not None:
+            viewer.layers.move(len(viewer.layers) - 1, layer_idx)
         if seg_dir:
             cent_path = seg_dir / f"{centroid_layer_name}.npy"
             np.save(cent_path, centroids)

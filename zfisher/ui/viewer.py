@@ -6,7 +6,7 @@ from pathlib import Path
 from functools import partial
 
 from qtpy.QtWidgets import QApplication, QToolBox, QToolButton, QPushButton, QWidget, QLabel, QVBoxLayout, QDockWidget
-from qtpy.QtGui import QIcon, QPainter, QPalette, QPixmap
+from qtpy.QtGui import QColor, QIcon, QPainter, QPalette, QPixmap
 from qtpy.QtCore import Qt, QPoint, QTimer, QEvent
 from magicgui import widgets
 from ..core import session
@@ -497,10 +497,56 @@ def launch_zfisher():
                             layout.addWidget(nd_btn)
                             layout.addStretch(1)
                 elif class_name == 'QtLayerButtons':
+                    delete_btn = None
                     for btn in w.findChildren(QPushButton):
                         tooltip = (btn.toolTip() or '').lower()
-                        if 'delete' not in tooltip:
+                        if 'delete' in tooltip:
+                            delete_btn = btn
+                        elif btn.objectName() != 'toggleVisibilityBtn':
                             btn.hide()
+                    # Add a show/hide all layers toggle button (once)
+                    if delete_btn and not getattr(w, '_has_toggle', False):
+                        from qtpy.QtSvg import QSvgRenderer
+                        from qtpy.QtGui import QImage, QPixmap, QPainter
+                        from qtpy.QtCore import QSize, Qt as _Qt
+
+                        def _tinted_icon_from_svg(svg_path, color='white', size=28):
+                            renderer = QSvgRenderer(svg_path)
+                            img = QImage(QSize(size, size), QImage.Format_ARGB32)
+                            img.fill(_Qt.transparent)
+                            p = QPainter(img)
+                            renderer.render(p)
+                            p.setCompositionMode(QPainter.CompositionMode_SourceIn)
+                            p.fillRect(img.rect(), QColor(color))
+                            p.end()
+                            return QIcon(QPixmap.fromImage(img))
+
+                        icons_dir = Path(napari.__file__).parent / 'resources' / 'icons'
+                        icon_on = _tinted_icon_from_svg(str(icons_dir / 'visibility.svg'))
+                        icon_off = _tinted_icon_from_svg(str(icons_dir / 'visibility_off.svg'))
+
+                        toggle_btn = QPushButton(w)
+                        toggle_btn.setObjectName('toggleVisibilityBtn')
+                        toggle_btn.setToolTip('Show/hide all layers')
+                        toggle_btn.setFixedSize(28, 28)
+                        toggle_btn.setIconSize(QSize(20, 20))
+                        toggle_btn.setIcon(icon_on)
+                        toggle_btn.setStyleSheet(
+                            "QPushButton { border: none; }"
+                            "QPushButton:hover { background: rgba(255,255,255,30); border-radius: 4px; }"
+                        )
+                        toggle_btn._all_visible = True
+                        def _toggle_all_layers(checked=False, btn=toggle_btn, _on=icon_on, _off=icon_off):
+                            btn._all_visible = not btn._all_visible
+                            btn.setIcon(_on if btn._all_visible else _off)
+                            for layer in viewer.layers:
+                                layer.visible = btn._all_visible
+                        toggle_btn.clicked.connect(_toggle_all_layers)
+                        layout = w.layout()
+                        if layout:
+                            idx = layout.indexOf(delete_btn)
+                            layout.insertWidget(idx, toggle_btn)
+                        w._has_toggle = True
 
     # Run immediately so the user never sees the controls flash
     lock_ui()
