@@ -100,9 +100,6 @@ def _detect_spots_dog(image_data, threshold_rel, sigma, z_scale=1.0):
 
 def detect_spots_3d(image_data, method="Local Maxima", progress_callback=None, **kwargs):
     """Main entry point for Step 6 math."""
-    if kwargs.get('use_decon', False):
-        if progress_callback: progress_callback(10, "Deconvolving image...")
-        image_data = apply_deconvolution(image_data, iterations=kwargs.get('decon_iter', 10))
     if kwargs.get('use_tophat', False):
         if progress_callback: progress_callback(25, "Subtracting background (top-hat)...")
         image_data = preprocess_white_tophat(image_data, radius=kwargs.get('tophat_radius', 10),

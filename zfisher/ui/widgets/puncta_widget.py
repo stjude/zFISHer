@@ -17,8 +17,6 @@ from ._shared import make_header_divider
         "label": "Algorithm", 
         "choices": ["Local Maxima", "Laplacian of Gaussian", "Difference of Gaussian", "Radial Symmetry"]
     },
-    use_decon={"label": "Deconvolve (Crowded Fields)"},
-    decon_iter={"label": "Iterations", "min": 1, "max": 50, "value": 10},
     threshold={"label": "Sensitivity (0-1)", "min": 0.01, "max": 1.0, "step": 0.01, "value": constants.PUNCTA_THRESHOLD_REL},
     min_distance={"label": "Min Distance (px)", "min": 1, "max": 20, "value": constants.PUNCTA_MIN_DISTANCE},
     sigma={"label": "Spot Radius (Sigma)", "min": 0.0, "max": 5.0, "step": 0.1, "value": constants.PUNCTA_SIGMA},
@@ -33,8 +31,6 @@ def _puncta_widget(
     nuclei_layer: "napari.layers.Labels",
     nuclei_only: bool = True,
     method: str = "Local Maxima",
-    use_decon: bool = False, 
-    decon_iter: int = 10,
     threshold: float = constants.PUNCTA_THRESHOLD_REL,
     min_distance: int = constants.PUNCTA_MIN_DISTANCE,
     sigma: float = constants.PUNCTA_SIGMA,
@@ -50,10 +46,8 @@ def _puncta_widget(
     with popups.ProgressDialog(viewer.window._qt_window, f"Processing {image_layer.name}...") as dialog:
         # Package parameters for the core orchestrator
         params = {
-            'method': method, 
-            'use_decon': use_decon, 
-            'decon_iter': decon_iter,
-            'threshold_rel': threshold, 
+            'method': method,
+            'threshold_rel': threshold,
             'z_scale': z_scale,
             'min_distance': min_distance, 
             'sigma': sigma,
@@ -114,7 +108,7 @@ _METHOD_INFO = {
             "Finds all local maxima with minimal filtering "
             "(min distance = 1px). Designed for high-density transcript fields where spots "
             "are tightly packed. Very sensitive — will detect faint spots others miss, but may "
-            "over-count in noisy images. Pair with <i>Deconvolve</i> or <i>Top-hat</i> to reduce false positives."
+            "over-count in noisy images. Pair with <i>Top-hat</i> to reduce false positives."
         ),
     },
 }
@@ -214,9 +208,9 @@ info = widgets.Label(value="<i>Algorithmic detection of puncta.</i>")
 info.native.setObjectName("widgetInfo")
 
 # Insert section headers into the magicgui form's internal layout
-# Original order: image_layer(0), nuclei_layer(1), nuclei_only(2), method(3),
-#   use_decon(4), decon_iter(5), threshold(6), min_distance(7), sigma(8), z_scale(9),
-#   use_tophat(10), tophat_radius(11), call_button(12)
+# Widget order: image_layer(0), nuclei_layer(1), nuclei_only(2), method(3),
+#   threshold(4), min_distance(5), sigma(6), z_scale(7),
+#   use_tophat(8), tophat_radius(9), call_button(10)
 _inner = _puncta_widget.native.layout()
 
 # "Algorithm" header + description after nuclei_only (index 3 -> before method)
@@ -226,20 +220,15 @@ _inner.insertWidget(4, _algo_header.native)
 # method is now at 5, description after it at 6
 _inner.insertWidget(6, _method_desc_qlabel)
 
-# "Preprocessing" header before use_decon (was 4, now shifted to 7)
-_preproc_header = widgets.Label(value="<b>Preprocessing:</b>")
-_inner.insertWidget(7, _make_divider())
-_inner.insertWidget(8, _preproc_header.native)
-
-# "Detection Parameters" header before threshold (was 6, now shifted to 11)
+# "Detection Parameters" header before threshold (was 4, now shifted to 7)
 _params_header = widgets.Label(value="<b>Detection Parameters:</b>")
-_inner.insertWidget(11, _make_divider())
-_inner.insertWidget(12, _params_header.native)
+_inner.insertWidget(7, _make_divider())
+_inner.insertWidget(8, _params_header.native)
 
-# "Background Subtraction" header before use_tophat (was 10, now shifted to 17)
+# "Background Subtraction" header before use_tophat (was 8, now shifted to 13)
 _bg_header = widgets.Label(value="<b>Background Subtraction:</b>")
-_inner.insertWidget(17, _make_divider())
-_inner.insertWidget(18, _bg_header.native)
+_inner.insertWidget(13, _make_divider())
+_inner.insertWidget(14, _bg_header.native)
 
 # Outer layout: whole form as one block
 _layout = puncta_widget.native.layout()
