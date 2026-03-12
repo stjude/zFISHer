@@ -143,6 +143,7 @@ def clear_session():
     """
     global _SESSION_DATA
     with _lock:
+        _SESSION_DATA.clear()
         _SESSION_DATA.update({
             "output_dir": None,
             "r1_path": None,
@@ -194,7 +195,8 @@ def _save_session_unlocked():
         return
 
     try:
-        out_path = Path(out_dir) / "zfisher_session.json"
+        filename = _SESSION_DATA.get("session_filename", constants.SESSION_FILENAME)
+        out_path = Path(out_dir) / filename
         with open(out_path, 'w') as f:
             json.dump(_SESSION_DATA, f, indent=4, default=str)
     except Exception as e:
@@ -211,18 +213,39 @@ def load_session_file(path):
     """
     Loads session data from a JSON file into memory.
 
+    Creates a new session file (``zfisher_session_2.json``, ``_3``, etc.)
+    so the original is never overwritten. All subsequent saves go to the
+    new file.
+
     Parameters
     ----------
     path : str or Path
-        The path to the `zfisher_session.json` file.
+        The path to a ``zfisher_session*.json`` file.
 
     Returns
     -------
     dict
         The loaded session data.
     """
+    path = Path(path)
     with open(path, 'r') as f:
         data = json.load(f)
+
+    # Find the next available session filename in the output directory
+    # Use output_dir from the loaded data (not path.parent) since that's
+    # where _save_session_unlocked will actually write the file.
+    out_dir = Path(data.get("output_dir", str(path.parent)))
+    n = 2
+    new_name = f"zfisher_session_{n}.json"
+    while (out_dir / new_name).exists():
+        n += 1
+        new_name = f"zfisher_session_{n}.json"
+    logger.info("Creating new session file: %s", new_name)
+
     with _lock:
         _SESSION_DATA.update(data)
+        _SESSION_DATA["session_filename"] = new_name
+        # Save immediately to create the new session file
+        _save_session_unlocked()
+
     return _SESSION_DATA

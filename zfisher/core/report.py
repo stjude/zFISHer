@@ -4,6 +4,7 @@ from pathlib import Path
 from datetime import datetime
 
 from .. import constants
+from . import session
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,7 @@ def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None, co
         # Prepare Metadata
         r1_p = Path(r1_path) if r1_path else Path("Not Set")
         r2_p = Path(r2_path) if r2_path else Path("Not Set")
+        session_filename = session.get_data("session_filename", constants.SESSION_FILENAME)
 
         meta_list = [
             {"Key": "R1 File Name", "Value": r1_p.name},
@@ -57,7 +59,7 @@ def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None, co
             {"Key": "R2 File Path", "Value": str(r2_p)},
             {"Key": "Analysis Date", "Value": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
             {"Key": "Output Folder", "Value": str(output_dir) if output_dir else "Not Set"},
-            {"Key": "Session JSON Name", "Value": "zfisher_session.json"}
+            {"Key": "Session JSON Name", "Value": session_filename}
         ]
 
         if coloc_meta:
