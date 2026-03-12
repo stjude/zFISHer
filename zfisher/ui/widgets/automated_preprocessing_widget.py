@@ -50,7 +50,8 @@ def _automated_preprocessing_magic_widget(
             r1_data=r1_dapi_layer.data,
             r2_data=r2_dapi_layer.data,
             output_dir=output_dir,
-            progress_callback=lambda p, t: dialog.update_progress(5 + int(p * 0.2), t)
+            progress_callback=lambda p, t: dialog.update_progress(5 + int(p * 0.2), t),
+            voxel_spacing=voxels,
         )
 
         viewer_helpers.add_segmentation_results_to_viewer(viewer, r1_dapi_layer, seg_results['R1'][0], seg_results['R1'][1])

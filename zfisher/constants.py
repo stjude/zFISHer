@@ -26,16 +26,24 @@ CONSENSUS_IDS_SUFFIX = "_IDs"
 # --- Segmentation Parameters ---
 # Classical Nuclei Segmentation
 NUC_SEG_Z_STEP = 2
-NUC_SEG_SCALE_FACTOR = 0.25
+NUC_SEG_SCALE_FACTOR = 0.5
 NUC_SEG_GAUSSIAN_SIGMA = 3
 NUC_SEG_OTSU_MIN_SIZE = 50
 NUC_SEG_PEAK_MIN_DIST = 7
+NUC_SEG_Z_XY_RATIO = 4.0           # Typical Z/XY physical spacing ratio for FISH data
+NUC_SEG_MERGE_BOUNDARY_RATIO = 0.3 # Min shared boundary / smaller label surface ratio to merge adjacent labels
 
-# Cellpose 3D Nuclei Segmentation
+# Cellpose 3D Nuclei Segmentation (legacy, unused)
 NUC_SEG_3D_Z_STEP = 2
 NUC_SEG_3D_SCALE_FACTOR = 0.25
 NUC_SEG_3D_STITCH_THRESH = 0.5
 NUC_SEG_3D_BATCH_SIZE = 16
+
+# Cellpose 2D-Stitched Nuclei Segmentation
+NUC_SEG_CP2D_Z_STEP = 2
+NUC_SEG_CP2D_SCALE_FACTOR = 0.25
+NUC_SEG_CP2D_STITCH_THRESH = 0.3
+NUC_SEG_CP2D_DIAMETER = None       # None = auto-estimate
 
 # Puncta Detection
 PUNCTA_MIN_DISTANCE = 2

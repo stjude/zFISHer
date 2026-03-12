@@ -76,7 +76,8 @@ def run_full_zfisher_pipeline(r1_path, r2_path, output_dir, progress_callback=No
     r2_dapi = io.get_channel_data(r2_sess, constants.DAPI_CHANNEL_NAME)
     seg_results = segmentation.process_session_dapi(
         r1_data=r1_dapi, r2_data=r2_dapi, output_dir=output_dir,
-        progress_callback=lambda p, t: _update(15 + int(p * 0.10), t)
+        progress_callback=lambda p, t: _update(15 + int(p * 0.10), t),
+        voxel_spacing=r1_sess.voxels,
     )
 
     # --- 4. Puncta Detection on Raw Images (per-round masks) ---
