@@ -230,7 +230,7 @@ def create_welcome_widget(viewer):
       <tr><td colspan='2'><b style='color: {mint};'>1. Session &amp; I/O</b></td></tr>
       <tr><td width='20'></td><td>Load .nd2 or .tif image stacks</td></tr>
       <tr><td colspan='2'><b style='color: {mint};'>2. Nuclei Segmentation</b></td></tr>
-      <tr><td></td><td>Segment DAPI channels &#8594; per-round masks</td></tr>
+      <tr><td></td><td>Segment nuclei channels &#8594; per-round masks</td></tr>
       <tr><td></td><td>Edit masks (merge, paint, erase)</td></tr>
       <tr><td colspan='2'><b style='color: {mint};'>3. Puncta Picking</b></td></tr>
       <tr><td></td><td>Detect puncta on raw channels</td></tr>

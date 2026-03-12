@@ -160,7 +160,7 @@ def _on_image_change(new_layer: "napari.layers.Image"):
                 None
             )
         else:
-            # Raw channels → match per-round DAPI mask
+            # Raw channels → match per-round nuclei mask
             if "R1" in name_upper:
                 target = "R1"
             elif "R2" in name_upper:
@@ -172,7 +172,7 @@ def _on_image_change(new_layer: "napari.layers.Image"):
                     (l for l in viewer.layers
                      if isinstance(l, napari.layers.Labels)
                      and target in l.name.upper()
-                     and constants.DAPI_CHANNEL_NAME.upper() in l.name.upper()
+                     and session.get_nuclear_channel().upper() in l.name.upper()
                      and constants.MASKS_SUFFIX.upper() in l.name.upper()
                      and constants.ALIGNED_PREFIX.upper() not in l.name.upper()
                      and constants.WARPED_PREFIX.upper() not in l.name.upper()),

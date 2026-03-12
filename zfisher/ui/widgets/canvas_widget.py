@@ -95,7 +95,7 @@ def _canvas_widget(
                     layer_info['data'],
                     name=layer_info['name'],
                     scale=meta['scale'],
-                    opacity=0.6
+                    opacity=0.6, visible=False,
                 )
                 # Use iso_categorical for better 3D rendering of masks alongside points
                 layer.rendering = 'iso_categorical'
@@ -106,7 +106,7 @@ def _canvas_widget(
                     colormap=meta.get('colormap', 'gray'),
                     scale=meta['scale'],
                     blending=meta.get('blending', 'additive'),
-                    opacity=meta.get('opacity', 1.0)
+                    opacity=meta.get('opacity', 1.0), visible=False,
                 )
             elif layer_type == 'vectors':
                 viewer.add_vectors(
@@ -115,7 +115,7 @@ def _canvas_widget(
                     scale=meta['scale'],
                     edge_width=0.2,
                     length=2.5,
-                    edge_color='cyan'
+                    edge_color='cyan', visible=False,
                 )
 
         # 7. Transform existing puncta layers into aligned/warped space
@@ -200,8 +200,9 @@ def _canvas_widget(
     # 8. Final UI Tidy Up
     if hide_raw:
         for layer in viewer.layers:
-            # Show the new results, hide the raw rounds
-            layer.visible = any(x in layer.name for x in ["Aligned", "Warped", "Consensus"])
+            # Hide the raw rounds
+            if not any(x in layer.name for x in ["Aligned", "Warped", "Consensus"]):
+                layer.visible = False
 
     viewer.status = "Global Canvas Generation Complete."
 

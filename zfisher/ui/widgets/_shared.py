@@ -2,8 +2,8 @@ import napari
 from pathlib import Path
 from magicgui.widgets import Container
 
-from ...core import io
-from .. import viewer_helpers
+from ...core import io, session
+from .. import viewer_helpers, popups
 from ..style import COLORS
 
 
@@ -61,6 +61,28 @@ def load_raw_data_into_viewer(viewer, round1_path, round2_path, output_dir=None,
         if progress_callback:
             progress_callback(int(((base_progress + 2) / total_steps) * 100), f"Adding {prefix} layers to viewer...")
         viewer_helpers.add_image_session_to_viewer(viewer, image_session, prefix)
+
+    # Resolve and store the nuclear channel name (first round's channels used)
+    if not session.get_data("nuclear_channel"):
+        # Collect channels from whichever round loaded successfully
+        all_channels = []
+        for path in [Path(round1_path), Path(round2_path)]:
+            try:
+                s = io.load_image_session(path)
+                all_channels = s.channels
+                break
+            except Exception:
+                continue
+
+        if all_channels:
+            nuc = io.find_nuclear_channel(all_channels)
+            if nuc is None:
+                # Auto-detection failed — ask the user
+                nuc = popups.select_nuclear_channel(
+                    viewer.window._qt_window, all_channels
+                )
+            if nuc:
+                session.update_data("nuclear_channel", nuc)
 
     # Force the Z-slider to appear
     viewer.dims.axis_labels = ("z", "y", "x")

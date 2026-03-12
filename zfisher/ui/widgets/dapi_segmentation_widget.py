@@ -14,9 +14,9 @@ from ... import constants
 from ._shared import make_header_divider
 
 @magicgui(
-    call_button="Run DAPI Mapping",
-    r1_layer={"label": "Round 1 (DAPI)"},
-    r2_layer={"label": "Round 2 (DAPI)"},
+    call_button="Run Nuclei Mapping",
+    r1_layer={"label": "Round 1 (Nuclei)"},
+    r2_layer={"label": "Round 2 (Nuclei)"},
     method={
         "label": "Method",
         "widget_type": "RadioButtons",
@@ -31,14 +31,14 @@ from ._shared import make_header_divider
     auto_call=False,
 )
 @require_active_session("Please start or load a session before running segmentation.")
-@error_handler("DAPI Segmentation Failed")
+@error_handler("Nuclei Segmentation Failed")
 def _dapi_segmentation_widget(
     r1_layer: "napari.layers.Image",
     r2_layer: "napari.layers.Image",
     method: str = "Classical (Fast)",
     merge_splits: bool = True,
 ):
-    """Runs segmentation on selected DAPI channels."""
+    """Runs segmentation on selected nuclei channels."""
     viewer = napari.current_viewer()
 
     layers_to_process = [l for l in [r1_layer, r2_layer] if l is not None]
@@ -107,8 +107,8 @@ class _DapiSegmentationContainer(Container):
 
 dapi_segmentation_widget = _DapiSegmentationContainer(labels=False)
 dapi_segmentation_widget._dapi_segmentation_widget = _dapi_segmentation_widget
-header = Label(value="DAPI Mapping")
+header = Label(value="Nuclei Mapping")
 header.native.setObjectName("widgetHeader")
-info = Label(value="<i>Segments nuclei in DAPI channels.</i>")
+info = Label(value="<i>Segments nuclei in the nuclear stain channel.</i>")
 info.native.setObjectName("widgetInfo")
 dapi_segmentation_widget.extend([header, info, make_header_divider(), _dapi_segmentation_widget])

@@ -135,9 +135,23 @@ class NewSessionWidget(Container):
                 dialog.update_progress(12, "Converting R2 to OME-TIF...")
                 io.convert_nd2_to_ome(r2_sess, input_dir, "R2", lambda msg: dialog.update_progress(13, msg))
 
-            # --- 3. DAPI Segmentation ---
-            r1_dapi = io.get_channel_data(r1_sess, constants.DAPI_CHANNEL_NAME)
-            r2_dapi = io.get_channel_data(r2_sess, constants.DAPI_CHANNEL_NAME)
+            # --- 2b. Resolve nuclear channel ---
+            nuc_ch = io.find_nuclear_channel(r1_sess.channels)
+            if nuc_ch is None:
+                nuc_ch = popups.select_nuclear_channel(
+                    self._viewer.window._qt_window, r1_sess.channels
+                )
+            if nuc_ch is None:
+                popups.show_error_popup(
+                    self._viewer.window._qt_window, "No Nuclear Channel",
+                    "Could not determine the nuclear stain channel. Aborting."
+                )
+                return
+            session.update_data("nuclear_channel", nuc_ch)
+
+            # --- 3. Nuclear Segmentation ---
+            r1_dapi = io.get_channel_data(r1_sess, nuc_ch)
+            r2_dapi = io.get_channel_data(r2_sess, nuc_ch)
             seg_results = segmentation.process_session_dapi(
                 r1_data=r1_dapi, r2_data=r2_dapi, output_dir=out_val,
                 progress_callback=lambda p, t: dialog.update_progress(15 + int(p * 0.10), t),
@@ -146,15 +160,15 @@ class NewSessionWidget(Container):
 
             # --- 4. Puncta Detection on Raw Images (per-round masks) ---
             seg_dir = out_val / constants.SEGMENTATION_DIR
-            puncta_channels = [ch for ch in r1_sess.channels if ch.upper() != constants.DAPI_CHANNEL_NAME.upper()]
+            puncta_channels = [ch for ch in r1_sess.channels if ch.upper() != nuc_ch.upper()]
             puncta_params = {
                 'threshold_rel': constants.PUNCTA_THRESHOLD_REL,
                 'min_distance': constants.PUNCTA_MIN_DISTANCE,
                 'method': "Local Maxima"
             }
 
-            r1_mask_path = seg_dir / f"R1 - {constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}.tif"
-            r2_mask_path = seg_dir / f"R2 - {constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}.tif"
+            r1_mask_path = seg_dir / f"R1 - {nuc_ch}{constants.MASKS_SUFFIX}.tif"
+            r2_mask_path = seg_dir / f"R2 - {nuc_ch}{constants.MASKS_SUFFIX}.tif"
             r1_mask = tifffile.imread(r1_mask_path) if r1_mask_path.exists() else None
             r2_mask = tifffile.imread(r2_mask_path) if r2_mask_path.exists() else None
 
@@ -190,7 +204,7 @@ class NewSessionWidget(Container):
             if shift is None:
                 popups.show_error_popup(
                     self._viewer.window._qt_window, "Registration Failed",
-                    "Could not calculate a valid shift. Check that both rounds have sufficient DAPI signal."
+                    "Could not calculate a valid shift. Check that both rounds have sufficient nuclear signal."
                 )
                 return
 
@@ -201,7 +215,7 @@ class NewSessionWidget(Container):
                          for i, ch in enumerate(r2_sess.channels)]
 
             for prefix, sess_obj, layer_list in [("R1", r1_sess, r1_layers), ("R2", r2_sess, r2_layers)]:
-                mask_name = f"{prefix} - {constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}"
+                mask_name = f"{prefix} - {nuc_ch}{constants.MASKS_SUFFIX}"
                 mask_path = seg_dir / f"{mask_name}.tif"
                 if mask_path.exists():
                     layer_list.append({'name': mask_name, 'data': tifffile.imread(mask_path), 'scale': sess_obj.voxels, 'is_label': True})
@@ -215,10 +229,10 @@ class NewSessionWidget(Container):
             session.update_data("canvas_scale", r1_sess.voxels)
 
             # --- 7. Consensus Nuclei ---
-            r1_aligned_mask = aligned_dir / f"Aligned_R1_{constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}.tif"
-            r2_warped_mask = aligned_dir / f"Warped_R2_{constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}.tif"
+            r1_aligned_mask = aligned_dir / f"Aligned_R1_{nuc_ch}{constants.MASKS_SUFFIX}.tif"
+            r2_warped_mask = aligned_dir / f"Warped_R2_{nuc_ch}{constants.MASKS_SUFFIX}.tif"
             if not r2_warped_mask.exists():
-                r2_warped_mask = aligned_dir / f"Aligned_R2_{constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}.tif"
+                r2_warped_mask = aligned_dir / f"Aligned_R2_{nuc_ch}{constants.MASKS_SUFFIX}.tif"
 
             if not (r1_aligned_mask.exists() and r2_warped_mask.exists()):
                 popups.show_error_popup(
@@ -286,7 +300,7 @@ class NewSessionWidget(Container):
                     cmap = next((c for k, c in constants.CHANNEL_COLORS.items() if k.upper() in name.upper()), 'gray')
                     self._viewer.add_image(data, name=name, blending='additive', colormap=cmap, scale=voxels,
                                            translate=canvas_translate,
-                                           visible=constants.DAPI_CHANNEL_NAME.upper() in name.upper())
+                                           visible=nuc_ch.upper() in name.upper())
 
             # Deformation field (.npy vectors) from aligned_dir
             deform_path = aligned_dir / f"{constants.DEFORMATION_FIELD_NAME}.npy"

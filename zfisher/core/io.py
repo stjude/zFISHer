@@ -208,6 +208,30 @@ def load_image_session(path: Path):
     else:
         return TiffSession(path)
     
+def find_nuclear_channel(channels):
+    """
+    Auto-detect the nuclear stain channel from a list of channel names.
+
+    Checks each channel against ``constants.NUCLEAR_STAIN_NAMES`` using
+    case-insensitive substring matching.
+
+    Parameters
+    ----------
+    channels : list[str]
+        Channel names from the imaging session.
+
+    Returns
+    -------
+    str or None
+        The first matching channel name, or None if no match is found.
+    """
+    for ch in channels:
+        for nuc_name in constants.NUCLEAR_STAIN_NAMES:
+            if nuc_name.upper() in ch.upper():
+                return ch
+    return None
+
+
 def get_channel_data(session, target_name=constants.DAPI_CHANNEL_NAME):
     """Finds a channel by name in the session metadata and returns the 3D array."""
     try:

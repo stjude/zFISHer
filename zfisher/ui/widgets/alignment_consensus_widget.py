@@ -8,6 +8,7 @@ from .automated_preprocessing_widget import automated_preprocessing_widget
 from .registration_widget import registration_widget
 from .canvas_widget import canvas_widget
 from .nuclei_matching_widget import nuclei_matching_widget
+from .refilter_puncta_widget import refilter_puncta_widget
 
 from .. import style
 
@@ -26,6 +27,7 @@ class AlignmentConsensusWidget(widgets.Container):
         self.registration_widget = registration_widget
         self.canvas_widget = canvas_widget
         self.nuclei_matching_widget = nuclei_matching_widget
+        self.refilter_puncta_widget = refilter_puncta_widget
 
         # Get the native QWidget's layout and remove any default margins/spacing.
         # This ensures the nested QToolBox fills the entire area, matching the parent.
@@ -59,6 +61,9 @@ class AlignmentConsensusWidget(widgets.Container):
         manual_layout.addWidget(manual_toolbox)
         self.toolbox.addItem(manual_outer_container, "Manual")
 
+        # --- Puncta Cleanup Section ---
+        self.toolbox.addItem(self.refilter_puncta_widget.native, "Puncta Cleanup")
+
         # Add the toolbox to the layout of this magicgui container's native widget
         layout.addWidget(self.toolbox)
 
@@ -66,7 +71,8 @@ class AlignmentConsensusWidget(widgets.Container):
         """Passes the `reset_choices` call to all child widgets."""
         for widget in [
             self.automated_widget, self.registration_widget,
-            self.canvas_widget, self.nuclei_matching_widget
+            self.canvas_widget, self.nuclei_matching_widget,
+            self.refilter_puncta_widget,
         ]:
             if hasattr(widget, "reset_choices"):
                 widget.reset_choices()

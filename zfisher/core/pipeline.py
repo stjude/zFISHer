@@ -17,8 +17,8 @@ def run_full_zfisher_pipeline(r1_path, r2_path, output_dir, progress_callback=No
     Pipeline order:
       1. Session init
       2. Load & convert raw images
-      3. DAPI segmentation (per-round masks + centroids)
-      4. Puncta detection on raw images (masked by per-round DAPI)
+      3. Nuclei segmentation (per-round masks + centroids)
+      4. Puncta detection on raw images (masked by per-round nuclei)
       5. Registration (RANSAC on centroids)
       6. Canvas generation (rigid align + B-spline warp of images)
       7. Consensus nuclei (merge aligned masks)
@@ -71,9 +71,16 @@ def run_full_zfisher_pipeline(r1_path, r2_path, output_dir, progress_callback=No
         _update(12, "Converting R2 to OME-TIF...")
         io.convert_nd2_to_ome(r2_sess, input_dir, "R2")
 
-    # --- 3. DAPI Segmentation ---
-    r1_dapi = io.get_channel_data(r1_sess, constants.DAPI_CHANNEL_NAME)
-    r2_dapi = io.get_channel_data(r2_sess, constants.DAPI_CHANNEL_NAME)
+    # --- 2b. Resolve nuclear channel (headless: auto-detect or fallback to index 0) ---
+    nuc_ch = io.find_nuclear_channel(r1_sess.channels)
+    if nuc_ch is None:
+        nuc_ch = r1_sess.channels[0]
+        logger.warning("No known nuclear stain found. Falling back to first channel: %s", nuc_ch)
+    session.update_data("nuclear_channel", nuc_ch)
+
+    # --- 3. Nuclear Segmentation ---
+    r1_dapi = io.get_channel_data(r1_sess, nuc_ch)
+    r2_dapi = io.get_channel_data(r2_sess, nuc_ch)
     seg_results = segmentation.process_session_dapi(
         r1_data=r1_dapi, r2_data=r2_dapi, output_dir=output_dir,
         progress_callback=lambda p, t: _update(15 + int(p * 0.10), t),
@@ -84,7 +91,7 @@ def run_full_zfisher_pipeline(r1_path, r2_path, output_dir, progress_callback=No
     seg_dir = output_dir / constants.SEGMENTATION_DIR
     puncta_channels = [
         ch for ch in r1_sess.channels
-        if ch.upper() != constants.DAPI_CHANNEL_NAME.upper()
+        if ch.upper() != nuc_ch.upper()
     ]
     puncta_params = {
         'threshold_rel': constants.PUNCTA_THRESHOLD_REL,
@@ -92,9 +99,9 @@ def run_full_zfisher_pipeline(r1_path, r2_path, output_dir, progress_callback=No
         'method': "Local Maxima"
     }
 
-    # Load per-round DAPI masks for puncta filtering
-    r1_mask_path = seg_dir / f"R1 - {constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}.tif"
-    r2_mask_path = seg_dir / f"R2 - {constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}.tif"
+    # Load per-round nuclear masks for puncta filtering
+    r1_mask_path = seg_dir / f"R1 - {nuc_ch}{constants.MASKS_SUFFIX}.tif"
+    r2_mask_path = seg_dir / f"R2 - {nuc_ch}{constants.MASKS_SUFFIX}.tif"
     r1_mask = tifffile.imread(r1_mask_path) if r1_mask_path.exists() else None
     r2_mask = tifffile.imread(r2_mask_path) if r2_mask_path.exists() else None
 
@@ -131,7 +138,7 @@ def run_full_zfisher_pipeline(r1_path, r2_path, output_dir, progress_callback=No
     if shift is None:
         raise RuntimeError(
             "Registration failed: could not calculate a valid shift. "
-            "Check that both rounds have sufficient DAPI signal."
+            "Check that both rounds have sufficient nuclear signal."
         )
 
     # --- 6. Canvas Generation (Rigid + Deformable Warping) ---
@@ -148,7 +155,7 @@ def run_full_zfisher_pipeline(r1_path, r2_path, output_dir, progress_callback=No
 
     for prefix, sess_obj, layer_list in [("R1", r1_sess, r1_layers),
                                           ("R2", r2_sess, r2_layers)]:
-        mask_name = f"{prefix} - {constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}"
+        mask_name = f"{prefix} - {nuc_ch}{constants.MASKS_SUFFIX}"
         mask_path = seg_dir / f"{mask_name}.tif"
         if mask_path.exists():
             layer_list.append({
@@ -167,10 +174,10 @@ def run_full_zfisher_pipeline(r1_path, r2_path, output_dir, progress_callback=No
     session.update_data("canvas_scale", r1_sess.voxels)
 
     # --- 7. Consensus Nuclei ---
-    r1_aligned_mask = aligned_dir / f"Aligned_R1_{constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}.tif"
-    r2_warped_mask = aligned_dir / f"Warped_R2_{constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}.tif"
+    r1_aligned_mask = aligned_dir / f"Aligned_R1_{nuc_ch}{constants.MASKS_SUFFIX}.tif"
+    r2_warped_mask = aligned_dir / f"Warped_R2_{nuc_ch}{constants.MASKS_SUFFIX}.tif"
     if not r2_warped_mask.exists():
-        r2_warped_mask = aligned_dir / f"Aligned_R2_{constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}.tif"
+        r2_warped_mask = aligned_dir / f"Aligned_R2_{nuc_ch}{constants.MASKS_SUFFIX}.tif"
 
     if not (r1_aligned_mask.exists() and r2_warped_mask.exists()):
         raise RuntimeError(

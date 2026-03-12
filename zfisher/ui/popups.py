@@ -111,6 +111,34 @@ class BatchProgressDialog(QDialog):
         self.close()
 
 
+def select_nuclear_channel(parent, channels):
+    """
+    Shows a dialog asking the user to pick the nuclear stain channel.
+
+    Parameters
+    ----------
+    parent : QWidget
+        Parent widget for the dialog.
+    channels : list[str]
+        Available channel names.
+
+    Returns
+    -------
+    str or None
+        The selected channel name, or None if the user cancels.
+    """
+    from qtpy.QtWidgets import QInputDialog
+    choice, ok = QInputDialog.getItem(
+        parent,
+        "Select Nuclear Channel",
+        "No known nuclear stain detected.\nPlease select the nuclear channel:",
+        channels,
+        0,
+        False,
+    )
+    return choice if ok else None
+
+
 def show_info_popup(parent, title, text):
     """Shows a simple informational message box (e.g., for success)."""
     msg = QMessageBox(parent)

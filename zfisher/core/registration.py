@@ -651,11 +651,12 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
 
     # 2. Deformable Transform Calculation
     transform = None
-    has_dapi = constants.DAPI_CHANNEL_NAME in aligned_pairs
-    
-    if apply_warp and has_dapi:
-        update(20, "Calculating deformable registration on DAPI...")
-        dapi_pair = aligned_pairs[constants.DAPI_CHANNEL_NAME]
+    nuc_ch = session.get_nuclear_channel()
+    has_nuc = nuc_ch in aligned_pairs
+
+    if apply_warp and has_nuc:
+        update(20, f"Calculating deformable registration on {nuc_ch}...")
+        dapi_pair = aligned_pairs[nuc_ch]
         transform = calculate_deformable_transform(dapi_pair['r1_data'], dapi_pair['r2_data'], use_mask=True)
         update(50, "Deformable registration complete.")
 
@@ -693,7 +694,7 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
     
     # 3. Per-channel Warping and Saving (parallelized)
     num_channels = len(aligned_pairs)
-    start_progress = 60 if (apply_warp and has_dapi) else 20
+    start_progress = 60 if (apply_warp and has_nuc) else 20
 
     if num_channels > 0:
         for i, (channel_name, pair_data) in enumerate(aligned_pairs.items()):
@@ -714,7 +715,7 @@ def _process_channel_pair(channel_name, pair_data, transform, output_dir):
     final_r2 = r2_data
     r2_prefix = constants.ALIGNED_PREFIX
     if transform:
-        is_dapi = channel_name == constants.DAPI_CHANNEL_NAME
+        is_dapi = channel_name == session.get_nuclear_channel()
         final_r2 = apply_deformable_transform(r2_data, transform, r1_data, is_label=is_label, use_bspline=is_dapi)
         r2_prefix = constants.WARPED_PREFIX
 

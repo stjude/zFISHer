@@ -11,7 +11,7 @@ from .. import style
 class NucleiSegmentationWidget(widgets.Container):
     """
     Step 2: Nuclei Segmentation.
-    Contains DAPI mapping and mask editing tools so users can
+    Contains nuclei mapping and mask editing tools so users can
     generate and refine per-round nuclear masks before puncta picking.
     """
     def __init__(self, viewer: "napari.Viewer"):
@@ -28,7 +28,7 @@ class NucleiSegmentationWidget(widgets.Container):
         self.toolbox = QToolBox()
         self.toolbox.setStyleSheet(style.NESTED_TOOLBOX_STYLESHEET)
 
-        self.toolbox.addItem(self.dapi_widget.native, "DAPI Mapping")
+        self.toolbox.addItem(self.dapi_widget.native, "Nuclei Mapping")
         self.toolbox.addItem(self.mask_editor_widget.native, "Mask Editor")
 
         layout.addWidget(self.toolbox)

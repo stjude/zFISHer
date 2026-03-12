@@ -267,7 +267,7 @@ def calculate_per_nucleus_counts(points_layers_data):
     """
     Counts the number of puncta per nucleus for each channel.
 
-    Filters out DAPI, centroid, and consensus layers. Only layers that
+    Filters out nuclear stain, centroid, and consensus layers. Only layers that
     carry a 'nucleus_ids' array are included.
 
     Parameters
@@ -282,7 +282,7 @@ def calculate_per_nucleus_counts(points_layers_data):
         Nucleus ID 0 (background) is excluded.
     """
     SKIP_PATTERNS = [
-        constants.DAPI_CHANNEL_NAME.upper(),
+        session.get_nuclear_channel().upper(),
         constants.CENTROIDS_SUFFIX.upper(),
         constants.CONSENSUS_MASKS_NAME.upper(),
     ]

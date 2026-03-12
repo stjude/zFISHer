@@ -127,6 +127,16 @@ def remove_processed_file(layer_name):
         _SESSION_DATA.get("processed_files", {}).pop(layer_name, None)
         _save_session_unlocked()
 
+def get_nuclear_channel():
+    """
+    Returns the resolved nuclear channel name for the current session.
+
+    Falls back to ``constants.DAPI_CHANNEL_NAME`` when no nuclear channel
+    has been stored yet (e.g. sessions created before this feature existed).
+    """
+    return get_data("nuclear_channel", constants.DAPI_CHANNEL_NAME)
+
+
 def clear_session():
     """
     Resets the in-memory session data to its default, empty state.

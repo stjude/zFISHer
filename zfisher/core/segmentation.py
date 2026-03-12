@@ -7,7 +7,7 @@ import logging
 from skimage.transform import rescale, resize
 from scipy import ndimage as ndi
 from skimage.segmentation import watershed
-from skimage.morphology import remove_small_objects, white_tophat, disk
+from skimage.morphology import remove_small_objects, white_tophat, disk, ball
 from cellpose import models, core
 from pathlib import Path
 import tifffile
@@ -203,6 +203,7 @@ def filter_small_labels(labels, min_vol, progress_callback=None):
     centroids = np.array([p.centroid for p in props]) if props else np.empty((0, 3))
     if progress_callback: progress_callback(100, f"Kept {len(props)} nuclei.")
     return filtered, centroids
+
 
 
 def _merge_oversegmented_labels(labels, progress_callback=None):
@@ -805,7 +806,7 @@ def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callba
         seg_dir.mkdir(exist_ok=True, parents=True)
 
         for prefix, (masks, centroids) in results.items():
-            dapi_layer_name = f"{prefix} - {constants.DAPI_CHANNEL_NAME}"
+            dapi_layer_name = f"{prefix} - {session.get_nuclear_channel()}"
             mask_layer_name = f"{dapi_layer_name}{constants.MASKS_SUFFIX}"
             centroid_layer_name = f"{dapi_layer_name}{constants.CENTROIDS_SUFFIX}"
 

@@ -23,8 +23,8 @@ def _get_qt_parent(viewer):
 
 @magicgui(
     call_button="Run Automated Preprocessing",
-    r1_dapi_layer={"label": "Round 1 DAPI Layer"},
-    r2_dapi_layer={"label": "Round 2 DAPI Layer"},
+    r1_dapi_layer={"label": "Round 1 Nuclei Layer"},
+    r2_dapi_layer={"label": "Round 2 Nuclei Layer"},
     match_nuclei={"label": "Create Consensus Nuclei Mask"},
     hide_raw={"label": "Hide Raw Layers After?"}
 )
@@ -38,14 +38,14 @@ def _automated_preprocessing_magic_widget(
 ):
     viewer = napari.current_viewer()
     if not r1_dapi_layer or not r2_dapi_layer:
-        viewer.status = "Please select both DAPI layers."
+        viewer.status = "Please select both nuclei layers."
         return
 
     with popups.ProgressDialog(_get_qt_parent(viewer), "Automated Preprocessing...") as dialog:
         output_dir = Path(session.get_data("output_dir"))
         voxels = tuple(r1_dapi_layer.scale)
 
-        # === STEP 1: DAPI SEGMENTATION ===
+        # === STEP 1: NUCLEI SEGMENTATION ===
         seg_results = segmentation.process_session_dapi(
             r1_data=r1_dapi_layer.data,
             r2_data=r2_dapi_layer.data,
@@ -66,7 +66,7 @@ def _automated_preprocessing_magic_widget(
         if shift is None:
             popups.show_error_popup(
                 None, "Registration Failed",
-                "Could not calculate a valid shift. Check that both rounds have sufficient DAPI signal."
+                "Could not calculate a valid shift. Check that both rounds have sufficient nuclear signal."
             )
             return
 
@@ -114,7 +114,7 @@ def _automated_preprocessing_magic_widget(
             if layer_type == 'labels':
                 lyr = viewer.add_labels(
                     layer_info['data'].astype(np.uint32), name=layer_info['name'],
-                    scale=meta['scale'], translate=translate_arg, opacity=0.6
+                    scale=meta['scale'], translate=translate_arg, opacity=0.6, visible=False,
                 )
                 lyr.rendering = 'iso_categorical'
             elif layer_type == 'image':
@@ -122,27 +122,29 @@ def _automated_preprocessing_magic_widget(
                     layer_info['data'], name=layer_info['name'],
                     colormap=meta.get('colormap', 'gray'), scale=meta['scale'],
                     translate=translate_arg,
-                    blending=meta.get('blending', 'additive'), opacity=meta.get('opacity', 1.0)
+                    blending=meta.get('blending', 'additive'), opacity=meta.get('opacity', 1.0),
+                    visible=False,
                 )
             elif layer_type == 'vectors':
                 viewer.add_vectors(
                     layer_info['data'], name=layer_info['name'],
                     scale=meta['scale'], translate=translate_arg,
-                    edge_width=0.2, length=2.5, edge_color='cyan'
+                    edge_width=0.2, length=2.5, edge_color='cyan', visible=False,
                 )
 
         # === STEP 4: CONSENSUS NUCLEI ===
         merged_mask = None
         if match_nuclei:
-            r1_mask_path = aligned_dir / f"Aligned_R1_{constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}.tif"
-            r2_mask_path = aligned_dir / f"Warped_R2_{constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}.tif"
+            nuc_ch = session.get_nuclear_channel()
+            r1_mask_path = aligned_dir / f"Aligned_R1_{nuc_ch}{constants.MASKS_SUFFIX}.tif"
+            r2_mask_path = aligned_dir / f"Warped_R2_{nuc_ch}{constants.MASKS_SUFFIX}.tif"
             if not r2_mask_path.exists():
-                r2_mask_path = aligned_dir / f"Aligned_R2_{constants.DAPI_CHANNEL_NAME}{constants.MASKS_SUFFIX}.tif"
+                r2_mask_path = aligned_dir / f"Aligned_R2_{nuc_ch}{constants.MASKS_SUFFIX}.tif"
 
             if not (r1_mask_path.exists() and r2_mask_path.exists()):
                 popups.show_error_popup(
                     None, "Consensus Failed",
-                    "Could not find aligned DAPI masks. Canvas generation may have failed."
+                    "Could not find aligned nuclei masks. Canvas generation may have failed."
                 )
             else:
                 merged_mask, pts1 = segmentation.process_consensus_nuclei(
@@ -159,7 +161,7 @@ def _automated_preprocessing_magic_widget(
                     (l for l in viewer.layers
                      if isinstance(l, napari.layers.Labels)
                      and "Aligned" in l.name and "R1" in l.name
-                     and constants.DAPI_CHANNEL_NAME in l.name),
+                     and nuc_ch in l.name),
                     None
                 )
                 if ref_layer:
@@ -169,7 +171,7 @@ def _automated_preprocessing_magic_widget(
                     translate = np.array(canvas_offset) * np.array(voxels) if canvas_offset is not None else (0,) * len(voxels)
                     lyr = viewer.add_labels(
                         merged_mask, name=constants.CONSENSUS_MASKS_NAME,
-                        scale=voxels, translate=translate, opacity=0.5
+                        scale=voxels, translate=translate, opacity=0.5, visible=False,
                     )
                     lyr.rendering = 'iso_categorical'
 
@@ -248,7 +250,8 @@ def _automated_preprocessing_magic_widget(
 
         if hide_raw:
             for layer in viewer.layers:
-                layer.visible = any(x in layer.name for x in ["Aligned", "Warped", "Consensus"])
+                if not any(x in layer.name for x in ["Aligned", "Warped", "Consensus"]):
+                    layer.visible = False
 
         dialog.update_progress(100, "Complete.")
         viewer.status = "Automated Preprocessing Complete."

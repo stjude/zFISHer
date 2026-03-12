@@ -30,16 +30,17 @@ def _should_lock(layer):
         if "R1" in name_upper or "R2" in name_upper:
             return True
 
-    # DAPI centroids and mask ID layers
+    # Nuclei centroids and mask ID layers
     if isinstance(layer, napari.layers.Points):
         if constants.CENTROIDS_SUFFIX.upper() in name_upper:
             return True
         if name.endswith("_IDs"):
             return True
 
-    # DAPI mask layers (raw and aligned/warped)
+    # Nuclear mask layers (raw and aligned/warped)
     if isinstance(layer, napari.layers.Labels):
-        if (constants.DAPI_CHANNEL_NAME.upper() in name_upper
+        nuc_ch = session.get_nuclear_channel().upper()
+        if (nuc_ch in name_upper
                 and constants.MASKS_SUFFIX.upper() in name_upper):
             return True
 
@@ -159,7 +160,8 @@ def on_layer_inserted(event, widgets):
 
         # Now, try to intelligently set the value based on layer type and name
         if isinstance(layer, napari.layers.Image):
-            if "DAPI" in layer.name.upper():
+            nuc_upper = session.get_nuclear_channel().upper()
+            if nuc_upper in layer.name.upper():
                 if "R1" in layer.name.upper():
                     _try_set(widgets, 'dapi_segmentation', '_dapi_segmentation_widget', 'r1_layer', layer)
                     _try_set(widgets, 'automated_preprocessing', '_automated_preprocessing_magic_widget', 'r1_dapi_layer', layer)
@@ -167,7 +169,7 @@ def on_layer_inserted(event, widgets):
                     _try_set(widgets, 'dapi_segmentation', '_dapi_segmentation_widget', 'r2_layer', layer)
                     _try_set(widgets, 'automated_preprocessing', '_automated_preprocessing_magic_widget', 'r2_dapi_layer', layer)
             else:
-                # Auto-select non-DAPI image layers in puncta detection
+                # Auto-select non-nuclear image layers in puncta detection
                 _try_set(widgets, 'puncta_detection', '_puncta_widget', 'image_layer', layer)
 
         elif isinstance(layer, napari.layers.Points):
@@ -187,8 +189,9 @@ def on_layer_inserted(event, widgets):
 
         elif isinstance(layer, napari.layers.Labels):
             name = layer.name.upper()
-            # Heuristic for matching aligned/warped DAPI masks
-            if "DAPI" in name and ("ALIGNED" in name or "WARPED" in name):
+            # Heuristic for matching aligned/warped nuclear masks
+            nuc_mask_upper = session.get_nuclear_channel().upper()
+            if nuc_mask_upper in name and ("ALIGNED" in name or "WARPED" in name):
                 if "R1" in name:
                     _try_set(widgets, 'nuclei_matching', '_nuclei_matching_widget', 'r1_mask_layer', layer)
                 elif "R2" in name:

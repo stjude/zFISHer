@@ -45,7 +45,8 @@ def add_image_session_to_viewer(viewer: napari.Viewer, image_session, prefix: st
             if ch_name.upper() in layer.name.upper():
                 layer.colormap = color
         
-        if "DAPI" not in layer.name.upper():
+        nuc_ch = session.get_nuclear_channel().upper()
+        if nuc_ch not in layer.name.upper():
             layer.visible = False
 
     # Update Text Overlay with Pixel Info
@@ -108,7 +109,7 @@ def _load_points_layer(viewer, name, path, scale, file_info, translate):
             }
             viewer.add_points(
                 data, name=name, size=3, face_color='yellow', scale=scale,
-                features=features, text=text_params, translate=translate
+                features=features, text=text_params, translate=translate, visible=False
             )
         else:  # Handle .npy files and other binary formats
             data = np.load(path, allow_pickle=True)
@@ -122,12 +123,12 @@ def _load_points_layer(viewer, name, path, scale, file_info, translate):
                 }
                 layer = viewer.add_points(
                     coords, name=name, size=1, face_color='transparent', scale=scale, properties=properties,
-                    text=text_params, blending='translucent_no_depth', translate=translate
+                    text=text_params, blending='translucent_no_depth', translate=translate, visible=False
                 )
                 layer.out_of_slice_display = True
             
             elif subtype == 'centroids':
-                viewer.add_points(data, name=name, size=5, face_color='orange', scale=scale, translate=translate)
+                viewer.add_points(data, name=name, size=5, face_color='orange', scale=scale, translate=translate, visible=False)
 
             else:  # Default for .npy, including old 'puncta' subtype
                 features = pd.DataFrame({'puncta_id': np.arange(len(data))})
@@ -137,7 +138,7 @@ def _load_points_layer(viewer, name, path, scale, file_info, translate):
                 }
                 viewer.add_points(
                     data, name=name, size=3, face_color='yellow', scale=scale,
-                    features=features, text=text_params, translate=translate
+                    features=features, text=text_params, translate=translate, visible=False
                 )
     except Exception as e:
         # The calling function `restore_processed_layers` will print this
@@ -156,7 +157,7 @@ def _load_image_layer(viewer, name, path, scale, file_info, translate):
         if ch.upper() in name.upper():
             c_map = color
             break
-    viewer.add_image(data, name=name, blending='additive', scale=scale, colormap=c_map, translate=translate)
+    viewer.add_image(data, name=name, blending='additive', scale=scale, colormap=c_map, translate=translate, visible=False)
 
 def _load_vectors_layer(viewer, name, path, scale, file_info, translate):
     # Arrow annotations are handled by the ArrowOverlay, not a Vectors layer
@@ -174,6 +175,7 @@ def _load_vectors_layer(viewer, name, path, scale, file_info, translate):
         vector_params['head_length'] = 6
     vector_params['translate'] = translate
     vector_params['scale'] = scale
+    vector_params['visible'] = False
     viewer.add_vectors(**vector_params)
 
 def _load_shapes_layer(viewer, name, path, scale, file_info, translate):
@@ -335,6 +337,7 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
             translate=layer_translate,
             features=combined_features,
             text=text_params,
+            visible=False,
         )
 
     else:
@@ -350,7 +353,8 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
             scale=source_layer.scale,
             translate=source_layer.translate,
             features=new_features,
-            text=text_params
+            text=text_params,
+            visible=False,
         )
 
     # --- Save full features to CSV ---
@@ -383,7 +387,7 @@ def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napa
     viewer : napari.Viewer
         The napari viewer instance.
     source_layer : napari.layers.Image
-        The DAPI image layer that was segmented.
+        The nuclei image layer that was segmented.
     masks : np.ndarray
         The (Z, Y, X) labeled integer mask of the segmented nuclei.
     centroids : np.ndarray
@@ -429,7 +433,8 @@ def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napa
             scale=source_layer.scale,
             properties={'id': ids},
             text={'string': '{id}', 'size': 8, 'color': 'white', 'translation': np.array([0, -5, 0])},
-            blending='translucent_no_depth'
+            blending='translucent_no_depth',
+            visible=False,
         )
         if layer_idx is not None:
             viewer.layers.move(len(viewer.layers) - 1, layer_idx)
@@ -466,7 +471,8 @@ def add_consensus_nuclei_to_viewer(viewer: napari.Viewer, r1_mask_layer: napari.
             name=layer_name,
             scale=r1_mask_layer.scale,
             translate=r1_mask_layer.translate,
-            opacity=0.5
+            opacity=0.5,
+            visible=False,
         )
         layer.rendering = 'iso_categorical'
 
@@ -485,7 +491,7 @@ def add_consensus_nuclei_to_viewer(viewer: napari.Viewer, r1_mask_layer: napari.
                 scale=r1_mask_layer.scale, translate=r1_mask_layer.translate,
                 properties={'label': labels},
                 text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
-                blending='translucent_no_depth'
+                blending='translucent_no_depth', visible=False,
             )
             points_layer.out_of_slice_display = True
             viewer.layers.move(len(viewer.layers) - 1, layer_idx)
@@ -495,7 +501,7 @@ def add_consensus_nuclei_to_viewer(viewer: napari.Viewer, r1_mask_layer: napari.
                 scale=r1_mask_layer.scale, translate=r1_mask_layer.translate,
                 properties={'label': labels},
                 text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
-                blending='translucent_no_depth'
+                blending='translucent_no_depth', visible=False,
             )
             points_layer.out_of_slice_display = True
 
@@ -535,7 +541,7 @@ def add_or_update_label_ids(viewer: napari.Viewer, labels_layer: napari.layers.L
                 coords, name=name, size=1, face_color='transparent', scale=scale,
                 translate=translate, properties={'label': labels},
                 text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
-                blending='translucent_no_depth'
+                blending='translucent_no_depth', visible=False,
             )
             new_layer.out_of_slice_display = True
             viewer.layers.move(len(viewer.layers) - 1, layer_idx)
@@ -544,7 +550,7 @@ def add_or_update_label_ids(viewer: napari.Viewer, labels_layer: napari.layers.L
             coords, name=name, size=1, face_color='transparent', scale=labels_layer.scale,
             properties={'label': labels},
             text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
-            blending='translucent_no_depth'
+            blending='translucent_no_depth', visible=False,
         )
         # Show points from all Z-slices in 2D view
         layer.out_of_slice_display = True

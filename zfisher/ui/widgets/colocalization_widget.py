@@ -225,11 +225,24 @@ def refresh_rules_display():
 # UI Wrapper
 # =====================================================================
 
+def _filter_id_layers(widget):
+    """Remove _IDs points layers from all dropdown choices in a magicgui widget."""
+    for name, param_widget in widget.__signature__.parameters.items():
+        try:
+            combo = getattr(widget, name)
+            if hasattr(combo, 'choices'):
+                combo.choices = [c for c in combo.choices if not c.name.endswith("_IDs")]
+        except (AttributeError, TypeError):
+            pass
+
+
 class _ColocalizationContainer(Container):
     """Wrapper that delegates reset_choices and exposes the inner magicgui."""
     def reset_choices(self):
         _rule_builder.reset_choices()
+        _filter_id_layers(_rule_builder)
         _tri_rule_builder.reset_choices()
+        _filter_id_layers(_tri_rule_builder)
 
 colocalization_widget = _ColocalizationContainer(labels=False)
 colocalization_widget._rule_builder = _rule_builder

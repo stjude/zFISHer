@@ -79,10 +79,36 @@ DISTRIBUTION_SHEET = "Distribution"
 # --- UI Constants ---
 # Channel color mapping
 CHANNEL_COLORS = {
+    # Nuclear stains
     "DAPI": "blue",
+    "HOECHST": "blue",
+    # Green fluorophores
     "FITC": "green",
+    "GFP": "green",
+    "EGFP": "green",
+    "AF488": "green",
+    "ALEXA488": "green",
+    # Yellow/orange fluorophores
     "CY3": "yellow",
+    "TRITC": "yellow",
+    "YFP": "yellow",
+    "AF555": "yellow",
+    "ALEXA555": "yellow",
+    # Red fluorophores
     "CY5": "red",
-    "TXRED": "magenta"
+    "RFP": "red",
+    "MCHERRY": "red",
+    "AF647": "red",
+    "ALEXA647": "red",
+    # Magenta fluorophores
+    "TXRED": "magenta",
+    "AF594": "magenta",
+    "ALEXA594": "magenta",
+    # Cyan fluorophores
+    "CFP": "cyan",
+    "BFP": "blue",
 }
-DAPI_CHANNEL_NAME = "DAPI"
+DAPI_CHANNEL_NAME = "DAPI"  # Default fallback; actual name resolved per-session
+
+# Known nuclear stain channel names (case-insensitive substring matching)
+NUCLEAR_STAIN_NAMES = ["DAPI", "HOECHST", "DRAQ5", "DRAQ7", "405", "BFP"]
