@@ -561,7 +561,7 @@ def launch_zfisher():
     viewer.layers.events.removed.connect(partial(events.on_layer_removed, widgets=widget_map))
 
     viewer.bind_key('Shift-P', capture_with_hotkey, overwrite=True)
-    viewer.bind_key('Control-A', region_capture_with_hotkey, overwrite=True)
+    viewer.bind_key('Shift-G', region_capture_with_hotkey, overwrite=True)
     viewer.bind_key('x', delete_point_under_mouse, overwrite=True)
     viewer.bind_key('c', delete_mask_under_mouse, overwrite=True)
     viewer.bind_key('Shift-E', erase_at_cursor, overwrite=True)

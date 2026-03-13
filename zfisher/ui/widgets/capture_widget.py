@@ -614,7 +614,7 @@ def _save_region_capture(viewer, pixmap):
 _region_overlay = None
 
 def region_capture_with_hotkey(viewer: napari.Viewer):
-    """Activate the region-capture overlay from a hotkey (Ctrl+A)."""
+    """Activate the region-capture overlay from a hotkey (Shift+G)."""
     global _region_overlay
 
     if not session.get_data("output_dir"):
@@ -754,7 +754,7 @@ header = widgets.Label(value="Capture & Annotate")
 header.native.setObjectName("widgetHeader")
 info = widgets.Label(value="<i>Save screenshots and draw annotations.</i>")
 info.native.setObjectName("widgetInfo")
-_hotkey_label = widgets.Label(value="<i>Shift+P: Capture  |  Ctrl+A: Region Capture</i>")
+_hotkey_label = widgets.Label(value="<i>Shift+P: Capture  |  Shift+G: Region Capture</i>")
 
 _capture_header = widgets.Label(value="<b>Capture:</b>")
 _arrow_header = widgets.Label(value="<b>Annotations:</b>")
