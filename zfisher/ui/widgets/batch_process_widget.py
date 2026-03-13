@@ -118,149 +118,104 @@ def _build_instructions_rows():
 
 
 def _add_dropdown_validations(workbook):
-    """Add Excel data-validation dropdowns to columns with fixed choices."""
+    """Add Excel data-validation dropdowns to columns with fixed choices.
+
+    Channel/name fields use ``errorStyle="information"`` so that Excel
+    shows a dropdown for convenience but still accepts custom typed values.
+    Fields with a strict set of options (Seg_Method, TRUE/FALSE, Type) use
+    the default ``errorStyle="stop"`` which rejects invalid input.
+    """
     from openpyxl.worksheet.datavalidation import DataValidation
 
-    # Max rows to apply validation (generous upper bound)
     MAX_ROW = 500
 
     # Build channel list from constants at generation time
     channel_names = sorted(set(constants.CHANNEL_COLORS.keys()))
     nuclear_names = sorted(set(constants.NUCLEAR_STAIN_NAMES))
 
+    def _soft_list(items, prompt="", title=""):
+        """Dropdown that ALLOWS custom text (informational error style)."""
+        dv = DataValidation(
+            type="list",
+            formula1='"' + ",".join(items) + '"',
+            allow_blank=True,
+            errorStyle="information",
+        )
+        dv.error = "Value not in dropdown. Click OK to keep your custom value."
+        dv.errorTitle = title or "Custom Value"
+        if prompt:
+            dv.prompt = prompt
+            dv.promptTitle = title
+        return dv
+
+    def _strict_list(items, prompt="", title=""):
+        """Dropdown that REJECTS values not in the list."""
+        dv = DataValidation(
+            type="list",
+            formula1='"' + ",".join(items) + '"',
+            allow_blank=True,
+        )
+        if prompt:
+            dv.prompt = prompt
+            dv.promptTitle = title
+        return dv
+
     # --- Datasets sheet ---
     ws = workbook["Datasets"]
-    # R1_Nuclear_Channel (column E)
-    r1_nuc_dv = DataValidation(
-        type="list",
-        formula1='"' + ",".join(nuclear_names) + '"',
-        allow_blank=True,
-    )
-    r1_nuc_dv.prompt = "Select or type the R1 nuclear channel name."
-    r1_nuc_dv.promptTitle = "R1_Nuclear_Channel"
-    r1_nuc_dv.showErrorMessage = False  # Allow custom values
-    ws.add_data_validation(r1_nuc_dv)
-    r1_nuc_dv.add(f"E2:E{MAX_ROW}")
 
-    # R2_Nuclear_Channel (column F)
-    r2_nuc_dv = DataValidation(
-        type="list",
-        formula1='"' + ",".join(nuclear_names) + '"',
-        allow_blank=True,
-    )
-    r2_nuc_dv.prompt = "Select or type the R2 nuclear channel name."
-    r2_nuc_dv.promptTitle = "R2_Nuclear_Channel"
-    r2_nuc_dv.showErrorMessage = False  # Allow custom values
-    ws.add_data_validation(r2_nuc_dv)
-    r2_nuc_dv.add(f"F2:F{MAX_ROW}")
+    dv = _soft_list(nuclear_names, "Select or type the R1 nuclear channel.", "R1_Nuclear_Channel")
+    ws.add_data_validation(dv)
+    dv.add(f"E2:E{MAX_ROW}")
 
-    # Seg_Method (column G)
-    seg_dv = DataValidation(
-        type="list",
-        formula1='"' + ",".join(sorted(_VALID_SEG_METHODS)) + '"',
-        allow_blank=True,
-    )
-    seg_dv.error = "Invalid segmentation method."
-    seg_dv.errorTitle = "Seg_Method"
-    seg_dv.prompt = "Choose a segmentation method."
-    seg_dv.promptTitle = "Seg_Method"
-    ws.add_data_validation(seg_dv)
-    seg_dv.add(f"G2:G{MAX_ROW}")
+    dv = _soft_list(nuclear_names, "Select or type the R2 nuclear channel.", "R2_Nuclear_Channel")
+    ws.add_data_validation(dv)
+    dv.add(f"F2:F{MAX_ROW}")
 
-    # Merge_Splits (column H)
-    bool_dv = DataValidation(
-        type="list", formula1='"TRUE,FALSE"', allow_blank=True,
-    )
-    ws.add_data_validation(bool_dv)
-    bool_dv.add(f"H2:H{MAX_ROW}")
+    dv = _strict_list(sorted(_VALID_SEG_METHODS), "Choose a segmentation method.", "Seg_Method")
+    ws.add_data_validation(dv)
+    dv.add(f"G2:G{MAX_ROW}")
+
+    dv = _strict_list(["TRUE", "FALSE"])
+    ws.add_data_validation(dv)
+    dv.add(f"H2:H{MAX_ROW}")
 
     # --- Puncta sheet ---
     ws = workbook["Puncta"]
-    # Channel (column B) — populated from CHANNEL_COLORS
-    ch_dv = DataValidation(
-        type="list",
-        formula1='"' + ",".join(channel_names) + '"',
-        allow_blank=True,
-    )
-    ch_dv.error = "Unknown channel. You can type a custom name."
-    ch_dv.errorTitle = "Channel"
-    ch_dv.prompt = "Select or type the channel name."
-    ch_dv.promptTitle = "Channel"
-    ch_dv.showErrorMessage = False  # Allow custom values
-    ws.add_data_validation(ch_dv)
-    ch_dv.add(f"B2:B{MAX_ROW}")
 
-    # Algorithm (column C)
-    algo_dv = DataValidation(
-        type="list",
-        formula1='"' + ",".join(sorted(_VALID_PUNCTA_ALGORITHMS)) + '"',
-        allow_blank=True,
-    )
-    algo_dv.error = "Invalid puncta algorithm."
-    algo_dv.errorTitle = "Algorithm"
-    algo_dv.prompt = "Choose a detection algorithm."
-    algo_dv.promptTitle = "Algorithm"
-    ws.add_data_validation(algo_dv)
-    algo_dv.add(f"C2:C{MAX_ROW}")
+    dv = _soft_list(channel_names, "Select or type the channel name.", "Channel")
+    ws.add_data_validation(dv)
+    dv.add(f"B2:B{MAX_ROW}")
 
-    # Nuclei_Only (column G)
-    nuc_dv = DataValidation(
-        type="list", formula1='"TRUE,FALSE"', allow_blank=True,
-    )
-    ws.add_data_validation(nuc_dv)
-    nuc_dv.add(f"G2:G{MAX_ROW}")
+    dv = _strict_list(sorted(_VALID_PUNCTA_ALGORITHMS), "Choose a detection algorithm.", "Algorithm")
+    ws.add_data_validation(dv)
+    dv.add(f"C2:C{MAX_ROW}")
 
-    # Tophat (column H)
-    tophat_dv = DataValidation(
-        type="list", formula1='"TRUE,FALSE"', allow_blank=True,
-    )
-    ws.add_data_validation(tophat_dv)
-    tophat_dv.add(f"H2:H{MAX_ROW}")
+    dv = _strict_list(["TRUE", "FALSE"])
+    ws.add_data_validation(dv)
+    dv.add(f"G2:G{MAX_ROW}")
+
+    dv = _strict_list(["TRUE", "FALSE"])
+    ws.add_data_validation(dv)
+    dv.add(f"H2:H{MAX_ROW}")
 
     # --- Colocalization sheet ---
     ws = workbook["Colocalization"]
-    # Type (column B)
-    type_dv = DataValidation(
-        type="list",
-        formula1='"' + ",".join(sorted(_VALID_COLOC_TYPES)) + '"',
-        allow_blank=True,
-    )
-    type_dv.error = "Invalid colocalization type."
-    type_dv.errorTitle = "Type"
-    type_dv.prompt = "Choose pairwise or tri."
-    type_dv.promptTitle = "Type"
-    ws.add_data_validation(type_dv)
-    type_dv.add(f"B2:B{MAX_ROW}")
 
-    # Source (column C) — channel dropdown
-    src_dv = DataValidation(
-        type="list",
-        formula1='"' + ",".join(channel_names) + '"',
-        allow_blank=True,
-    )
-    src_dv.showErrorMessage = False
-    ws.add_data_validation(src_dv)
-    src_dv.add(f"C2:C{MAX_ROW}")
+    dv = _strict_list(sorted(_VALID_COLOC_TYPES), "Choose pairwise or tri.", "Type")
+    ws.add_data_validation(dv)
+    dv.add(f"B2:B{MAX_ROW}")
 
-    # Target (column D) — channel dropdown
-    tgt_dv = DataValidation(
-        type="list",
-        formula1='"' + ",".join(channel_names) + '"',
-        allow_blank=True,
-    )
-    tgt_dv.showErrorMessage = False
-    ws.add_data_validation(tgt_dv)
-    tgt_dv.add(f"D2:D{MAX_ROW}")
+    dv = _soft_list(channel_names, "Select or type the channel name.", "Source")
+    ws.add_data_validation(dv)
+    dv.add(f"C2:C{MAX_ROW}")
 
-    # Channel_B (column E) — channel dropdown
-    chb_dv = DataValidation(
-        type="list",
-        formula1='"' + ",".join(channel_names) + '"',
-        allow_blank=True,
-    )
-    chb_dv.showErrorMessage = False
-    ws.add_data_validation(chb_dv)
-    chb_dv.add(f"E2:E{MAX_ROW}")
+    dv = _soft_list(channel_names, "Select or type the channel name.", "Target")
+    ws.add_data_validation(dv)
+    dv.add(f"D2:D{MAX_ROW}")
+
+    dv = _soft_list(channel_names, "Select or type the channel name.", "Channel_B")
+    ws.add_data_validation(dv)
+    dv.add(f"E2:E{MAX_ROW}")
 
 
 def _build_template_sheets():
