@@ -169,6 +169,22 @@ def run_full_zfisher_pipeline(
                 )
             )
             raw_puncta_results[(rnd, ch)] = result
+
+            # Persist detection parameters for this channel
+            layer_key = f"{rnd} - {ch}"
+            puncta_params_all = session.get_data("puncta_params", default={})
+            puncta_params_all[layer_key] = {
+                'algorithm': ch_params.get('method', 'Local Maxima'),
+                'sensitivity': ch_params.get('threshold_rel', constants.PUNCTA_THRESHOLD_REL),
+                'min_distance': ch_params.get('min_distance', constants.PUNCTA_MIN_DISTANCE),
+                'sigma': ch_params.get('sigma', constants.PUNCTA_SIGMA),
+                'nuclei_only': nuclei_only,
+                'tophat': ch_params.get('use_tophat', False),
+                'tophat_radius': ch_params.get('tophat_radius', constants.PUNCTA_TOPHAT_RADIUS),
+                'num_puncta': len(result),
+            }
+            session.update_data("puncta_params", puncta_params_all)
+
             job_i += 1
 
     # --- 5. Registration (RANSAC) ---

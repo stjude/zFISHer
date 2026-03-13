@@ -53,6 +53,9 @@ def _restore_napari_notifications():
 
     try:
         from napari.utils.notifications import notification_manager
+        # Clear any records that accumulated while disabled so they
+        # don't appear as toasts the moment we re-enable.
+        notification_manager.records = []
         notification_manager.enabled = True
     except Exception:
         pass
@@ -116,7 +119,17 @@ class ProgressDialog(QProgressDialog):
         self.setCancelButton(None)  # No cancel button
         self.setValue(0)
         self.show()
+        self._center_on_parent()
         QApplication.processEvents()
+
+    def _center_on_parent(self):
+        """Position the dialog at the center of its parent widget."""
+        parent = self.parent()
+        if parent is not None:
+            parent_rect = parent.geometry()
+            x = parent_rect.x() + (parent_rect.width() - self.width()) // 2
+            y = parent_rect.y() + (parent_rect.height() - self.height()) // 2
+            self.move(x, y)
 
     def paintEvent(self, event):
         """Draw a rounded, bordered background behind the dialog contents."""
@@ -166,7 +179,10 @@ class ProgressDialog(QProgressDialog):
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.unfreeze_canvas()
         self.close()
-        # Restore warnings and notifications
+        # Flush any remaining Qt events while notifications are still suppressed
+        # so that deferred napari toasts from layer mutations don't appear.
+        QApplication.processEvents()
+        # Now safe to restore warnings and notifications
         if self._warnings_ctx:
             self._warnings_ctx.__exit__(None, None, None)
             self._warnings_ctx = None

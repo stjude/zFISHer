@@ -76,6 +76,7 @@ TRI_COLOCALIZATION_SHEET = "Tri-Colocalization"
 PER_NUCLEI_SHEET = "ROI per Nuclei"
 STATS_SHEET = "Stats"
 DISTRIBUTION_SHEET = "Distribution"
+PARAMETERS_SHEET = "Parameters"
 
 # --- UI Constants ---
 # Channel color mapping

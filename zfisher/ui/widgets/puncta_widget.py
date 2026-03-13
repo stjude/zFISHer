@@ -78,6 +78,22 @@ def _puncta_widget(
         )
         
         viewer_helpers.add_or_update_puncta_layer(viewer, image_layer, results)
+
+        # Persist the detection parameters for this channel in the session
+        puncta_params_all = session.get_data("puncta_params", default={})
+        puncta_params_all[image_layer.name] = {
+            'algorithm': method,
+            'sensitivity': threshold,
+            'min_distance': min_distance,
+            'sigma': sigma,
+            'z_scale': z_scale,
+            'nuclei_only': nuclei_only,
+            'tophat': use_tophat,
+            'tophat_radius': tophat_radius,
+            'num_puncta': len(results),
+        }
+        session.update_data("puncta_params", puncta_params_all)
+
         viewer.status = f"Found {len(results)} spots in {image_layer.name}."
 
 # --- Automated UI Event Listeners ---

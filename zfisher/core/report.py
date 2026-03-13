@@ -9,7 +9,7 @@ from . import session
 logger = logging.getLogger(__name__)
 
 
-def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None, coloc_df=None, coloc_meta=None, tri_coloc_df=None, tri_coloc_meta=None, per_nucleus_df=None, stats_df=None, distribution_df=None):
+def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None, coloc_df=None, coloc_meta=None, tri_coloc_df=None, tri_coloc_meta=None, per_nucleus_df=None, stats_df=None, distribution_df=None, params_df=None):
     """
     Exports pre-computed analysis DataFrames to an Excel file with multiple sheets.
 
@@ -42,11 +42,19 @@ def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None, co
         The final path of the saved report file.
     """
     save_path = Path(save_path)
-    logger.info("Exporting report to %s", save_path)
 
     try:
         if not str(save_path).endswith(constants.EXCEL_SUFFIX):
             save_path = save_path.with_suffix(constants.EXCEL_SUFFIX)
+
+        # Never overwrite an existing report
+        if save_path.exists():
+            raise FileExistsError(
+                f"A report named '{save_path.name}' already exists.\n"
+                "Please choose a different name before exporting."
+            )
+
+        logger.info("Exporting report to %s", save_path)
 
         # Prepare Metadata
         r1_p = Path(r1_path) if r1_path else Path("Not Set")
@@ -82,6 +90,8 @@ def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None, co
                 stats_df.to_excel(writer, sheet_name=constants.STATS_SHEET, index=False)
             if distribution_df is not None and not distribution_df.empty:
                 distribution_df.to_excel(writer, sheet_name=constants.DISTRIBUTION_SHEET, index=False)
+            if params_df is not None and not params_df.empty:
+                params_df.to_excel(writer, sheet_name=constants.PARAMETERS_SHEET, index=False)
             df_meta.to_excel(writer, sheet_name=constants.METADATA_SHEET, index=False)
 
         return save_path

@@ -19,7 +19,9 @@ _SESSION_DATA = {
     "r2_path": None,
     "shift": None,
     "processed_files": {},
-    "colocalization_rules": []
+    "colocalization_rules": [],
+    "tri_colocalization_rules": [],
+    "puncta_params": {},
 }
 _is_loading = False
 
@@ -153,7 +155,9 @@ def clear_session():
             "r2_path": None,
             "shift": None,
             "processed_files": {},
-            "colocalization_rules": []
+            "colocalization_rules": [],
+            "tri_colocalization_rules": [],
+            "puncta_params": {},
         })
 
 def initialize_new_session(output_dir, r1_path, r2_path, progress_callback=None):
@@ -252,6 +256,11 @@ def load_session_file(path):
     with _lock:
         _SESSION_DATA.update(data)
         _SESSION_DATA["session_filename"] = new_name
+        # Ensure keys added after the session was originally saved are present
+        _SESSION_DATA.setdefault("colocalization_rules", [])
+        _SESSION_DATA.setdefault("tri_colocalization_rules", [])
+        _SESSION_DATA.setdefault("processed_files", {})
+        _SESSION_DATA.setdefault("puncta_params", {})
         # Save immediately to create the new session file
         _save_session_unlocked()
 

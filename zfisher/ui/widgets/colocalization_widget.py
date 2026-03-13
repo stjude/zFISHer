@@ -171,7 +171,12 @@ def _on_export():
     rules = session.get_data("colocalization_rules", default=[])
     tri_rules = session.get_data("tri_colocalization_rules", default=[])
 
-    points_layers = [l for l in viewer.layers if isinstance(l, napari.layers.Points)]
+    points_layers = [
+        l for l in viewer.layers
+        if isinstance(l, napari.layers.Points)
+        and constants.PUNCTA_SUFFIX in l.name
+        and (constants.ALIGNED_PREFIX in l.name or constants.WARPED_PREFIX in l.name)
+    ]
     if len(points_layers) < 2:
         raise ValueError("At least two puncta layers are required for nearest-neighbor analysis.")
 
@@ -232,13 +237,17 @@ def refresh_rules_display():
 # UI Wrapper
 # =====================================================================
 
-def _filter_id_layers(widget):
-    """Remove _IDs points layers from all dropdown choices in a magicgui widget."""
+def _filter_non_puncta_layers(widget):
+    """Only keep aligned/warped puncta layers in dropdown choices."""
     for name, param_widget in widget.__signature__.parameters.items():
         try:
             combo = getattr(widget, name)
             if hasattr(combo, 'choices'):
-                combo.choices = [c for c in combo.choices if not c.name.endswith("_IDs")]
+                combo.choices = [
+                    c for c in combo.choices
+                    if constants.PUNCTA_SUFFIX in c.name
+                    and (constants.ALIGNED_PREFIX in c.name or constants.WARPED_PREFIX in c.name)
+                ]
         except (AttributeError, TypeError):
             pass
 
@@ -247,9 +256,9 @@ class _ColocalizationContainer(Container):
     """Wrapper that delegates reset_choices and exposes the inner magicgui."""
     def reset_choices(self):
         _rule_builder.reset_choices()
-        _filter_id_layers(_rule_builder)
+        _filter_non_puncta_layers(_rule_builder)
         _tri_rule_builder.reset_choices()
-        _filter_id_layers(_tri_rule_builder)
+        _filter_non_puncta_layers(_tri_rule_builder)
 
 colocalization_widget = _ColocalizationContainer(labels=False)
 colocalization_widget._rule_builder = _rule_builder

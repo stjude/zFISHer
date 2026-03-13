@@ -80,43 +80,102 @@ def calculate_distances(points_layers_data):
     return pd.DataFrame(results)
 
 
-def calculate_pairwise_colocalization(df, rules):
+def calculate_pairwise_colocalization(points_layers_data, rules):
     """
-    Filters the pairwise distances DataFrame by colocalization rules.
+    Symmetric pairwise colocalization using radius search.
+
+    For each rule, finds ALL unique (A, B) pairs where A is from one layer
+    and B is from the other and their distance is within the cutoff.  The
+    result is identical regardless of which layer is called source vs target.
 
     Parameters
     ----------
-    df : pd.DataFrame
-        The distances DataFrame from `calculate_distances`.
+    points_layers_data : list[dict]
+        Layer dicts with 'name', 'data', 'scale', 'translate', and
+        optionally 'nucleus_ids'.
     rules : list[dict]
         Each dict has 'source', 'target', 'threshold'.
 
     Returns
     -------
     pd.DataFrame
-        Filtered rows that satisfy the colocalization rules.
+        All unique colocalization pairs with distance and coordinates.
     list[dict]
         Metadata entries for each rule.
     """
+    layers_by_name = {l['name']: l for l in points_layers_data}
     coloc_rows = []
     meta_entries = []
 
     for rule in rules:
-        src = rule['source']
-        tgt = rule['target']
+        src_name = rule['source']
+        tgt_name = rule['target']
         thresh = rule['threshold']
 
-        meta_entries.append({"Key": f"Coloc Rule: {src} -> {tgt}", "Value": f"<= {thresh} um"})
+        meta_entries.append({
+            "Key": f"Coloc Rule: {src_name} <-> {tgt_name}",
+            "Value": f"<= {thresh} um"
+        })
 
-        mask = (df['Source_Layer'] == src) & \
-               (df['Target_Layer'] == tgt) & \
-               (df['Distance_um'] <= thresh)
+        if src_name not in layers_by_name or tgt_name not in layers_by_name:
+            logger.warning("Pairwise rule references missing layer(s): %s, %s. Skipping.",
+                           src_name, tgt_name)
+            continue
 
-        subset = df[mask].copy()
-        subset['Coloc_Threshold_um'] = thresh
-        coloc_rows.append(subset)
+        src_layer = layers_by_name[src_name]
+        tgt_layer = layers_by_name[tgt_name]
 
-    df_coloc = pd.concat(coloc_rows) if coloc_rows else pd.DataFrame()
+        src_world = _to_world(src_layer)
+        tgt_world = _to_world(tgt_layer)
+
+        if len(src_world) == 0 or len(tgt_world) == 0:
+            continue
+
+        # Radius search: for each source point, find all target points within cutoff
+        src_tree = cKDTree(src_world)
+        tgt_tree = cKDTree(tgt_world)
+        pairs = src_tree.query_ball_tree(tgt_tree, r=thresh)
+
+        # Collect unique pairs (deduplicate A-B / B-A by always storing
+        # the pair with the smaller layer name first, then by index)
+        seen = set()
+        src_nuc_ids = src_layer.get('nucleus_ids')
+        tgt_nuc_ids = tgt_layer.get('nucleus_ids')
+
+        for src_idx, tgt_indices in enumerate(pairs):
+            for tgt_idx in tgt_indices:
+                # Canonical key: alphabetically smaller layer name first
+                if src_name < tgt_name:
+                    pair_key = (src_name, src_idx, tgt_name, tgt_idx)
+                else:
+                    pair_key = (tgt_name, tgt_idx, src_name, src_idx)
+
+                if pair_key in seen:
+                    continue
+                seen.add(pair_key)
+
+                dist = float(np.linalg.norm(src_world[src_idx] - tgt_world[tgt_idx]))
+                src_nid = int(src_nuc_ids[src_idx]) if src_nuc_ids is not None and src_idx < len(src_nuc_ids) else None
+                tgt_nid = int(tgt_nuc_ids[tgt_idx]) if tgt_nuc_ids is not None and tgt_idx < len(tgt_nuc_ids) else None
+
+                coloc_rows.append({
+                    "Layer_A": src_name,
+                    "ID_A": src_idx,
+                    "Nucleus_ID_A": src_nid,
+                    "Z_A": src_world[src_idx][0],
+                    "Y_A": src_world[src_idx][1],
+                    "X_A": src_world[src_idx][2],
+                    "Layer_B": tgt_name,
+                    "ID_B": tgt_idx,
+                    "Nucleus_ID_B": tgt_nid,
+                    "Z_B": tgt_world[tgt_idx][0],
+                    "Y_B": tgt_world[tgt_idx][1],
+                    "X_B": tgt_world[tgt_idx][2],
+                    "Distance_um": dist,
+                    "Coloc_Threshold_um": thresh,
+                })
+
+    df_coloc = pd.DataFrame(coloc_rows)
     return df_coloc, meta_entries
 
 
@@ -433,11 +492,11 @@ def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, 
         logger.warning("No puncta found to analyze.")
         return None
 
-    # 2. Pairwise colocalization filtering
+    # 2. Pairwise colocalization (symmetric radius search)
     df_coloc = pd.DataFrame()
     coloc_meta = []
     if rules:
-        df_coloc, coloc_meta = calculate_pairwise_colocalization(df, rules)
+        df_coloc, coloc_meta = calculate_pairwise_colocalization(layers_data, rules)
 
     # 3. Tri-colocalization (needs raw layer coordinates, not the pairwise df)
     tri_coloc_df = pd.DataFrame()
@@ -450,7 +509,19 @@ def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, 
     stats_df = calculate_stats(per_nucleus_df, total_nuclei=total_nuclei)
     distribution_df = calculate_distribution(per_nucleus_df, total_nuclei=total_nuclei)
 
-    # 5. Export multi-sheet Excel report
+    # 5. Build parameters sheet from session puncta_params
+    puncta_params = session.get_data("puncta_params", default={})
+    if puncta_params:
+        params_rows = []
+        for channel, params in puncta_params.items():
+            row = {'Channel': channel}
+            row.update(params)
+            params_rows.append(row)
+        params_df = pd.DataFrame(params_rows)
+    else:
+        params_df = pd.DataFrame()
+
+    # 6. Export multi-sheet Excel report
     save_path = Path(output_dir) / filename
     final_path = export_report(
         df,
@@ -464,10 +535,11 @@ def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, 
         tri_coloc_meta=tri_coloc_meta,
         per_nucleus_df=per_nucleus_df,
         stats_df=stats_df,
-        distribution_df=distribution_df
+        distribution_df=distribution_df,
+        params_df=params_df
     )
 
-    # 6. Session Tracking
+    # 7. Session Tracking
     if final_path.exists():
         session.set_processed_file(
             layer_name="Master_Analysis_Report",
