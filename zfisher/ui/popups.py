@@ -6,6 +6,7 @@ from qtpy.QtWidgets import (
     QDialog, QVBoxLayout, QLabel, QProgressBar
 )
 from qtpy.QtCore import Qt
+from qtpy.QtGui import QPainter, QColor, QPainterPath
 
 # Saved state for napari notification suppression
 _saved_napari_handlers = []
@@ -88,11 +89,45 @@ class ProgressDialog(QProgressDialog):
         self._warnings_ctx = None
         self.setWindowTitle(title)
         self.setWindowModality(Qt.WindowModal)
+        # Frameless window — no title bar, no close button, matches macOS look.
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowModal)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        # Style child widgets only; background is painted in paintEvent.
+        self.setStyleSheet("""
+            QLabel {
+                color: white;
+                background: transparent;
+            }
+            QProgressBar {
+                border: 1px solid #7a6b8a;
+                border-radius: 6px;
+                background-color: #251f2e;
+                text-align: center;
+                color: white;
+                min-height: 18px;
+            }
+            QProgressBar::chunk {
+                background-color: #4aa87c;
+                border-radius: 5px;
+            }
+        """)
+        self.setContentsMargins(14, 14, 14, 14)
         self.setMinimumDuration(0)  # Show immediately
         self.setCancelButton(None)  # No cancel button
         self.setValue(0)
         self.show()
         QApplication.processEvents()
+
+    def paintEvent(self, event):
+        """Draw a rounded, bordered background behind the dialog contents."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(0.0, 0.0, float(self.width()), float(self.height()), 12.0, 12.0)
+        painter.fillPath(path, QColor("#1a1421"))
+        painter.setPen(QColor("#7a6b8a"))
+        painter.drawPath(path)
+        painter.end()
 
     def update_progress(self, value: int, text: str = None):
         """Updates the progress bar and optionally the label text."""

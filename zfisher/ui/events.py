@@ -26,30 +26,17 @@ def lock_layer(layer):
 
 
 def _should_lock(layer):
-    """Determine if a newly added layer should be automatically locked."""
-    name = layer.name
-    name_upper = name.upper()
+    """Determine if a newly added layer should be automatically locked.
 
-    # Raw R1/R2 image channels
-    if isinstance(layer, napari.layers.Image):
-        if "R1" in name_upper or "R2" in name_upper:
-            return True
-
-    # Nuclei centroids and mask ID layers
+    Lock everything except puncta Points layers (which the user edits).
+    """
+    # Puncta layers are the only user-editable layers — leave them unlocked.
     if isinstance(layer, napari.layers.Points):
-        if constants.CENTROIDS_SUFFIX.upper() in name_upper:
-            return True
-        if name.endswith("_IDs"):
-            return True
+        if constants.PUNCTA_SUFFIX in layer.name:
+            return False
 
-    # Nuclear mask layers (raw and aligned/warped)
-    if isinstance(layer, napari.layers.Labels):
-        nuc_ch = session.get_nuclear_channel().upper()
-        if (nuc_ch in name_upper
-                and constants.MASKS_SUFFIX.upper() in name_upper):
-            return True
-
-    return False
+    # Lock all Images, Labels, Vectors, and non-puncta Points.
+    return True
 
 
 def install_layer_lock(viewer):
