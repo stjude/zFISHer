@@ -763,7 +763,7 @@ def extrude_label(mask_data, z_index, label_id):
 
 # zfisher/core/segmentation.py
 
-def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callback=None, method="classical", voxel_spacing=None):
+def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callback=None, method="classical", merge_splits=True, voxel_spacing=None):
     """
     Core Orchestrator: Runs segmentation on one or both rounds and saves results.
     """
@@ -782,9 +782,9 @@ def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callba
                 progress_callback(int(base + (val / len(data_map)) * 0.8), f"{prefix}: {text}")
 
         if method == "cellpose":
-            masks, centroids = segment_nuclei_cellpose(data, progress_callback=on_step_progress)
+            masks, centroids = segment_nuclei_cellpose(data, merge_splits=merge_splits, progress_callback=on_step_progress)
         else:
-            masks, centroids = segment_nuclei_classical(data, voxel_spacing=voxel_spacing, progress_callback=on_step_progress)
+            masks, centroids = segment_nuclei_classical(data, voxel_spacing=voxel_spacing, merge_splits=merge_splits, progress_callback=on_step_progress)
         raw_results[prefix] = (masks, centroids)
 
     # Pass 2: Pool volumes from all rounds, compute shared threshold, filter
