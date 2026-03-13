@@ -155,6 +155,40 @@ class MaskHighlighter:
         self.last_id = label_id
         self.viewer.status = f"Hovering Nucleus ID: {label_id} (Press 'C' to delete)"
 
+    # ---- cursor lookup -------------------------------------------------------
+
+    @staticmethod
+    def _label_at_position(layer, position):
+        """Return the label ID at *position* (world coords), or None.
+
+        Tries the full ``get_value`` API first (handles 3-D ray-casting).
+        Falls back to a direct voxel lookup so 2-D mode always works.
+        """
+        # Attempt 1: napari's get_value with ray-casting
+        try:
+            viewer = napari.current_viewer()
+            val = layer.get_value(
+                position,
+                view_direction=viewer.camera.view_direction,
+                dims_displayed=list(viewer.dims.displayed),
+                world=True,
+            )
+            if val is not None:
+                return int(val)
+        except Exception:
+            pass
+
+        # Attempt 2: direct voxel lookup (reliable in 2-D and when ray-cast fails)
+        try:
+            coords = layer.world_to_data(position)
+            idx = tuple(int(round(float(c))) for c in coords)
+            if all(0 <= i < s for i, s in zip(idx, layer.data.shape)):
+                return int(layer.data[idx])
+        except Exception:
+            pass
+
+        return None
+
     # ---- mouse callback ----------------------------------------------------
 
     def on_mouse_move(self, viewer, event):
@@ -167,12 +201,13 @@ class MaskHighlighter:
                 self.reset_highlight()
             return
 
+        # Use event args directly for speed (called on every pixel of mouse movement)
         try:
             id_under_cursor = layer.get_value(
                 event.position,
                 view_direction=event.view_direction,
                 dims_displayed=list(event.dims_displayed),
-                world=True
+                world=True,
             )
         except Exception:
             return
@@ -240,14 +275,11 @@ def _delete_label_inplace(layer, label_id):
     _schedule_save(layer)
 
 def _remove_id_from_points_layer(mask_layer, deleted_id):
-    """Remove a single ID from the IDs points layer without recomputing centroids.
+    """Remove a single ID from the IDs points layer using napari's native API.
 
-    Uses remove-and-recreate to avoid vispy GL access violations caused by
-    setting .data and .properties separately (napari bug with stale
-    _indices_view / GPU buffers).
+    Uses ``remove_selected()`` which handles vispy/GL buffer updates internally,
+    avoiding the fragile remove-and-recreate pattern.
     """
-    import zfisher.ui.events as _events_mod
-
     viewer = napari.current_viewer()
     if not viewer:
         return
@@ -255,38 +287,14 @@ def _remove_id_from_points_layer(mask_layer, deleted_id):
     if ids_name not in viewer.layers:
         return
     pts_layer = viewer.layers[ids_name]
-    labels = pts_layer.properties.get('label', np.empty(0))
+    labels = np.asarray(pts_layer.properties.get('label', np.empty(0)))
     if len(labels) == 0:
         return
-    keep = labels != deleted_id
-    new_data = pts_layer.data[keep]
-    new_labels = labels[keep]
-
-    # Preserve layer state before removal
-    layer_idx = list(viewer.layers).index(pts_layer)
-    scale = pts_layer.scale
-    translate = pts_layer.translate
-    out_of_slice = pts_layer.out_of_slice_display
-
-    # Unlock so guarded_remove allows it, and mark as programmatic so
-    # on_layer_removed doesn't cascade-delete the parent mask layer.
-    pts_layer._locked = False
-    _events_mod._programmatic_removal = True
-    try:
-        viewer.layers.remove(pts_layer)
-    finally:
-        _events_mod._programmatic_removal = False
-
-    if len(new_data) > 0:
-        new_layer = viewer.add_points(
-            new_data, name=ids_name, size=1, face_color='transparent',
-            scale=scale, translate=translate,
-            properties={'label': new_labels},
-            text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
-            blending='translucent_no_depth',
-        )
-        new_layer.out_of_slice_display = out_of_slice
-        viewer.layers.move(len(viewer.layers) - 1, layer_idx)
+    to_remove = set(np.where(labels == deleted_id)[0])
+    if not to_remove:
+        return
+    pts_layer.selected_data = to_remove
+    pts_layer.remove_selected()
 
 _save_timer = QTimer()
 _save_timer.setSingleShot(True)
@@ -318,7 +326,7 @@ def delete_mask_under_mouse(viewer):
     """Deletes the mask label currently under the mouse cursor."""
     global _highlighter
 
-    # 1. If hover-edit is active, use its state for accuracy.
+    # 1. If hover-edit has a cached ID, use it directly (fastest path).
     if _highlighter and _highlighter.active and _highlighter.last_id is not None:
         layer = _highlighter.last_layer
         id_to_delete = _highlighter.last_id
@@ -330,16 +338,17 @@ def delete_mask_under_mouse(viewer):
             viewer.status = f"Deleted Nucleus ID {id_to_delete}"
             return
 
-    # 2. Fallback: Calculate value under cursor manually
-    layer = viewer.layers.selection.active
+    # 2. Fallback: query the label under the cursor right now.
+    #    Prefer the widget's selected mask layer over the viewer's active layer
+    #    so the user doesn't have to manually select the Labels layer first.
+    layer = _mask_editor_widget.mask_layer.value
+    if not isinstance(layer, napari.layers.Labels):
+        layer = viewer.layers.selection.active
     if isinstance(layer, napari.layers.Labels):
-        val = layer.get_value(
-            viewer.cursor.position,
-            view_direction=viewer.camera.view_direction,
-            dims_displayed=list(viewer.dims.displayed),
-            world=True
-        )
+        val = MaskHighlighter._label_at_position(layer, viewer.cursor.position)
         if val is not None and val > 0:
+            if _highlighter and _highlighter.active:
+                _highlighter.reset_highlight()
             _delete_label_inplace(layer, val)
             logger.info("MASK EDIT: Deleted nucleus ID %d (cursor) on layer '%s'", val, layer.name)
             viewer.status = f"Deleted Nucleus ID {val}"

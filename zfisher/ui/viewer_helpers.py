@@ -121,11 +121,25 @@ def _load_points_layer(viewer, name, path, scale, file_info, translate):
                     'string': '{label}', 'size': 10, 'color': '#40b5d8',
                     'translation': np.array([0, -5, 0])
                 }
+                # Inherit visibility from parent mask and position above it
+                parent_mask_name = name[:-4] if name.endswith("_IDs") else None
+                parent_vis = False
+                if parent_mask_name and parent_mask_name in viewer.layers:
+                    parent_vis = viewer.layers[parent_mask_name].visible
                 layer = viewer.add_points(
                     coords, name=name, size=1, face_color='transparent', scale=scale, properties=properties,
-                    text=text_params, blending='translucent_no_depth', translate=translate, visible=False
+                    text=text_params, blending='translucent_no_depth', translate=translate, visible=parent_vis
                 )
                 layer.out_of_slice_display = True
+                try:
+                    layer.text.blending = 'translucent_no_depth'
+                except Exception:
+                    pass
+                if parent_mask_name and parent_mask_name in viewer.layers:
+                    parent = viewer.layers[parent_mask_name]
+                    mask_idx = list(viewer.layers).index(parent)
+                    viewer.layers.move(list(viewer.layers).index(layer), mask_idx + 1)
+                    _attach_ids_visibility_sync(parent, layer)
             
             elif subtype == 'centroids':
                 viewer.add_points(data, name=name, size=5, face_color='orange', scale=scale, translate=translate, visible=False)
@@ -377,7 +391,12 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
         session.set_processed_file(layer_name, str(csv_path), layer_type='points', metadata={'subtype': 'puncta_csv'})
 
 def _add_or_replace_ids_layer(viewer, name, coords, labels, scale, translate=None):
-    """Create or replace a _IDs text-overlay Points layer from pre-computed centroids."""
+    """Create or replace a _IDs text-overlay Points layer from pre-computed centroids.
+
+    The IDs layer is always positioned directly above its parent mask layer
+    so that it renders on top in 3D (napari draws higher-index layers later).
+    Visibility is synced to the parent mask via ``_attach_ids_visibility_sync``.
+    """
     import zfisher.ui.events as _events_mod
 
     if translate is None:
@@ -385,25 +404,73 @@ def _add_or_replace_ids_layer(viewer, name, coords, labels, scale, translate=Non
 
     if name in viewer.layers:
         old = viewer.layers[name]
-        layer_idx = list(viewer.layers).index(old)
         old._locked = False  # unlock so guarded_remove allows it
         _events_mod._programmatic_removal = True
         try:
             viewer.layers.remove(old)
         finally:
             _events_mod._programmatic_removal = False
-    else:
-        layer_idx = None
+
+    # Determine the parent mask's visibility and position so we can place
+    # the IDs layer directly above it.
+    parent_mask_name = name[:-4] if name.endswith("_IDs") else None
+    parent_visible = False
+    target_idx = None
+    if parent_mask_name and parent_mask_name in viewer.layers:
+        parent = viewer.layers[parent_mask_name]
+        parent_visible = parent.visible
+        target_idx = list(viewer.layers).index(parent) + 1  # just above mask
 
     layer = viewer.add_points(
-        coords, name=name, size=1, face_color='transparent', scale=scale,
+        coords, name=name, size=4, face_color='#40b5d880', scale=scale,
         translate=translate, properties={'label': labels},
-        text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
-        blending='translucent_no_depth', visible=False,
+        text={'string': '{label}', 'size': 12, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
+        blending='translucent_no_depth', visible=parent_visible,
     )
     layer.out_of_slice_display = True
-    if layer_idx is not None:
-        viewer.layers.move(len(viewer.layers) - 1, layer_idx)
+    # Disable depth testing on the text visual so ID numbers render
+    # in front of iso_categorical mask surfaces in 3D.
+    try:
+        layer.text.blending = 'translucent_no_depth'
+    except Exception:
+        pass
+
+    # Position directly above parent mask so it renders on top in 3D
+    if target_idx is not None:
+        # Layer was appended at the end; move it just above the mask
+        viewer.layers.move(len(viewer.layers) - 1, target_idx)
+
+    # Attach visibility sync (idempotent — skips if already connected)
+    if parent_mask_name and parent_mask_name in viewer.layers:
+        _attach_ids_visibility_sync(viewer.layers[parent_mask_name], layer)
+
+
+# --- Mask ↔ IDs visibility syncing -------------------------------------------
+
+# Track connected callbacks so we don't double-connect.
+# Key: id(mask_layer), Value: callback
+_visibility_sync_callbacks = {}
+
+
+def _attach_ids_visibility_sync(mask_layer, ids_layer):
+    """When *mask_layer* visibility toggles, mirror it on *ids_layer*."""
+    key = id(mask_layer)
+
+    # Disconnect any previous callback for this mask (e.g. after IDs replacement)
+    if key in _visibility_sync_callbacks:
+        try:
+            mask_layer.events.visible.disconnect(_visibility_sync_callbacks[key])
+        except (TypeError, RuntimeError):
+            pass
+
+    def _sync_visible(event=None):
+        try:
+            ids_layer.visible = mask_layer.visible
+        except RuntimeError:
+            pass  # layer was destroyed
+
+    mask_layer.events.visible.connect(_sync_visible)
+    _visibility_sync_callbacks[key] = _sync_visible
 
 
 def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napari.layers.Image, masks: np.ndarray, centroids: np.ndarray):
