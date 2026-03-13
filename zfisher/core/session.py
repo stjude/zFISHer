@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from .. import constants
+from .log_config import attach_session_log, detach_session_log
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,7 @@ def set_processed_file(layer_name, path, layer_type: str, metadata: dict = None)
 
         _SESSION_DATA["processed_files"][layer_name] = file_info
         _save_session_unlocked()
+    logger.info("Saved processed file: %s (%s) -> %s", layer_name, layer_type, path)
 
 def remove_processed_file(layer_name):
     """
@@ -142,6 +144,7 @@ def clear_session():
     Resets the in-memory session data to its default, empty state.
     """
     global _SESSION_DATA
+    detach_session_log()
     with _lock:
         _SESSION_DATA.clear()
         _SESSION_DATA.update({
@@ -165,15 +168,19 @@ def initialize_new_session(output_dir, r1_path, r2_path, progress_callback=None)
 
     # 1. Create directory structure
     output_dir.mkdir(parents=True, exist_ok=True)
-    for folder in [constants.SEGMENTATION_DIR, constants.ALIGNED_DIR, 
-                   constants.CAPTURES_DIR, constants.INPUT_DIR, constants.REPORTS_DIR]:
+    for folder in [constants.SEGMENTATION_DIR, constants.ALIGNED_DIR,
+                   constants.CAPTURES_DIR, constants.INPUT_DIR, constants.REPORTS_DIR,
+                   constants.LOGS_DIR]:
         (output_dir / folder).mkdir(exist_ok=True)
 
     # 2. Reset global state
     clear_session()
+    attach_session_log(output_dir, session_filename=constants.SESSION_FILENAME)
     update_data("output_dir", str(output_dir))
     update_data("r1_path", str(r1_path))
     update_data("r2_path", str(r2_path))
+
+    logger.info("New session created: output_dir=%s, r1=%s, r2=%s", output_dir, r1_path, r2_path)
 
     # 3. Headless-Ready Conversion
     # We move the conversion logic here so it happens even without napari
@@ -247,5 +254,8 @@ def load_session_file(path):
         _SESSION_DATA["session_filename"] = new_name
         # Save immediately to create the new session file
         _save_session_unlocked()
+
+    attach_session_log(out_dir, session_filename=new_name)
+    logger.info("Session loaded from %s → new session file: %s", path.name, new_name)
 
     return _SESSION_DATA

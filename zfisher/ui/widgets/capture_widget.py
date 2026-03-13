@@ -1,3 +1,4 @@
+import logging
 import napari
 import numpy as np
 import warnings as _warnings
@@ -11,6 +12,8 @@ from ...core import session
 from .. import popups
 from ..decorators import require_active_session
 from ... import constants
+
+logger = logging.getLogger(__name__)
 
 # --- Arrow Overlay (QPainter-based, world-anchored, screen-rendered) ---
 
@@ -338,6 +341,7 @@ class ArrowDrawer:
         else:
             if np.linalg.norm(cursor - self.start_pos) > 1e-3:
                 self._arrow_endpoints.append((self.start_pos.copy(), cursor.copy()))
+                logger.info("CAPTURE: Arrow drawn (#%d)", len(self._arrow_endpoints))
                 viewer.status = "Arrow drawn."
             else:
                 viewer.status = "Arrow too small, cancelled."
@@ -461,8 +465,8 @@ def _capture_view(viewer: napari.Viewer, output_filename: str):
         canvas_qwidget = viewer.window.qt_viewer.canvas.native
         pixmap = canvas_qwidget.grab()
         pixmap.save(str(save_path))
-        
-        print(f"Saved screenshot to {save_path}")
+
+        logger.info("CAPTURE: Saved screenshot to %s", save_path)
         viewer.status = f"Saved screenshot: {save_path.name}"
         
         # Update filename for the next capture
@@ -597,6 +601,7 @@ def _save_region_capture(viewer, pixmap):
 
     save_path = captures_dir / filename
     pixmap.save(str(save_path))
+    logger.info("CAPTURE: Region capture saved to %s", save_path)
 
     capture_count += 1
     next_fn = _get_next_filename()
@@ -667,6 +672,7 @@ def _on_clear_arrows():
             arrows_path = seg_dir / "Arrows.npy"
             np.save(arrows_path, np.empty((0, 2, viewer.dims.ndim)))
     _update_arrow_count()
+    logger.info("CAPTURE: All arrows cleared")
     viewer.status = "All arrows cleared."
 
 # Scale Bar Options
@@ -724,6 +730,7 @@ def _on_arrow_draw_toggled(state: bool):
     if arrow_drawer is None:
         arrow_drawer = ArrowDrawer(viewer, overlay)
 
+    logger.info("CAPTURE: Arrow draw mode %s", "ON" if state else "OFF")
     arrow_drawer.set_active(state)
 
 @arrow_show_chk.changed.connect
@@ -768,7 +775,7 @@ _layout.addWidget(_arrow_header.native)
 _layout.addWidget(arrow_chk.native)
 _layout.addWidget(arrow_show_chk.native)
 _layout.addWidget(arrow_count_label.native)
-_arrow_hint = widgets.Label(value="<i>Press D over arrow to delete</i>")
+_arrow_hint = widgets.Label(value="<i style='color: white;'>Press D over arrow to delete</i>")
 _arrow_hint.native.setObjectName("widgetInfo")
 _layout.addWidget(_arrow_hint.native)
 _layout.addWidget(arrow_clear_btn.native)

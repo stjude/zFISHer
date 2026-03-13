@@ -9,6 +9,11 @@ from .. import constants
 
 logger = logging.getLogger(__name__)
 
+# When True, on_layer_removed skips cascade deletion (mask↔IDs).
+# Set by programmatic helpers like add_or_update_label_ids that remove
+# layers only to recreate them immediately.
+_programmatic_removal = False
+
 
 def is_layer_locked(layer):
     """Check whether a layer has been marked as non-deletable."""
@@ -139,7 +144,7 @@ def _try_set(widgets, widget_key, *attr_chain):
         for attr in attr_chain[:-2]:
             obj = getattr(obj, attr)
         setattr(getattr(obj, attr_chain[-2]), 'value', attr_chain[-1])
-    except (KeyError, AttributeError):
+    except (KeyError, AttributeError, ValueError):
         pass
 
 def on_layer_inserted(event, widgets):
@@ -211,30 +216,34 @@ def on_layer_removed(event, widgets):
     Refreshes all widget dropdowns when a layer is removed.
     For Labels layers, also removes the associated _IDs points layer
     and cleans up the session registry.
+
+    Cascade deletion (mask ↔ _IDs) is skipped when _programmatic_removal
+    is set, since programmatic helpers remove-then-recreate layers and
+    don't want the partner destroyed.
     """
     layer = event.value
     viewer = napari.current_viewer()
 
-    # Remove the orphan _IDs display layer (if it exists) and clean up session data
     if isinstance(layer, napari.layers.Labels):
-        ids_name = f"{layer.name}_IDs"
-        if viewer and ids_name in viewer.layers:
-            ids_layer = viewer.layers[ids_name]
-            ids_layer._locked = False  # unlock before cascade removal
-            viewer.layers.remove(ids_layer)
+        # Cascade: also remove orphan _IDs display layer
+        if not _programmatic_removal:
+            ids_name = f"{layer.name}_IDs"
+            if viewer and ids_name in viewer.layers:
+                ids_layer = viewer.layers[ids_name]
+                ids_layer._locked = False
+                viewer.layers.remove(ids_layer)
         session.remove_processed_file(layer.name)
-        session.remove_processed_file(ids_name)
+        session.remove_processed_file(f"{layer.name}_IDs")
 
-    # Clean up stale session entry and listener tracking for removed points layers
     elif isinstance(layer, napari.layers.Points):
         session.remove_processed_file(layer.name)
         detach_puncta_listener(layer)
-        # If this is an _IDs centroids layer, also remove the parent mask
-        if layer.name.endswith("_IDs"):
+        # Cascade: also remove the parent mask
+        if not _programmatic_removal and layer.name.endswith("_IDs"):
             mask_name = layer.name[:-4]  # strip "_IDs"
             if viewer and mask_name in viewer.layers:
                 mask_layer = viewer.layers[mask_name]
-                mask_layer._locked = False  # unlock before cascade removal
+                mask_layer._locked = False
                 viewer.layers.remove(mask_layer)
 
     def update_choices():

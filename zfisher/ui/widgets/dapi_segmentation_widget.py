@@ -1,3 +1,4 @@
+import logging
 import napari
 import numpy as np
 from magicgui import magicgui
@@ -6,6 +7,8 @@ from magicgui.widgets import Container, Label
 from ...core import session
 from .. import popups, viewer_helpers
 from ..decorators import require_active_session, error_handler
+
+logger = logging.getLogger(__name__)
 from ...core.segmentation import (
     segment_nuclei_classical, segment_nuclei_cellpose,
     get_label_volumes, compute_min_volume_threshold, filter_small_labels,
@@ -40,6 +43,10 @@ def _dapi_segmentation_widget(
 ):
     """Runs segmentation on selected nuclei channels."""
     viewer = napari.current_viewer()
+    logger.info("Nuclei segmentation settings: method=%s, merge_splits=%s, R1=%s, R2=%s",
+                method, merge_splits,
+                r1_layer.name if r1_layer else None,
+                r2_layer.name if r2_layer else None)
 
     layers_to_process = [l for l in [r1_layer, r2_layer] if l is not None]
     
@@ -91,13 +98,13 @@ def _dapi_segmentation_widget(
         dialog.freeze_canvas()
 
         # Load results into viewer with progress feedback
+        n_filtered = max(len(filtered_results), 1)
         for i, (layer, masks, centroids) in enumerate(filtered_results):
-            pct = 85 + int(((i + 1) / len(filtered_results)) * 15)
-            dialog.update_progress(pct, f"Loading layers: {layer.name}...")
+            pct = 85 + int((i / n_filtered) * 13)
+            dialog.update_progress(pct, f"Loading masks & IDs: {layer.name}...")
             viewer_helpers.add_segmentation_results_to_viewer(viewer, layer, masks, centroids)
 
         dialog.update_progress(100, "Complete.")
-        viewer.status = "Segmentation complete."
 
 # --- UI Wrapper ---
 class _DapiSegmentationContainer(Container):

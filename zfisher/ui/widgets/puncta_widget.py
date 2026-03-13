@@ -1,3 +1,4 @@
+import logging
 import napari
 from pathlib import Path
 from magicgui import magicgui, widgets
@@ -6,6 +7,8 @@ from .. import popups, viewer_helpers
 from ..decorators import require_active_session, error_handler
 from ... import constants
 from ._shared import make_header_divider
+
+logger = logging.getLogger(__name__)
 
 @magicgui(
     call_button="Detect Puncta",
@@ -40,8 +43,13 @@ def _puncta_widget(
 ):
     """User interface for high-density puncta quantification."""
     viewer = napari.current_viewer()
-    if not image_layer: 
+    if not image_layer:
         return
+
+    logger.info("Puncta widget settings: layer=%s, nuclei=%s, nuclei_only=%s, method=%s, "
+                "threshold=%.3f, min_distance=%d, sigma=%.1f, z_scale=%.2f, tophat=%s/%d",
+                image_layer.name, nuclei_layer.name if nuclei_layer else None,
+                nuclei_only, method, threshold, min_distance, sigma, z_scale, use_tophat, tophat_radius)
 
     with popups.ProgressDialog(viewer.window._qt_window, f"Processing {image_layer.name}...") as dialog:
         # Package parameters for the core orchestrator

@@ -90,6 +90,10 @@ def _canvas_widget(
             layer_type = layer_info['type']
             meta = layer_info['meta']
 
+            # Skip aligned/warped mask labels — they exist on disk for the
+            # consensus step but adding them to the viewer causes duplicate IDs.
+            if layer_type == 'labels' and constants.MASKS_SUFFIX in layer_info['name']:
+                continue
             if layer_type == 'labels':
                 layer = viewer.add_labels(
                     layer_info['data'],

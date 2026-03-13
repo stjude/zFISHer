@@ -13,6 +13,7 @@ ALIGNED_DIR = "aligned"
 CAPTURES_DIR = "captures"
 INPUT_DIR = "input"
 REPORTS_DIR = "reports"
+LOGS_DIR = "logs"
 
 # --- Layer Name Prefixes/Suffixes ---
 ALIGNED_PREFIX = "Aligned"

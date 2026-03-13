@@ -42,6 +42,10 @@ def calculate_session_registration(r1_centroids, r2_centroids, voxels=None, prog
     Headless Orchestrator for Step 3.
     Calculates the shift and updates the global session data.
     """
+    logger.info("Registration: R1 centroids=%s, R2 centroids=%s",
+                r1_centroids.shape if r1_centroids is not None else None,
+                r2_centroids.shape if r2_centroids is not None else None)
+
     if r1_centroids is None or r2_centroids is None:
         return None, 0.0
 
@@ -615,6 +619,8 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
         layer dicts, transform is the B-spline SimpleITK transform (or None),
         and canvas_offset_pixels is a (3,) ndarray (or None).
     """
+    logger.info("Canvas generation: apply_warp=%s, output_dir=%s", apply_warp, output_dir)
+
     def update(val, msg):
         if progress_callback:
             progress_callback(val, msg)

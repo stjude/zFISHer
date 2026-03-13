@@ -1,13 +1,80 @@
+import logging
+import warnings
+
 from qtpy.QtWidgets import (
     QProgressDialog, QMessageBox, QApplication,
     QDialog, QVBoxLayout, QLabel, QProgressBar
 )
 from qtpy.QtCore import Qt
 
+# Saved state for napari notification suppression
+_saved_napari_handlers = []
+_saved_showwarning = None
+
+
+def _suppress_napari_notifications():
+    """Aggressively suppress napari notification toasts.
+
+    1. Disable the notification_manager (if the attribute exists).
+    2. Remove any napari-related logging handlers from the root logger
+       so that log messages don't trigger notification toasts.
+    3. Replace warnings.showwarning with a no-op so that even if
+       catch_warnings doesn't fully block napari's hook, nothing shows.
+    """
+    global _saved_napari_handlers, _saved_showwarning
+
+    # 1. Disable notification manager
+    try:
+        from napari.utils.notifications import notification_manager
+        notification_manager.records = []
+        notification_manager.enabled = False
+    except Exception:
+        pass
+
+    # 2. Temporarily remove napari notification handlers from root logger
+    root = logging.getLogger()
+    _saved_napari_handlers = []
+    for h in root.handlers[:]:
+        mod = getattr(type(h), '__module__', '') or ''
+        cls = type(h).__name__
+        if 'napari' in mod or 'Notification' in cls:
+            root.removeHandler(h)
+            _saved_napari_handlers.append(h)
+
+    # 3. Replace showwarning with a no-op
+    _saved_showwarning = warnings.showwarning
+    warnings.showwarning = lambda *a, **kw: None
+
+
+def _restore_napari_notifications():
+    """Re-enable napari notifications and restore removed handlers."""
+    global _saved_napari_handlers, _saved_showwarning
+
+    try:
+        from napari.utils.notifications import notification_manager
+        notification_manager.enabled = True
+    except Exception:
+        pass
+
+    # Restore napari logging handlers
+    root = logging.getLogger()
+    for h in _saved_napari_handlers:
+        root.addHandler(h)
+    _saved_napari_handlers = []
+
+    # Restore showwarning
+    if _saved_showwarning is not None:
+        warnings.showwarning = _saved_showwarning
+        _saved_showwarning = None
+
+
 class ProgressDialog(QProgressDialog):
     """
-    A custom, non-cancellable QProgressDialog that provides a simple interface 
+    A custom, non-cancellable QProgressDialog that provides a simple interface
     for updating progress and status text.
+
+    Suppresses Python warnings and napari notification toasts while active
+    so that third-party library chatter doesn't spawn popup windows.
 
     Usage:
         with ProgressDialog(parent, title="Work") as dialog:
@@ -18,6 +85,7 @@ class ProgressDialog(QProgressDialog):
     def __init__(self, parent=None, title="Processing...", text="Please wait..."):
         super().__init__(text, None, 0, 100, parent)
         self._canvas_frozen = False
+        self._warnings_ctx = None
         self.setWindowTitle(title)
         self.setWindowModality(Qt.WindowModal)
         self.setMinimumDuration(0)  # Show immediately
@@ -53,11 +121,21 @@ class ProgressDialog(QProgressDialog):
             QApplication.processEvents()
 
     def __enter__(self):
+        # Suppress Python warnings and napari notification toasts
+        self._warnings_ctx = warnings.catch_warnings()
+        self._warnings_ctx.__enter__()
+        warnings.simplefilter("ignore")
+        _suppress_napari_notifications()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.unfreeze_canvas()
         self.close()
+        # Restore warnings and notifications
+        if self._warnings_ctx:
+            self._warnings_ctx.__exit__(None, None, None)
+            self._warnings_ctx = None
+        _restore_napari_notifications()
 
 class BatchProgressDialog(QDialog):
     """

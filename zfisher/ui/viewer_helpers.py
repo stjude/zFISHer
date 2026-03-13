@@ -376,6 +376,35 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
         # Update session file to point to this new CSV
         session.set_processed_file(layer_name, str(csv_path), layer_type='points', metadata={'subtype': 'puncta_csv'})
 
+def _add_or_replace_ids_layer(viewer, name, coords, labels, scale, translate=None):
+    """Create or replace a _IDs text-overlay Points layer from pre-computed centroids."""
+    import zfisher.ui.events as _events_mod
+
+    if translate is None:
+        translate = (0,) * len(scale)
+
+    if name in viewer.layers:
+        old = viewer.layers[name]
+        layer_idx = list(viewer.layers).index(old)
+        _events_mod._programmatic_removal = True
+        try:
+            viewer.layers.remove(old)
+        finally:
+            _events_mod._programmatic_removal = False
+    else:
+        layer_idx = None
+
+    layer = viewer.add_points(
+        coords, name=name, size=1, face_color='transparent', scale=scale,
+        translate=translate, properties={'label': labels},
+        text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
+        blending='translucent_no_depth', visible=False,
+    )
+    layer.out_of_slice_display = True
+    if layer_idx is not None:
+        viewer.layers.move(len(viewer.layers) - 1, layer_idx)
+
+
 def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napari.layers.Image, masks: np.ndarray, centroids: np.ndarray):
     """
     Adds nuclei segmentation results (masks and centroids) to the viewer.
@@ -393,14 +422,20 @@ def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napa
     centroids : np.ndarray
         The (N, 3) array of centroid coordinates.
     """
+    logger.debug("add_segmentation_results_to_viewer: source='%s'", source_layer.name)
     out_dir = session.get_data("output_dir")
     seg_dir = Path(out_dir) / constants.SEGMENTATION_DIR if out_dir else None
 
     if masks is not None:
         mask_layer_name = f"{source_layer.name}{constants.MASKS_SUFFIX}"
         if mask_layer_name in viewer.layers:
+            import zfisher.ui.events as _events_mod
             layer = viewer.layers[mask_layer_name]
-            layer.data = masks
+            _events_mod._programmatic_removal = True
+            try:
+                layer.data = masks
+            finally:
+                _events_mod._programmatic_removal = False
             layer.scale = source_layer.scale
             layer.refresh()
         else:
@@ -412,17 +447,31 @@ def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napa
             tifffile.imwrite(mask_path, masks)
             session.set_processed_file(mask_layer_name, str(mask_path), layer_type='labels', metadata={'subtype': 'mask'})
 
-        # Add nucleus ID labels at each mask centroid
-        add_or_update_label_ids(viewer, layer)
+        # Build the _IDs text overlay directly from the centroids we already
+        # have — no need to re-run regionprops via add_or_update_label_ids.
+        if centroids is not None and len(centroids) > 0:
+            ids_name = f"{mask_layer_name}_IDs"
+            id_labels = np.arange(len(centroids)) + 1
+            _add_or_replace_ids_layer(
+                viewer, ids_name, centroids, id_labels,
+                scale=source_layer.scale, translate=layer.translate,
+            )
+            if not session.is_loading():
+                session.set_processed_file(ids_name, "", layer_type='points', metadata={'subtype': 'computed_ids'})
 
     if centroids is not None:
         centroid_layer_name = f"{source_layer.name}{constants.CENTROIDS_SUFFIX}"
         ids = np.arange(len(centroids)) + 1
         if centroid_layer_name in viewer.layers:
             # Remove and recreate to avoid vispy stale-buffer issues
+            import zfisher.ui.events as _events_mod
             old = viewer.layers[centroid_layer_name]
             layer_idx = list(viewer.layers).index(old)
-            viewer.layers.remove(old)
+            _events_mod._programmatic_removal = True
+            try:
+                viewer.layers.remove(old)
+            finally:
+                _events_mod._programmatic_removal = False
         else:
             layer_idx = None
         new_pts = viewer.add_points(
@@ -480,30 +529,10 @@ def add_consensus_nuclei_to_viewer(viewer: napari.Viewer, r1_mask_layer: napari.
     if pts1:
         coords = np.array([p['coord'] for p in pts1])
         labels = np.array([p['label'] for p in pts1])
-
-        if ids_layer_name in viewer.layers:
-            # Remove and recreate to avoid vispy GL access violations
-            old = viewer.layers[ids_layer_name]
-            layer_idx = list(viewer.layers).index(old)
-            viewer.layers.remove(old)
-            points_layer = viewer.add_points(
-                coords, name=ids_layer_name, size=1, face_color='transparent',
-                scale=r1_mask_layer.scale, translate=r1_mask_layer.translate,
-                properties={'label': labels},
-                text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
-                blending='translucent_no_depth', visible=False,
-            )
-            points_layer.out_of_slice_display = True
-            viewer.layers.move(len(viewer.layers) - 1, layer_idx)
-        else:
-            points_layer = viewer.add_points(
-                coords, name=ids_layer_name, size=1, face_color='transparent',
-                scale=r1_mask_layer.scale, translate=r1_mask_layer.translate,
-                properties={'label': labels},
-                text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
-                blending='translucent_no_depth', visible=False,
-            )
-            points_layer.out_of_slice_display = True
+        _add_or_replace_ids_layer(
+            viewer, ids_layer_name, coords, labels,
+            scale=r1_mask_layer.scale, translate=r1_mask_layer.translate,
+        )
 
 def add_or_update_label_ids(viewer: napari.Viewer, labels_layer: napari.layers.Labels):
     """
@@ -512,52 +541,27 @@ def add_or_update_label_ids(viewer: napari.Viewer, labels_layer: napari.layers.L
     This creates or updates a points layer named after the labels layer
     (e.g., 'MyMask_IDs') to show the ID number at the centroid of each label.
 
-    Parameters
-    ----------
-    viewer : napari.Viewer
-        The napari viewer instance.
-    labels_layer : napari.layers.Labels
-        The labels layer to analyze.
+    Used by the mask editor refresh button and debounced auto-refresh after
+    edits.  During initial segmentation, add_segmentation_results_to_viewer
+    bypasses this and builds the _IDs layer directly from pre-computed
+    centroids to avoid a redundant regionprops pass.
     """
     if not labels_layer:
         return
+    logger.debug("add_or_update_label_ids: layer='%s'", labels_layer.name)
 
     pts_data = segmentation.get_mask_centroids(labels_layer.data)
-    
+
     name = f"{labels_layer.name}_IDs"
     coords = np.array([p['coord'] for p in pts_data]) if pts_data else np.empty((0, labels_layer.ndim))
     labels = np.array([p['label'] for p in pts_data]) if pts_data else np.empty(0)
-    
-    if name in viewer.layers:
-        # Remove and recreate to avoid vispy GL access violations caused by
-        # setting .data and .properties separately (napari stale _indices_view bug).
-        old = viewer.layers[name]
-        layer_idx = list(viewer.layers).index(old)
-        scale = old.scale
-        translate = old.translate
-        viewer.layers.remove(old)
-        if len(coords) > 0:
-            new_layer = viewer.add_points(
-                coords, name=name, size=1, face_color='transparent', scale=scale,
-                translate=translate, properties={'label': labels},
-                text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
-                blending='translucent_no_depth', visible=False,
-            )
-            new_layer.out_of_slice_display = True
-            viewer.layers.move(len(viewer.layers) - 1, layer_idx)
-    elif len(coords) > 0:
-        layer = viewer.add_points(
-            coords, name=name, size=1, face_color='transparent', scale=labels_layer.scale,
-            properties={'label': labels},
-            text={'string': '{label}', 'size': 10, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
-            blending='translucent_no_depth', visible=False,
+
+    if len(coords) > 0:
+        _add_or_replace_ids_layer(
+            viewer, name, coords, labels,
+            scale=labels_layer.scale, translate=labels_layer.translate,
         )
-        # Show points from all Z-slices in 2D view
-        layer.out_of_slice_display = True
 
     # Register in session so this IDs layer is recreated on next session load.
-    # Skip during session restore to avoid circular re-registration.
     if not session.is_loading():
         session.set_processed_file(name, "", layer_type='points', metadata={'subtype': 'computed_ids'})
-
-    viewer.status = f"Refreshed IDs for {labels_layer.name}"

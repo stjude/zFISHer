@@ -1,3 +1,4 @@
+import logging
 import napari
 from collections import deque
 from magicgui import magicgui, widgets
@@ -7,6 +8,8 @@ from scipy.spatial import cKDTree
 
 from ..decorators import require_active_session
 from ... import constants
+
+logger = logging.getLogger(__name__)
 
 
 class _PunctaUndoStack:
@@ -51,6 +54,7 @@ def _puncta_editor_widget(
     """Enhanced editor for high-density puncta curation."""
     if points_layer:
         if points_layer.mode == 'select' and len(points_layer.selected_data) > 0:
+            logger.info("PUNCTA EDIT: Deleted %d selected points on layer '%s'", len(points_layer.selected_data), points_layer.name)
             _puncta_undo.push(points_layer)
             points_layer.remove_selected()
 
@@ -64,6 +68,7 @@ def delete_point_under_mouse(viewer):
     except Exception:
         return
     if val is not None:
+        logger.info("PUNCTA EDIT: Deleted spot %d under cursor on layer '%s'", val, layer.name)
         _puncta_undo.push(layer)
         layer.selected_data = {val}; layer.remove_selected()
         viewer.status = f"Deleted spot {val}"
@@ -231,6 +236,7 @@ def fishing_hook_callback(layer, event):
         layer.data = new_data
         layer.features = current_features
         layer.refresh()
+        logger.info("PUNCTA EDIT: Added point ID %d at %s on layer '%s'", next_id, np.round(target_coord_data, 1), layer.name)
         viewer.status = f"Algorithmic Snap: ID {next_id}, Pixel {np.round(target_coord_data, 1)}"
 
 # --- Undo Button ---
@@ -243,6 +249,7 @@ def _on_puncta_undo():
         viewer.status = "No points layer selected."
         return
     if _puncta_undo.undo(layer):
+        logger.info("PUNCTA EDIT: Undo on layer '%s' (%d remaining)", layer.name, len(_puncta_undo))
         viewer.status = f"Undo ({len(_puncta_undo)} remaining)."
     else:
         viewer.status = "Nothing to undo."

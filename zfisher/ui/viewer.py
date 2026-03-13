@@ -267,6 +267,8 @@ def create_welcome_widget(viewer):
             
     @reset_btn.changed.connect
     def reset_viewer():
+        import logging as _log
+        _log.getLogger(__name__).info("ACTION: Session reset (all layers cleared)")
         viewer.layers.clear()
         session.clear_session()
         if hasattr(viewer.window, 'custom_scale_bar'):

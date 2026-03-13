@@ -37,9 +37,10 @@ def error_handler(title="An Error Occurred"):
         @wraps(func)
         def wrapper(*args, **kwargs):
             try:
+                logger.info("ACTION: %s", title)
                 return func(*args, **kwargs)
             except Exception as e:
-                logger.error("Error in %s: %s", func.__name__, e)
+                logger.error("Error in %s: %s", func.__name__, e, exc_info=True)
                 try:
                     viewer = napari.current_viewer()
                     if viewer:

@@ -1,10 +1,13 @@
+import logging
 import numpy as np
 from pathlib import Path
 from skimage.feature import peak_local_max, blob_log, blob_dog
 from skimage.filters import gaussian
 from skimage.morphology import white_tophat, disk
-from skimage import restoration 
+from skimage import restoration
 from .. import constants
+
+logger = logging.getLogger(__name__)
 
 def calculate_spot_quality(image_data, coords, radius=2, progress_callback=None,
                            progress_range=(50, 70)):
@@ -100,6 +103,7 @@ def _detect_spots_dog(image_data, threshold_rel, sigma, z_scale=1.0):
 
 def detect_spots_3d(image_data, method="Local Maxima", progress_callback=None, **kwargs):
     """Main entry point for Step 6 math."""
+    logger.info("Puncta detection: method=%s, shape=%s, params=%s", method, image_data.shape, kwargs)
     if kwargs.get('use_tophat', False):
         if progress_callback: progress_callback(25, "Subtracting background (top-hat)...")
         image_data = preprocess_white_tophat(image_data, radius=kwargs.get('tophat_radius', 10),

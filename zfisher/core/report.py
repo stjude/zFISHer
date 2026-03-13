@@ -42,6 +42,7 @@ def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None, co
         The final path of the saved report file.
     """
     save_path = Path(save_path)
+    logger.info("Exporting report to %s", save_path)
 
     try:
         if not str(save_path).endswith(constants.EXCEL_SUFFIX):

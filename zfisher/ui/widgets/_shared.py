@@ -1,3 +1,4 @@
+import logging
 import napari
 from pathlib import Path
 from magicgui.widgets import Container
@@ -5,6 +6,8 @@ from magicgui.widgets import Container
 from ...core import io, session
 from .. import viewer_helpers, popups
 from ..style import COLORS
+
+logger = logging.getLogger(__name__)
 
 
 def make_header_divider():
@@ -82,6 +85,7 @@ def load_raw_data_into_viewer(viewer, round1_path, round2_path, output_dir=None,
                     viewer.window._qt_window, all_channels
                 )
             if nuc:
+                logger.info("Nuclear channel selected: %s", nuc)
                 session.update_data("nuclear_channel", nuc)
 
     # Force the Z-slider to appear

@@ -218,6 +218,7 @@ def _mask_editor_widget(
         viewer.status = f"ID {source_id} not found."
         return
         
+    logger.info("MASK EDIT: Merge ID %d into %d (%d pixels) on layer '%s'", source_id, target_id, count, mask_layer.name)
     _mask_undo.begin(mask_layer.data)
     mask_layer.data[mask_layer.data == source_id] = target_id
     _mask_undo.end(mask_layer.data)
@@ -316,6 +317,7 @@ def delete_mask_under_mouse(viewer):
         if layer and id_to_delete:
             _highlighter.reset_highlight()
             _delete_label_inplace(layer, id_to_delete)
+            logger.info("MASK EDIT: Deleted nucleus ID %d (hover mode) on layer '%s'", id_to_delete, layer.name)
             viewer.status = f"Deleted Nucleus ID {id_to_delete}"
             return
 
@@ -330,6 +332,7 @@ def delete_mask_under_mouse(viewer):
         )
         if val is not None and val > 0:
             _delete_label_inplace(layer, val)
+            logger.info("MASK EDIT: Deleted nucleus ID %d (cursor) on layer '%s'", val, layer.name)
             viewer.status = f"Deleted Nucleus ID {val}"
 
 def _make_divider():
@@ -405,9 +408,11 @@ def _on_paint(value: bool):
             layer.n_edit_dimensions = 2
             new_id = int(layer.data.max()) + 1
             layer.selected_label = new_id
+            logger.info("MASK EDIT: Paint mode ON, new ID=%d, layer='%s'", new_id, layer.name)
             viewer.status = f"Painting Mode. New ID: {new_id}"
         elif layer.mode == 'paint':
             layer.mode = 'pan_zoom'
+            logger.info("MASK EDIT: Paint mode OFF")
             viewer.status = "Painting Mode Off."
 
 def _apply_cylinder_erase(layer, world_pos):
@@ -448,6 +453,8 @@ def erase_at_cursor(viewer):
     layer = _mask_editor_widget.mask_layer.value
     if not isinstance(layer, napari.layers.Labels):
         return
+    logger.info("MASK EDIT: Erase at cursor, radius=%d, depth=%d, layer='%s'",
+                erase_radius_slider.value, erase_depth_slider.value, layer.name)
     _mask_undo.begin(layer.data)
     _apply_cylinder_erase(layer, viewer.cursor.position)
     _mask_undo.end(layer.data)
@@ -466,8 +473,10 @@ def _on_erase(value: bool):
             hover_chk.value = False
             viewer.layers.selection.active = layer
             layer.mode = 'pan_zoom'
+            logger.info("MASK EDIT: Erase mode ON, layer='%s'", layer.name)
             viewer.status = "Erase Mode ON. Hover over mask and press Shift+E to erase."
         else:
+            logger.info("MASK EDIT: Erase mode OFF")
             viewer.status = "Erase Mode Off."
 
 @require_active_session("Please start or load a session before editing masks.")
@@ -493,6 +502,7 @@ def _on_extrude():
         viewer.status = f"Label {label_id} not found on current slice {z_idx}."
         return
         
+    logger.info("MASK EDIT: Extrude ID %d from Z=%d, layer='%s'", label_id, z_idx, layer.name)
     _mask_undo.begin(layer.data)
     layer.data = segmentation.extrude_label(layer.data, z_idx, label_id)
     _mask_undo.end(layer.data)
@@ -505,6 +515,7 @@ def _on_delete():
     src = _mask_editor_widget.source_id.value
     if layer and src > 0:
         if np.sum(layer.data == src) > 0:
+            logger.info("MASK EDIT: Delete ID %d on layer '%s'", src, layer.name)
             _mask_undo.begin(layer.data)
             layer.data = segmentation.delete_label(layer.data, src)
             _mask_undo.end(layer.data)
@@ -521,9 +532,11 @@ def _on_hover_mode(value: bool):
 
     if value:
         _highlighter.enable()
+        logger.info("MASK EDIT: Hover edit mode ON")
         viewer.status = "Hover Edit Mode ON. Nuclei turn red. Press 'C' to delete."
     else:
         _highlighter.disable()
+        logger.info("MASK EDIT: Hover edit mode OFF")
         viewer.status = "Hover Edit Mode OFF."
 
 @require_active_session("Please start or load a session before refreshing IDs.")
@@ -540,6 +553,7 @@ def _on_mask_undo():
         return
     if _mask_undo.undo(layer.data):
         layer.refresh()
+        logger.info("MASK EDIT: Undo on layer '%s' (%d remaining)", layer.name, len(_mask_undo))
         viewer.status = f"Undo ({len(_mask_undo)} remaining)."
     else:
         viewer.status = "Nothing to undo."

@@ -1,3 +1,4 @@
+import logging
 import napari
 import numpy as np
 from pathlib import Path
@@ -10,6 +11,8 @@ from ...core import session, analysis
 from .. import popups
 from ..decorators import require_active_session, error_handler
 from ... import constants
+
+logger = logging.getLogger(__name__)
 
 
 def _make_divider():
@@ -53,6 +56,7 @@ def _rule_builder(
     rules.append(rule)
     session.update_data("colocalization_rules", rules)
 
+    logger.info("Added pairwise rule: %s -> %s (<= %s um)", rule['source'], rule['target'], rule['threshold'])
     _update_rules_display(rules)
     viewer.status = f"Added rule: {rule['source']} -> {rule['target']} (<= {rule['threshold']} um)"
 
@@ -73,6 +77,7 @@ def _update_rules_display(rules):
 @require_active_session()
 def _on_clear_rules():
     """Resets the rule list."""
+    logger.info("Cleared all pairwise colocalization rules")
     session.update_data("colocalization_rules", [])
     _update_rules_display([])
     napari.current_viewer().status = "All analysis rules cleared."
@@ -117,6 +122,7 @@ def _tri_rule_builder(
     tri_rules.append(rule)
     session.update_data("tri_colocalization_rules", tri_rules)
 
+    logger.info("Added tri-coloc rule: %s + %s + %s (<= %s um)", rule['anchor'], rule['channel_a'], rule['channel_b'], rule['threshold'])
     _update_tri_rules_display(tri_rules)
     viewer.status = f"Added tri-coloc rule: {rule['anchor']} + {rule['channel_a']} + {rule['channel_b']} (<= {rule['threshold']} um)"
 
@@ -140,6 +146,7 @@ def _update_tri_rules_display(tri_rules):
 @require_active_session()
 def _on_clear_tri_rules():
     """Resets the tri-colocalization rule list."""
+    logger.info("Cleared all tri-colocalization rules")
     session.update_data("tri_colocalization_rules", [])
     _update_tri_rules_display([])
     napari.current_viewer().status = "All tri-colocalization rules cleared."

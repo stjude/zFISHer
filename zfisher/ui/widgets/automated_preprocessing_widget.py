@@ -22,14 +22,14 @@ def _get_qt_parent(viewer):
         return None
 
 @magicgui(
-    call_button="Run Automated Preprocessing",
+    call_button="Run Automated Registration && Warping",
     r1_dapi_layer={"label": "Round 1 Nuclei Layer"},
     r2_dapi_layer={"label": "Round 2 Nuclei Layer"},
     match_nuclei={"label": "Create Consensus Nuclei Mask"},
     hide_raw={"label": "Hide Raw Layers After?"}
 )
 @require_active_session("Please start or load a session first.")
-@error_handler("Automated Preprocessing Failed")
+@error_handler("Automated Registration Failed")
 def _automated_preprocessing_magic_widget(
     r1_dapi_layer: "napari.layers.Image",
     r2_dapi_layer: "napari.layers.Image",
@@ -41,27 +41,40 @@ def _automated_preprocessing_magic_widget(
         viewer.status = "Please select both nuclei layers."
         return
 
-    with popups.ProgressDialog(_get_qt_parent(viewer), "Automated Preprocessing...") as dialog:
+    with popups.ProgressDialog(_get_qt_parent(viewer), "Automated Registration...") as dialog:
         output_dir = Path(session.get_data("output_dir"))
         voxels = tuple(r1_dapi_layer.scale)
 
-        # === STEP 1: NUCLEI SEGMENTATION ===
-        seg_results = segmentation.process_session_dapi(
-            r1_data=r1_dapi_layer.data,
-            r2_data=r2_dapi_layer.data,
-            output_dir=output_dir,
-            progress_callback=lambda p, t: dialog.update_progress(5 + int(p * 0.2), t),
-            voxel_spacing=voxels,
-        )
+        # === STEP 1: RETRIEVE EXISTING CENTROIDS ===
+        # Nuclei segmentation is performed earlier in the pipeline (Nuclei Mapping).
+        # Pull centroids from the existing viewer layers for registration.
+        r1_centroid_name = f"{r1_dapi_layer.name}{constants.CENTROIDS_SUFFIX}"
+        r2_centroid_name = f"{r2_dapi_layer.name}{constants.CENTROIDS_SUFFIX}"
 
-        viewer_helpers.add_segmentation_results_to_viewer(viewer, r1_dapi_layer, seg_results['R1'][0], seg_results['R1'][1])
-        viewer_helpers.add_segmentation_results_to_viewer(viewer, r2_dapi_layer, seg_results['R2'][0], seg_results['R2'][1])
+        r1_centroids_layer = viewer.layers[r1_centroid_name] if r1_centroid_name in viewer.layers else None
+        r2_centroids_layer = viewer.layers[r2_centroid_name] if r2_centroid_name in viewer.layers else None
+
+        if r1_centroids_layer is None or r2_centroids_layer is None:
+            missing = []
+            if r1_centroids_layer is None:
+                missing.append(r1_centroid_name)
+            if r2_centroids_layer is None:
+                missing.append(r2_centroid_name)
+            popups.show_error_popup(
+                None, "Missing Nuclei Segmentation",
+                f"Run Nuclei Mapping first. Missing layers: {', '.join(missing)}"
+            )
+            return
+
+        r1_centroids = np.array(r1_centroids_layer.data)
+        r2_centroids = np.array(r2_centroids_layer.data)
+        dialog.update_progress(5, "Found existing nuclei centroids.")
 
         # === STEP 2: REGISTRATION ===
         shift, _ = registration.calculate_session_registration(
-            seg_results['R1'][1], seg_results['R2'][1],
+            r1_centroids, r2_centroids,
             voxels=voxels,
-            progress_callback=lambda p, t: dialog.update_progress(25 + int(p * 0.1), t)
+            progress_callback=lambda p, t: dialog.update_progress(5 + int(p * 0.20), t)
         )
         if shift is None:
             popups.show_error_popup(
@@ -81,6 +94,7 @@ def _automated_preprocessing_magic_widget(
             layer_info = {
                 'name': l.name,
                 'data': l.data.astype(np.uint32) if is_label else l.data.astype(np.float32),
+                'colormap': l.colormap.name if hasattr(l, 'colormap') else 'gray',
                 'scale': tuple(l.scale),
                 'is_label': is_label,
             }
@@ -100,6 +114,10 @@ def _automated_preprocessing_magic_widget(
         session.update_data("canvas_scale", voxels)
         r1_layers_data.clear(); r2_layers_data.clear(); gc.collect()
 
+        # Freeze canvas for all remaining layer mutations (canvas results,
+        # consensus, puncta transform).  __exit__ will unfreeze.
+        dialog.freeze_canvas()
+
         # Calculate world-space translate from canvas offset for aligned layers
         canvas_translate = np.array(canvas_offset) * np.array(voxels) if canvas_offset is not None else None
         translate_arg = tuple(canvas_translate) if canvas_translate is not None else None
@@ -111,6 +129,11 @@ def _automated_preprocessing_magic_widget(
 
             layer_type = layer_info['type']
             meta = layer_info['meta']
+            # Skip adding aligned/warped mask labels to the viewer — they are
+            # only needed on disk for the consensus step, which reads them
+            # directly.  Adding them here triggers duplicate _IDs layers.
+            if layer_type == 'labels' and constants.MASKS_SUFFIX in layer_info['name']:
+                continue
             if layer_type == 'labels':
                 lyr = viewer.add_labels(
                     layer_info['data'].astype(np.uint32), name=layer_info['name'],
@@ -254,7 +277,7 @@ def _automated_preprocessing_magic_widget(
                     layer.visible = False
 
         dialog.update_progress(100, "Complete.")
-        viewer.status = "Automated Preprocessing Complete."
+        viewer.status = "Automated Registration Complete."
 
 # UI Wrapper
 from qtpy.QtWidgets import QFrame
@@ -282,9 +305,9 @@ class _AutomatedPreprocessingContainer(Container):
 
 automated_preprocessing_widget = _AutomatedPreprocessingContainer(labels=False)
 automated_preprocessing_widget._automated_preprocessing_magic_widget = _automated_preprocessing_magic_widget
-header = Label(value="Automated Preprocessing")
+header = Label(value="Automated Registration && Warping")
 header.native.setObjectName("widgetHeader")
-info = Label(value="<i>Segmentation, Registration, Warping, and Consensus Nuclei.</i>")
+info = Label(value="<i>Registration, Warping, and Consensus Nuclei.</i>")
 info.native.setObjectName("widgetInfo")
 
 _layout = automated_preprocessing_widget.native.layout()

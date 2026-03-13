@@ -423,6 +423,9 @@ def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, 
     Core Orchestrator for Step 7 & 8.
     Processes puncta distances and exports the master report.
     """
+    logger.info("Analysis: %d layers, %d rules, %d tri-rules, filename=%s, total_nuclei=%s",
+                len(layers_data), len(rules), len(tri_rules or []), filename, total_nuclei)
+
     # 1. Pairwise nearest-neighbor distances
     df = calculate_distances(layers_data)
 

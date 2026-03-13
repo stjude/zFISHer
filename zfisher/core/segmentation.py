@@ -372,6 +372,8 @@ def segment_nuclei_classical(image_data, voxel_spacing=None, merge_splits=True, 
         - centroids: A (N, 3) array of the (Z, Y, X) centroids.
         Returns (None, None) if the input image is empty or segmentation fails.
     """
+    logger.info("Classical nuclei segmentation: shape=%s, voxel_spacing=%s, merge_splits=%s", image_data.shape, voxel_spacing, merge_splits)
+
     # 1. Downsample for speed
     if progress_callback: progress_callback(0, "Downsampling...")
     z_step = constants.NUC_SEG_Z_STEP
@@ -469,6 +471,8 @@ def segment_nuclei_cellpose(image_data, gpu=True, merge_splits=True, progress_ca
     tuple[np.ndarray | None, np.ndarray | None]
         (labels, centroids) matching the format of segment_nuclei_classical.
     """
+    logger.info("Cellpose nuclei segmentation: shape=%s, gpu=%s, merge_splits=%s", image_data.shape, gpu, merge_splits)
+
     # 1. Downsample
     if progress_callback: progress_callback(0, "Downsampling...")
     z_step = constants.NUC_SEG_CP2D_Z_STEP
