@@ -127,7 +127,8 @@ def _load_points_layer(viewer, name, path, scale, file_info, translate):
                 if parent_mask_name and parent_mask_name in viewer.layers:
                     parent_vis = viewer.layers[parent_mask_name].visible
                 layer = viewer.add_points(
-                    coords, name=name, size=1, face_color='transparent', scale=scale, properties=properties,
+                    coords, name=name, size=9999, face_color='transparent',
+                    border_color='transparent', border_width=0, scale=scale, properties=properties,
                     text=text_params, blending='translucent_no_depth', translate=translate, visible=parent_vis
                 )
                 layer.out_of_slice_display = True
@@ -421,8 +422,13 @@ def _add_or_replace_ids_layer(viewer, name, coords, labels, scale, translate=Non
         parent_visible = parent.visible
         target_idx = list(viewer.layers).index(parent) + 1  # just above mask
 
+    # Use a very large size so that out_of_slice_display keeps every point
+    # in the visible set regardless of the current Z-slice (napari hides
+    # points farther than size/2 from the slice).  The dot itself is
+    # transparent — only the text label matters visually.
     layer = viewer.add_points(
-        coords, name=name, size=4, face_color='#40b5d880', scale=scale,
+        coords, name=name, size=9999, face_color='transparent',
+        border_color='transparent', border_width=0, scale=scale,
         translate=translate, properties={'label': labels},
         text={'string': '{label}', 'size': 12, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
         blending='translucent_no_depth', visible=parent_visible,
