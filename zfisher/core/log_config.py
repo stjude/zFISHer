@@ -76,9 +76,12 @@ def attach_session_log(output_dir, session_filename=None):
 
     root = logging.getLogger()
     root.addHandler(_file_handler)
-    # Only open up DEBUG on our own loggers — leave root level alone so
-    # napari's notification handler doesn't see our INFO/DEBUG messages.
-    logging.getLogger("zfisher").setLevel(logging.DEBUG)
+    # Open up DEBUG on zfisher loggers.  Because zfisher's propagate=False
+    # (set in __init__.py), we must also attach the file handler directly
+    # to the zfisher logger so its records are captured in the log file.
+    zf_logger = logging.getLogger("zfisher")
+    zf_logger.setLevel(logging.DEBUG)
+    zf_logger.addHandler(_file_handler)
 
     # Redirect stdout/stderr so print() output is also captured.
     # Give each its own explicit level so they emit even though root
@@ -109,6 +112,7 @@ def detach_session_log():
         logger.info("=== zFISHer session log ended ===")
         root = logging.getLogger()
         root.removeHandler(_file_handler)
+        logging.getLogger("zfisher").removeHandler(_file_handler)
         _file_handler.close()
         _file_handler = None
 

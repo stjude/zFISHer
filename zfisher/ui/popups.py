@@ -195,6 +195,7 @@ class BatchProgressDialog(QDialog):
     """
     def __init__(self, parent=None, title="Batch Processing...", text="Please wait..."):
         super().__init__(parent)
+        self._warnings_ctx = None
         self.setWindowTitle(title)
         self.setWindowModality(Qt.WindowModal)
         self.setMinimumWidth(450)
@@ -234,10 +235,19 @@ class BatchProgressDialog(QDialog):
         QApplication.processEvents()
 
     def __enter__(self):
+        self._warnings_ctx = warnings.catch_warnings()
+        self._warnings_ctx.__enter__()
+        warnings.simplefilter("ignore")
+        _suppress_napari_notifications()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+        QApplication.processEvents()
+        if self._warnings_ctx:
+            self._warnings_ctx.__exit__(None, None, None)
+            self._warnings_ctx = None
+        _restore_napari_notifications()
 
 
 def select_nuclear_channel(parent, channels):
