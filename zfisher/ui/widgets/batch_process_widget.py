@@ -4,7 +4,7 @@ import os
 import logging
 import napari
 import pandas as pd
-from qtpy.QtWidgets import QFrame
+from qtpy.QtWidgets import QFrame, QFileDialog
 
 from ...core import pipeline
 from .. import popups
@@ -42,6 +42,7 @@ class BatchProcessWidget(Container):
             mode='d',
             value=Path.home() / "zFISHer_Batch_Output"
         )
+        self._generate_template_btn = PushButton(text="Generate Template")
         self._batch_run_btn = PushButton(text="Run Batch Processing")
 
     @staticmethod
@@ -60,10 +61,32 @@ class BatchProcessWidget(Container):
         _layout.addWidget(self._info.native)
         _layout.addWidget(self._make_divider())
         _layout.addWidget(self._form.native)
+        _layout.addWidget(self._generate_template_btn.native)
         _layout.addWidget(self._batch_run_btn.native)
 
     def _connect_signals(self):
+        self._generate_template_btn.clicked.connect(self._on_generate_template)
         self._batch_run_btn.clicked.connect(self._on_batch_run)
+
+    def _on_generate_template(self):
+        """Save a blank batch template Excel file to a user-chosen location."""
+        save_path, _ = QFileDialog.getSaveFileName(
+            self.native,
+            "Save Batch Template",
+            str(Path.home() / "zFISHer_batch_template.xlsx"),
+            "Excel Files (*.xlsx)",
+        )
+        if not save_path:
+            return
+
+        df = pd.DataFrame(columns=["Name", "R1", "R2"])
+        df.to_excel(save_path, index=False)
+        logger.info("Batch template saved to %s", save_path)
+        popups.show_info_popup(
+            self.native,
+            "Template Saved",
+            f"Batch template saved to:\n{save_path}"
+        )
 
     # ------------------------------------------------------------------
     # Validation
