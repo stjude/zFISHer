@@ -186,6 +186,44 @@ def load_nd2_session(path: str) -> FISHSession:
 
     return FISHSession(data=img, voxels=v_size, channels=ch_names, path=path, metadata=f.metadata)
 
+def peek_channel_names(path):
+    """Read channel names from an image file without loading pixel data.
+
+    Supports .nd2 and TIFF/OME-TIFF files.  Returns a list of channel
+    name strings, or ``None`` if the metadata cannot be read.
+    """
+    path = Path(path)
+    try:
+        if path.suffix.lower() == '.nd2':
+            with nd2.ND2File(str(path)) as f:
+                try:
+                    return [c.channel.name for c in f.metadata.channels]
+                except (AttributeError, TypeError):
+                    # Fall back to sizes dict
+                    n_ch = f.sizes.get('C', 1)
+                    return [f"Channel_{i+1}" for i in range(n_ch)]
+
+        # TIFF / OME-TIFF
+        with tifffile.TiffFile(str(path)) as tif:
+            # Try OME-XML first
+            if tif.ome_metadata:
+                root = ET.fromstring(tif.ome_metadata)
+                ns = {'ome': 'http://www.openmicroscopy.org/Schemas/OME/2016-06'}
+                channels = root.findall('.//ome:Channel', ns)
+                if channels:
+                    return [ch.get('Name', f"Ch{i}") for i, ch in enumerate(channels)]
+
+            # ImageJ metadata fallback
+            ij_meta = tif.imagej_metadata
+            if ij_meta and 'Labels' in ij_meta:
+                return list(ij_meta['Labels'])
+
+        return None
+    except Exception as exc:
+        logger.debug("peek_channel_names failed for %s: %s", path, exc)
+        return None
+
+
 def load_image_session(path: Path):
     """
     Loads an image file (ND2 or TIFF) and returns a session object.

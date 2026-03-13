@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 def run_full_zfisher_pipeline(
     r1_path, r2_path, output_dir,
     seg_method="Classical", merge_splits=True,
+    r1_nuclear_channel=None, r2_nuclear_channel=None,
     puncta_config=None, pairwise_rules=None, tri_rules=None,
     progress_callback=None,
 ):
@@ -42,6 +43,12 @@ def run_full_zfisher_pipeline(
         "Classical" or "Cellpose".
     merge_splits : bool
         Whether to merge over-segmented nuclei.
+    r1_nuclear_channel : str, optional
+        Name of the nuclear stain channel in R1 (e.g. "DAPI").  If None,
+        auto-detected from channel names or falls back to the first channel.
+    r2_nuclear_channel : str, optional
+        Name of the nuclear stain channel in R2.  If None, uses the same
+        resolution as R1.
     puncta_config : dict, optional
         {channel_name: params_dict} for per-channel puncta detection.
         params_dict keys: method, threshold_rel, min_distance, sigma,
@@ -91,16 +98,31 @@ def run_full_zfisher_pipeline(
         _update(12, "Converting R2 to OME-TIF...")
         io.convert_nd2_to_ome(r2_sess, input_dir, "R2")
 
-    # --- 2b. Resolve nuclear channel (headless: auto-detect or fallback to index 0) ---
-    nuc_ch = io.find_nuclear_channel(r1_sess.channels)
-    if nuc_ch is None:
-        nuc_ch = r1_sess.channels[0]
-        logger.warning("No known nuclear stain found. Falling back to first channel: %s", nuc_ch)
+    # --- 2b. Resolve nuclear channels (may differ between rounds) ---
+    if r1_nuclear_channel:
+        r1_nuc_ch = r1_nuclear_channel
+    else:
+        r1_nuc_ch = io.find_nuclear_channel(r1_sess.channels)
+        if r1_nuc_ch is None:
+            r1_nuc_ch = r1_sess.channels[0]
+            logger.warning("No known nuclear stain found in R1. Falling back to first channel: %s", r1_nuc_ch)
+
+    if r2_nuclear_channel:
+        r2_nuc_ch = r2_nuclear_channel
+    else:
+        r2_nuc_ch = io.find_nuclear_channel(r2_sess.channels)
+        if r2_nuc_ch is None:
+            r2_nuc_ch = r2_sess.channels[0]
+            logger.warning("No known nuclear stain found in R2. Falling back to first channel: %s", r2_nuc_ch)
+
+    # Store the R1 nuclear channel as the session's primary nuclear channel
+    # (used downstream by layer naming, report generation, etc.)
+    nuc_ch = r1_nuc_ch
     session.update_data("nuclear_channel", nuc_ch)
 
     # --- 3. Nuclear Segmentation ---
-    r1_dapi = io.get_channel_data(r1_sess, nuc_ch)
-    r2_dapi = io.get_channel_data(r2_sess, nuc_ch)
+    r1_dapi = io.get_channel_data(r1_sess, r1_nuc_ch)
+    r2_dapi = io.get_channel_data(r2_sess, r2_nuc_ch)
 
     # Map batch config method names to process_session_dapi convention
     method_key = "cellpose" if seg_method.lower() == "cellpose" else "classical"
@@ -121,14 +143,15 @@ def run_full_zfisher_pipeline(
         puncta_channels = list(puncta_config.keys())
     else:
         # Default: all non-nuclear channels with default params
+        nuc_names_upper = {r1_nuc_ch.upper(), r2_nuc_ch.upper()}
         puncta_channels = [
             ch for ch in r1_sess.channels
-            if ch.upper() != nuc_ch.upper()
+            if ch.upper() not in nuc_names_upper
         ]
 
     # Load per-round nuclear masks for puncta filtering
-    r1_mask_path = seg_dir / f"R1 - {nuc_ch}{constants.MASKS_SUFFIX}.tif"
-    r2_mask_path = seg_dir / f"R2 - {nuc_ch}{constants.MASKS_SUFFIX}.tif"
+    r1_mask_path = seg_dir / f"R1 - {r1_nuc_ch}{constants.MASKS_SUFFIX}.tif"
+    r2_mask_path = seg_dir / f"R2 - {r2_nuc_ch}{constants.MASKS_SUFFIX}.tif"
     r1_mask = tifffile.imread(r1_mask_path) if r1_mask_path.exists() else None
     r2_mask = tifffile.imread(r2_mask_path) if r2_mask_path.exists() else None
 
@@ -211,9 +234,11 @@ def run_full_zfisher_pipeline(
         for i, ch in enumerate(r2_sess.channels)
     ]
 
-    for prefix, sess_obj, layer_list in [("R1", r1_sess, r1_layers),
-                                          ("R2", r2_sess, r2_layers)]:
-        mask_name = f"{prefix} - {nuc_ch}{constants.MASKS_SUFFIX}"
+    for prefix, sess_obj, layer_list, round_nuc in [
+        ("R1", r1_sess, r1_layers, r1_nuc_ch),
+        ("R2", r2_sess, r2_layers, r2_nuc_ch),
+    ]:
+        mask_name = f"{prefix} - {round_nuc}{constants.MASKS_SUFFIX}"
         mask_path = seg_dir / f"{mask_name}.tif"
         if mask_path.exists():
             layer_list.append({
@@ -232,10 +257,10 @@ def run_full_zfisher_pipeline(
     session.update_data("canvas_scale", r1_sess.voxels)
 
     # --- 7. Consensus Nuclei ---
-    r1_aligned_mask = aligned_dir / f"Aligned_R1_{nuc_ch}{constants.MASKS_SUFFIX}.tif"
-    r2_warped_mask = aligned_dir / f"Warped_R2_{nuc_ch}{constants.MASKS_SUFFIX}.tif"
+    r1_aligned_mask = aligned_dir / f"Aligned_R1_{r1_nuc_ch}{constants.MASKS_SUFFIX}.tif"
+    r2_warped_mask = aligned_dir / f"Warped_R2_{r2_nuc_ch}{constants.MASKS_SUFFIX}.tif"
     if not r2_warped_mask.exists():
-        r2_warped_mask = aligned_dir / f"Aligned_R2_{nuc_ch}{constants.MASKS_SUFFIX}.tif"
+        r2_warped_mask = aligned_dir / f"Aligned_R2_{r2_nuc_ch}{constants.MASKS_SUFFIX}.tif"
 
     if not (r1_aligned_mask.exists() and r2_warped_mask.exists()):
         raise RuntimeError(
