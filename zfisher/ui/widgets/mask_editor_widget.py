@@ -246,6 +246,8 @@ def _remove_id_from_points_layer(mask_layer, deleted_id):
     setting .data and .properties separately (napari bug with stale
     _indices_view / GPU buffers).
     """
+    import zfisher.ui.events as _events_mod
+
     viewer = napari.current_viewer()
     if not viewer:
         return
@@ -266,7 +268,14 @@ def _remove_id_from_points_layer(mask_layer, deleted_id):
     translate = pts_layer.translate
     out_of_slice = pts_layer.out_of_slice_display
 
-    viewer.layers.remove(pts_layer)
+    # Unlock so guarded_remove allows it, and mark as programmatic so
+    # on_layer_removed doesn't cascade-delete the parent mask layer.
+    pts_layer._locked = False
+    _events_mod._programmatic_removal = True
+    try:
+        viewer.layers.remove(pts_layer)
+    finally:
+        _events_mod._programmatic_removal = False
 
     if len(new_data) > 0:
         new_layer = viewer.add_points(

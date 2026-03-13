@@ -386,6 +386,7 @@ def _add_or_replace_ids_layer(viewer, name, coords, labels, scale, translate=Non
     if name in viewer.layers:
         old = viewer.layers[name]
         layer_idx = list(viewer.layers).index(old)
+        old._locked = False  # unlock so guarded_remove allows it
         _events_mod._programmatic_removal = True
         try:
             viewer.layers.remove(old)
