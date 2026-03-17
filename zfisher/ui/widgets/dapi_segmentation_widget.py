@@ -1,19 +1,20 @@
 import logging
 import napari
 import numpy as np
-from magicgui import magicgui
-from magicgui.widgets import Container, Label
+from magicgui.widgets import Container, PushButton, Label, ComboBox, create_widget
+from qtpy.QtWidgets import QFrame, QLabel, QMessageBox
 
 from ...core import session
 from .. import popups, viewer_helpers
-from ..decorators import require_active_session, error_handler
-
-logger = logging.getLogger(__name__)
+from ..decorators import error_handler
+from ..style import COLORS
 from ...core.segmentation import (
     segment_nuclei_classical, segment_nuclei_cellpose,
     get_label_volumes, compute_min_volume_threshold, filter_small_labels,
 )
 from ... import constants
+
+logger = logging.getLogger(__name__)
 
 
 def _download_cellpose_model(dest_path, dialog):
@@ -45,188 +46,212 @@ def _download_cellpose_model(dest_path, dialog):
     shutil.move(tmp_path, dest_path)
 
 
-@magicgui(
-    call_button="Run Nuclei Mapping",
-    r1_layer={"label": "Round 1 (Nuclei)", "tooltip": "Select the nuclear stain channel (e.g. DAPI) for Round 1."},
-    r2_layer={"label": "Round 2 (Nuclei)", "tooltip": "Select the nuclear stain channel (e.g. DAPI) for Round 2."},
-    method={
-        "label": "Method",
-        "choices": ["Classical (Fast)", "Deep Learning (Cellpose)"],
-        "tooltip": "Classical: Fast, watershed-based. Cellpose: Deep learning, slower but more accurate.",
-    },
-    merge_splits={
-        "label": "Merge Splits",
-        "tooltip": "Merge over-segmented nuclei that share a large boundary surface.",
-    },
-    auto_call=False,
-)
-@require_active_session("Please start or load a session before running segmentation.")
-@error_handler("Nuclei Segmentation Failed")
-def _dapi_segmentation_widget(
-    r1_layer: "napari.layers.Image",
-    r2_layer: "napari.layers.Image",
-    method: str = "Classical (Fast)",
-    merge_splits: bool = True,
-):
-    """Runs segmentation on selected nuclei channels."""
-    viewer = napari.current_viewer()
-    logger.info("Nuclei segmentation settings: method=%s, merge_splits=%s, R1=%s, R2=%s",
-                method, merge_splits,
-                r1_layer.name if r1_layer else None,
-                r2_layer.name if r2_layer else None)
+class DapiSegmentationWidget(Container):
+    """Class-based nuclei mapping widget with full layout control."""
 
-    layers_to_process = [l for l in [r1_layer, r2_layer] if l is not None]
+    def __init__(self):
+        super().__init__(labels=False)
 
-    if not layers_to_process:
-        viewer.status = "No channels selected."
-        return
+        self._init_widgets()
+        self._init_layout()
+        self._connect_signals()
 
-    # If Cellpose selected, check if model is downloaded
-    if method == "Deep Learning (Cellpose)":
+    def _init_widgets(self):
+        self._header = Label(value="Nuclei Mapping")
+        self._header.native.setObjectName("widgetHeader")
+        self._info = Label(value="<i>Segments nuclei in the nuclear stain channel.</i>")
+        self._info.native.setObjectName("widgetInfo")
+
+        self.r1_layer = create_widget(
+            annotation="napari.layers.Image", options={
+                "label": "R1 (Nuclei Channel):",
+                "tooltip": "Select the nuclear stain channel (e.g. DAPI) for Round 1.",
+            }
+        )
+        self.r2_layer = create_widget(
+            annotation="napari.layers.Image", options={
+                "label": "R2 (Nuclei Channel):",
+                "tooltip": "Select the nuclear stain channel (e.g. DAPI) for Round 2.",
+            }
+        )
+        self.method = ComboBox(
+            label="Method:",
+            choices=["Classical (Fast)", "Deep Learning (Cellpose)"],
+            value="Classical (Fast)",
+            tooltip="Classical: Fast, watershed-based. Cellpose: Deep learning, slower but more accurate.",
+        )
+        self._run_btn = PushButton(text="Run Nuclei Mapping")
+        self._run_btn.tooltip = "Run nuclei segmentation on the selected layers."
+
+        self._cellpose_status = QLabel("")
+        self._cellpose_status.setWordWrap(True)
+        self._cellpose_status.setVisible(False)
+        self._cellpose_status.setStyleSheet("margin: 4px 2px; font-size: 12px;")
+
+    @staticmethod
+    def _make_divider():
+        line = QFrame()
+        line.setFixedHeight(2)
+        line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
+        return line
+
+    def _init_layout(self):
+        self._desc = QLabel(
+            "Select the nuclear stain channel for each round. "
+            "Classical is fast watershed-based segmentation. "
+            "Deep learning uses Cellpose for higher accuracy but is slower."
+        )
+        self._desc.setWordWrap(True)
+        self._desc.setStyleSheet("color: white; margin: 4px 2px;")
+
+        # Wrap layer selectors in labelled containers
+        self._r1_form = Container(labels=True)
+        self._r1_form.extend([self.r1_layer])
+        self._r1_form.native.layout().setContentsMargins(0, 10, 0, 0)
+
+        self._r2_form = Container(labels=True)
+        self._r2_form.extend([self.r2_layer])
+        self._r2_form.native.layout().setContentsMargins(0, 0, 0, 10)
+
+        self._method_form = Container(labels=True)
+        self._method_form.extend([self.method])
+        self._method_form.native.layout().setContentsMargins(0, 10, 0, 0)
+
+        _layout = self.native.layout()
+        _layout.setSpacing(2)
+        _layout.setContentsMargins(0, 0, 0, 0)
+        _layout.addWidget(self._header.native)
+        _layout.addWidget(self._info.native)
+        _layout.addWidget(self._make_divider())
+        _layout.addWidget(self._desc)
+        _layout.addWidget(self._r1_form.native)
+        _layout.addWidget(self._r2_form.native)
+        _layout.addWidget(self._method_form.native)
+        _layout.addWidget(self._cellpose_status)
+        self._run_btn.native.setStyleSheet("margin-top: 20px;")
+        _layout.addWidget(self._run_btn.native)
+        _layout.addStretch(1)
+
+    def _connect_signals(self):
+        self._run_btn.changed.connect(self._on_run)
+        self.method.changed.connect(self._on_method_changed)
+
+    def _on_method_changed(self, method):
+        is_cellpose = method == "Deep Learning (Cellpose)"
+        self._cellpose_status.setVisible(is_cellpose)
+        if is_cellpose:
+            self._check_cellpose_model()
+
+    def _check_cellpose_model(self):
         from cellpose.models import MODEL_DIR
         model_file = MODEL_DIR / "cpsam"
-        if not model_file.exists():
-            from qtpy.QtWidgets import QMessageBox
-            reply = QMessageBox.question(
-                viewer.window._qt_window,
-                "Cellpose Model Not Found",
-                "The Cellpose model (cpsam) needs to be downloaded (~100 MB).\n\n"
-                "This is a one-time download. Continue?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes,
-            )
-            if reply != QMessageBox.Yes:
-                viewer.status = "Cellpose download cancelled."
-                return
-            # Download with progress dialog
-            MODEL_DIR.mkdir(parents=True, exist_ok=True)
-            with popups.ProgressDialog(viewer.window._qt_window, title="Downloading Cellpose Model...") as dl_dialog:
-                dl_dialog.update_progress(0, "Connecting to server...")
-                _download_cellpose_model(str(model_file), dl_dialog)
-                dl_dialog.update_progress(100, "Download complete.")
+        if model_file.exists():
+            self._cellpose_status.setText("Cellpose model found.")
+            self._cellpose_status.setStyleSheet("color: #a6e3a1; margin: 4px 2px; font-size: 12px;")
+        else:
+            self._cellpose_status.setText("Cellpose model not found. Download will begin on run.")
+            self._cellpose_status.setStyleSheet("color: #f9e2af; margin: 4px 2px; font-size: 12px;")
 
-    viewer.status = f"Segmenting {len(layers_to_process)} layer(s)..."
-
-    with popups.ProgressDialog(viewer.window._qt_window, title="Segmenting Nuclei...") as dialog:
-        num_layers = len(layers_to_process)
-        # Reserve 0-70% for segmentation, 70-85% for filtering, 85-100% for loading
-        seg_pct = 70
-        results = []
-
-        # Pass 1: Segment all rounds
-        for i, layer in enumerate(layers_to_process):
-            dialog.update_progress(0, f"Starting segmentation for {layer.name}...")
-
-            def on_progress(value, text, _i=i):
-                base_progress = (_i / num_layers) * seg_pct
-                scaled_value = base_progress + (value / num_layers) * (seg_pct / 100)
-                dialog.update_progress(int(scaled_value), f"{layer.name}: {text}")
-
-            voxel_spacing = tuple(layer.scale) if layer.scale is not None else None
-            if method == "Deep Learning (Cellpose)":
-                masks, centroids = segment_nuclei_cellpose(layer.data, merge_splits=merge_splits, progress_callback=on_progress)
-            else:
-                masks, centroids = segment_nuclei_classical(layer.data, voxel_spacing=voxel_spacing, merge_splits=merge_splits, progress_callback=on_progress)
-            results.append((layer, masks, centroids))
-
-        # Pass 2: Pool volumes from all rounds, compute shared threshold, filter
-        dialog.update_progress(seg_pct, "Computing volume threshold across rounds...")
-        all_volumes = np.concatenate([get_label_volumes(masks) for _, masks, _ in results if masks is not None])
-        min_vol = compute_min_volume_threshold(all_volumes)
-
-        filtered_results = []
-        for i, (layer, masks, centroids) in enumerate(results):
-            if masks is None:
-                filtered_results.append((layer, masks, centroids))
-                continue
-            pct = seg_pct + int(((i + 1) / num_layers) * 15)
-            dialog.update_progress(pct, f"Filtering {layer.name}...")
-            masks, centroids = filter_small_labels(masks, min_vol)
-            filtered_results.append((layer, masks.astype(np.uint32), centroids))
-
-        # Freeze vispy canvas before adding layers to prevent GL access
-        # violations from processEvents triggering draws mid-mutation.
-        dialog.freeze_canvas()
-
-        # Load results into viewer with progress feedback
-        n_filtered = max(len(filtered_results), 1)
-        for i, (layer, masks, centroids) in enumerate(filtered_results):
-            pct = 85 + int((i / n_filtered) * 13)
-            dialog.update_progress(pct, f"Loading masks & IDs: {layer.name}...")
-            viewer_helpers.add_segmentation_results_to_viewer(viewer, layer, masks, centroids)
-
-        dialog.update_progress(100, "Complete.")
-
-# --- UI Wrapper ---
-from qtpy.QtWidgets import QFrame, QLabel, QSpacerItem, QSizePolicy
-from ..style import COLORS
-
-class _DapiSegmentationContainer(Container):
-    """Wrapper that delegates reset_choices and exposes the inner magicgui."""
     def reset_choices(self):
-        _dapi_segmentation_widget.reset_choices()
+        self.r1_layer.reset_choices()
+        self.r2_layer.reset_choices()
 
-def _make_divider():
-    line = QFrame()
-    line.setFixedHeight(2)
-    line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
-    return line
+    @error_handler("Nuclei Segmentation Failed")
+    def _on_run(self):
+        if not session.is_active():
+            popups.show_error_popup(
+                None, "No Session",
+                "Please start or load a session before running segmentation."
+            )
+            return
 
-dapi_segmentation_widget = _DapiSegmentationContainer(labels=False)
-dapi_segmentation_widget._dapi_segmentation_widget = _dapi_segmentation_widget
+        viewer = napari.current_viewer()
+        r1_layer = self.r1_layer.value
+        r2_layer = self.r2_layer.value
+        method = self.method.value
+        merge_splits = True
 
-_header = Label(value="Nuclei Mapping")
-_header.native.setObjectName("widgetHeader")
-_info = Label(value="<i>Segments nuclei in the nuclear stain channel.</i>")
-_info.native.setObjectName("widgetInfo")
+        logger.info("Nuclei segmentation settings: method=%s, merge_splits=%s, R1=%s, R2=%s",
+                     method, merge_splits,
+                     r1_layer.name if r1_layer else None,
+                     r2_layer.name if r2_layer else None)
 
-_desc = QLabel(
-    "Select the nuclear stain channel for each round. "
-    "Classical is fast watershed-based segmentation. "
-    "Cellpose uses deep learning for higher accuracy but is slower."
-)
-_desc.setWordWrap(True)
-_desc.setStyleSheet("color: white; margin: 4px 2px;")
+        layers_to_process = [l for l in [r1_layer, r2_layer] if l is not None]
 
-_layout = dapi_segmentation_widget.native.layout()
-_layout.setSpacing(2)
-_layout.setContentsMargins(0, 0, 0, 0)
-_layout.addWidget(_header.native)
-_layout.addWidget(_info.native)
-_layout.addWidget(_make_divider())
-_layout.addWidget(_desc)
-_layout.addItem(QSpacerItem(0, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
-_dapi_segmentation_widget.native.setMinimumWidth(0)
-_dapi_segmentation_widget.native.layout().setContentsMargins(0, 10, 0, 10)
-_layout.addWidget(_dapi_segmentation_widget.native)
+        if not layers_to_process:
+            viewer.status = "No channels selected."
+            return
 
-# Status label for Cellpose model availability
-_cellpose_status = QLabel("")
-_cellpose_status.setWordWrap(True)
-_cellpose_status.setVisible(False)
-_cellpose_status.setStyleSheet("margin: 4px 2px; font-size: 12px;")
-_layout.addWidget(_cellpose_status)
+        # If Cellpose selected, check if model is downloaded
+        if method == "Deep Learning (Cellpose)":
+            from cellpose.models import MODEL_DIR
+            model_file = MODEL_DIR / "cpsam"
+            if not model_file.exists():
+                reply = QMessageBox.question(
+                    viewer.window._qt_window,
+                    "Cellpose Model Not Found",
+                    "The Cellpose model (cpsam) needs to be downloaded (~100 MB).\n\n"
+                    "This is a one-time download. Continue?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes,
+                )
+                if reply != QMessageBox.Yes:
+                    viewer.status = "Cellpose download cancelled."
+                    return
+                MODEL_DIR.mkdir(parents=True, exist_ok=True)
+                with popups.ProgressDialog(viewer.window._qt_window, title="Downloading Cellpose Model...") as dl_dialog:
+                    dl_dialog.update_progress(0, "Connecting to server...")
+                    _download_cellpose_model(str(model_file), dl_dialog)
+                    dl_dialog.update_progress(100, "Download complete.")
+
+        viewer.status = f"Segmenting {len(layers_to_process)} layer(s)..."
+
+        with popups.ProgressDialog(viewer.window._qt_window, title="Segmenting Nuclei...") as dialog:
+            num_layers = len(layers_to_process)
+            seg_pct = 70
+            results = []
+
+            for i, layer in enumerate(layers_to_process):
+                dialog.update_progress(0, f"Starting segmentation for {layer.name}...")
+
+                def on_progress(value, text, _i=i):
+                    base_progress = (_i / num_layers) * seg_pct
+                    scaled_value = base_progress + (value / num_layers) * (seg_pct / 100)
+                    dialog.update_progress(int(scaled_value), f"{layer.name}: {text}")
+
+                voxel_spacing = tuple(layer.scale) if layer.scale is not None else None
+                if method == "Deep Learning (Cellpose)":
+                    masks, centroids = segment_nuclei_cellpose(layer.data, merge_splits=merge_splits, progress_callback=on_progress)
+                else:
+                    masks, centroids = segment_nuclei_classical(layer.data, voxel_spacing=voxel_spacing, merge_splits=merge_splits, progress_callback=on_progress)
+                results.append((layer, masks, centroids))
+
+            dialog.update_progress(seg_pct, "Computing volume threshold across rounds...")
+            all_volumes = np.concatenate([get_label_volumes(masks) for _, masks, _ in results if masks is not None])
+            min_vol = compute_min_volume_threshold(all_volumes)
+
+            filtered_results = []
+            for i, (layer, masks, centroids) in enumerate(results):
+                if masks is None:
+                    filtered_results.append((layer, masks, centroids))
+                    continue
+                pct = seg_pct + int(((i + 1) / num_layers) * 15)
+                dialog.update_progress(pct, f"Filtering {layer.name}...")
+                masks, centroids = filter_small_labels(masks, min_vol)
+                filtered_results.append((layer, masks.astype(np.uint32), centroids))
+
+            dialog.freeze_canvas()
+
+            n_filtered = max(len(filtered_results), 1)
+            for i, (layer, masks, centroids) in enumerate(filtered_results):
+                pct = 85 + int((i / n_filtered) * 13)
+                dialog.update_progress(pct, f"Loading masks & IDs: {layer.name}...")
+                viewer_helpers.add_segmentation_results_to_viewer(viewer, layer, masks, centroids)
+
+            dialog.update_progress(100, "Complete.")
 
 
-def _check_cellpose_model():
-    """Update the status label based on whether the Cellpose model is cached."""
-    from cellpose.models import MODEL_DIR
-    model_file = MODEL_DIR / "cpsam"
-    if model_file.exists():
-        _cellpose_status.setText("Cellpose model found.")
-        _cellpose_status.setStyleSheet("color: #a6e3a1; margin: 4px 2px; font-size: 12px;")
-    else:
-        _cellpose_status.setText("Cellpose model not found. Download will begin on run (~100 MB).")
-        _cellpose_status.setStyleSheet("color: #f9e2af; margin: 4px 2px; font-size: 12px;")
-
-
-def _on_method_changed(method):
-    is_cellpose = method == "Deep Learning (Cellpose)"
-    _cellpose_status.setVisible(is_cellpose)
-    if is_cellpose:
-        _check_cellpose_model()
-
-
-_dapi_segmentation_widget.method.changed.connect(_on_method_changed)
-
-_layout.addStretch(1)
+# Public instance — matches the old API expected by viewer.py, events.py, nuclei_segmentation_widget.py
+dapi_segmentation_widget = DapiSegmentationWidget()
+# Expose inner reference for events.py compatibility (_try_set accesses ._dapi_segmentation_widget.r1_layer)
+dapi_segmentation_widget._dapi_segmentation_widget = dapi_segmentation_widget
