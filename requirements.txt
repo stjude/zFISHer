@@ -10,5 +10,6 @@ SimpleITK
 cellpose
 nd2
 openpyxl
+markdown
 packaging
 qtpy

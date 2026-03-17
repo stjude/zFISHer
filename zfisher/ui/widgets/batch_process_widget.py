@@ -42,16 +42,20 @@ class BatchProcessWidget(Container):
         self._info.native.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._batch_file = FileEdit(
             label="Batch File:",
-            filter="*.xlsx *.xls"
+            filter="*.xlsx *.xls",
+            tooltip="Excel file (.xlsx) containing batch configuration. Use Generate Template to create one."
         )
         self._batch_output_dir = FileEdit(
             label="Output:",
             mode='d',
-            value=Path.home() / "zFISHer_Batch_Output"
+            value=Path.home() / "zFISHer_Batch_Output",
+            tooltip="Base output directory. Each dataset gets its own subfolder."
         )
         self._generate_template_btn = PushButton(text="Generate Template")
+        self._generate_template_btn.tooltip = "Save a pre-formatted Excel template with Datasets, Puncta, and Colocalization sheets."
         self._generate_template_btn.native.setMinimumWidth(0)
         self._batch_run_btn = PushButton(text="Run Batch Processing")
+        self._batch_run_btn.tooltip = "Validate the batch file and run the full pipeline on all datasets."
         self._batch_run_btn.native.setMinimumWidth(0)
 
     @staticmethod

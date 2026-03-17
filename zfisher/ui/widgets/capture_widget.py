@@ -632,12 +632,17 @@ def region_capture_with_hotkey(viewer: napari.Viewer):
 # --- Widget Setup ---
 initial_filename = _get_next_filename()
 _capture_widget.output_filename.value = initial_filename if initial_filename else "capture1.png"
+_capture_widget.output_filename.tooltip = "Filename for the saved screenshot (without extension)."
+_capture_widget.call_button.tooltip = "Capture the current viewer canvas and save it as an image."
 
 # Arrow checkboxes and tally
 arrow_chk = widgets.CheckBox(text="Draw Arrows")
+arrow_chk.tooltip = "Enable arrow drawing mode. Click and drag on the canvas to place arrows."
 arrow_show_chk = widgets.CheckBox(text="Show Arrows", value=True)
+arrow_show_chk.tooltip = "Toggle visibility of all placed arrows."
 arrow_count_label = widgets.Label(value="Arrows: 0")
 arrow_clear_btn = widgets.PushButton(text="Clear All Arrows")
+arrow_clear_btn.tooltip = "Remove all arrows from the canvas."
 
 def _update_arrow_count():
     """Refresh the arrow tally label from the overlay."""
@@ -677,8 +682,11 @@ def _on_clear_arrows():
 
 # Scale Bar Options
 sb_visible = widgets.CheckBox(text="Visible", value=True)
+sb_visible.tooltip = "Show or hide the scale bar overlay on the canvas."
 sb_lock = widgets.CheckBox(text="Lock")
+sb_lock.tooltip = "Lock the scale bar position. Unlock to reposition by dragging."
 sb_pixels = widgets.CheckBox(text="Show Pixels")
+sb_pixels.tooltip = "Display the scale bar length in pixels alongside microns."
 sb_container = widgets.Container(layout="horizontal", labels=False)
 sb_container.extend([sb_visible, sb_lock, sb_pixels])
 

@@ -72,8 +72,8 @@ def _resolve_puncta_layers(viewer, channel_choice):
 
 @magicgui(
     call_button="Re-filter Puncta to Mask",
-    mask_layer={"label": "Filter Mask"},
-    channels={"label": "Channels", "choices": ["All (R1 + R2)"]},
+    mask_layer={"label": "Filter Mask", "tooltip": "Mask layer to filter against. Puncta outside this mask are removed."},
+    channels={"label": "Channels", "choices": ["All (R1 + R2)"], "tooltip": "Which puncta layers to re-filter. Select individual channels or all at once."},
     auto_call=False,
 )
 @require_active_session()

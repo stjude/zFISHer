@@ -29,8 +29,9 @@ class LoadSessionWidget(Container):
         self._header.native.setObjectName("widgetHeader")
         self._info = Label(value="<i>Load a previously saved zFISHer session.</i>")
         self._info.native.setObjectName("widgetInfo")
-        self._load_session_file = FileEdit(label="Session File:", filter="*.json")
+        self._load_session_file = FileEdit(label="Session File:", filter="*.json", tooltip="Path to a zfisher_session_x.json file from a previous project.")
         self._load_session_btn = PushButton(text="Load Session")
+        self._load_session_btn.tooltip = "Restore the selected session and reload all processed layers."
 
     @staticmethod
     def _make_divider():

@@ -226,9 +226,9 @@ _highlighter = None
 
 @magicgui(
     call_button="Merge IDs",
-    mask_layer={"label": "Layer to Edit"},
-    source_id={"label": "Source ID"},
-    target_id={"label": "Target ID"}
+    mask_layer={"label": "Layer to Edit", "tooltip": "The nuclei mask layer to edit."},
+    source_id={"label": "Source ID", "tooltip": "ID of the nucleus to act on (merge source or delete target)."},
+    target_id={"label": "Target ID", "tooltip": "ID of the nucleus to merge into. Source will be absorbed into Target."}
 )
 @require_active_session("Please start or load a session before editing masks.")
 def _mask_editor_widget(
@@ -368,25 +368,25 @@ def _make_section_header(text):
 
 # --- Merge Section ---
 merge_label = _make_section_header("Merge Nuclei")
-delete_btn = widgets.PushButton(text="Delete Source ID")
+delete_btn = widgets.PushButton(text="Delete Source ID", tooltip="Delete the nucleus with the Source ID from the mask.")
 
 # --- Paint Section ---
 paint_label = _make_section_header("Paint New Mask")
-paint_chk = widgets.CheckBox(text="Paint (New ID)")
-extrude_btn = widgets.PushButton(text="Extrude ID (Fill Z)")
+paint_chk = widgets.CheckBox(text="Paint (New ID)", tooltip="Enable paint mode to draw a new mask region with the Source ID.")
+extrude_btn = widgets.PushButton(text="Extrude ID (Fill Z)", tooltip="Extend the selected nucleus label through all Z slices.")
 
 # --- Erase Section ---
 erase_label = _make_section_header("Erase")
-erase_chk = widgets.CheckBox(text="Erase")
-erase_radius_slider = widgets.Slider(label="Radius", min=1, max=50, value=5)
-erase_depth_slider = widgets.Slider(label="Depth (Z)", min=1, max=20, value=1)
+erase_chk = widgets.CheckBox(text="Erase", tooltip="Enable eraser to remove mask pixels in a brush radius.")
+erase_radius_slider = widgets.Slider(label="Radius", min=1, max=50, value=5, tooltip="Radius of the eraser brush in pixels.")
+erase_depth_slider = widgets.Slider(label="Depth (Z)", min=1, max=20, value=1, tooltip="Number of Z slices affected by each erase stroke.")
 erase_slider_container = widgets.Container(layout="vertical", labels=True)
 erase_slider_container.extend([erase_radius_slider, erase_depth_slider])
-hover_chk = widgets.CheckBox(text="Hover Edit Mode (Red + 'C' to Del)")
+hover_chk = widgets.CheckBox(text="Hover Edit Mode (Red + 'C' to Del)", tooltip="Highlight nuclei under the cursor in red. Press C to delete the highlighted nucleus.")
 
 # --- Utilities ---
-undo_btn = widgets.PushButton(text="Undo")
-refresh_ids_btn = widgets.PushButton(text="Show/Refresh IDs")
+undo_btn = widgets.PushButton(text="Undo", tooltip="Revert the last mask edit operation.")
+refresh_ids_btn = widgets.PushButton(text="Show/Refresh IDs", tooltip="Recalculate and display nucleus ID labels on the mask.")
 
 # Layout with dividers — use native layout throughout to maintain order
 _layout = _mask_editor_widget.native.layout()

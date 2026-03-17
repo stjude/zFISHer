@@ -13,19 +13,20 @@ logger = logging.getLogger(__name__)
 @magicgui(
     call_button="Detect Puncta",
     layout="vertical",
-    image_layer={"label": "Target Channel"},
-    nuclei_layer={"label": "Nuclei Masks"},
-    nuclei_only={"label": "Nuclei Only (discard extranuclear puncta)", "value": True},
+    image_layer={"label": "Target Channel", "tooltip": "The fluorescent channel image to detect puncta in."},
+    nuclei_layer={"label": "Nuclei Masks", "tooltip": "Nuclei mask used to filter puncta. Only puncta inside nuclei are kept."},
+    nuclei_only={"label": "Nuclei Only (discard extranuclear puncta)", "value": True, "tooltip": "If checked, discard puncta that fall outside the nuclei mask."},
     method={
-        "label": "Algorithm", 
-        "choices": ["Local Maxima", "Laplacian of Gaussian", "Difference of Gaussian", "Radial Symmetry"]
+        "label": "Algorithm",
+        "choices": ["Local Maxima", "Laplacian of Gaussian", "Difference of Gaussian", "Radial Symmetry"],
+        "tooltip": "Detection algorithm. Local Maxima is fastest. LoG and DoG detect blob-like structures. Radial Symmetry finds symmetric bright spots."
     },
-    threshold={"label": "Sensitivity (0-1)", "min": 0.01, "max": 1.0, "step": 0.01, "value": constants.PUNCTA_THRESHOLD_REL},
-    min_distance={"label": "Min Distance (px)", "min": 1, "max": 20, "value": constants.PUNCTA_MIN_DISTANCE},
-    sigma={"label": "Spot Radius (Sigma)", "min": 0.0, "max": 5.0, "step": 0.1, "value": constants.PUNCTA_SIGMA},
-    z_scale={"label": "Z-Anisotropy Scale", "min": 0.01, "max": 20.0, "step": 0.01, "value": 1.0},
-    use_tophat={"label": "Subtract Background (Top-hat)"},
-    tophat_radius={"label": "Top-hat Radius (px)", "min": 1, "max": 50, "value": constants.PUNCTA_TOPHAT_RADIUS}
+    threshold={"label": "Sensitivity (0-1)", "min": 0.01, "max": 1.0, "step": 0.01, "value": constants.PUNCTA_THRESHOLD_REL, "tooltip": "Relative intensity threshold (0-1). Lower values detect dimmer spots but may increase false positives."},
+    min_distance={"label": "Min Distance (px)", "min": 1, "max": 20, "value": constants.PUNCTA_MIN_DISTANCE, "tooltip": "Minimum separation between detected puncta in pixels. Prevents double-counting nearby spots."},
+    sigma={"label": "Spot Radius (Sigma)", "min": 0.0, "max": 5.0, "step": 0.1, "value": constants.PUNCTA_SIGMA, "tooltip": "Gaussian sigma for spot detection. Match to the approximate radius of your puncta in pixels."},
+    z_scale={"label": "Z-Anisotropy Scale", "min": 0.01, "max": 20.0, "step": 0.01, "value": 1.0, "tooltip": "Z-anisotropy correction factor. Adjusts for the difference between Z-step and XY pixel size."},
+    use_tophat={"label": "Subtract Background (Top-hat)", "tooltip": "Apply white top-hat filter to subtract uneven background before detection."},
+    tophat_radius={"label": "Top-hat Radius (px)", "min": 1, "max": 50, "value": constants.PUNCTA_TOPHAT_RADIUS, "tooltip": "Radius of the top-hat structuring element in pixels. Should be larger than puncta diameter."}
 )
 @require_active_session()
 @error_handler("Puncta Detection Failed")

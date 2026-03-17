@@ -8,8 +8,8 @@ from ._shared import make_header_divider
 
 @magicgui(
     call_button="Calculate Shift (RANSAC)",
-    r1_points={"label": "R1 Centroids"},
-    r2_points={"label": "R2 Centroids"}
+    r1_points={"label": "R1 Centroids", "tooltip": "Centroid points layer from Round 1 nuclei segmentation."},
+    r2_points={"label": "R2 Centroids", "tooltip": "Centroid points layer from Round 2 nuclei segmentation."}
 )
 @require_active_session("Please start or load a session before running registration.")
 @error_handler("Registration Failed")

@@ -30,9 +30,9 @@ def _make_divider():
 @magicgui(
     call_button="Add Colocalization Rule",
     layout="vertical",
-    source_layer={"label": "Source Channel (e.g. FITC)"},
-    target_layer={"label": "Target Channel (e.g. Cy5)"},
-    cutoff={"label": "Cutoff (um)", "min": 0.1, "step": 0.1, "value": 1.0}
+    source_layer={"label": "Source Channel (e.g. FITC)", "tooltip": "The reference/anchor puncta channel for pairwise colocalization."},
+    target_layer={"label": "Target Channel (e.g. Cy5)", "tooltip": "The target puncta channel to check for proximity to the source."},
+    cutoff={"label": "Cutoff (um)", "min": 0.1, "step": 0.1, "value": 1.0, "tooltip": "Maximum distance in microns between two puncta to count as colocalized."}
 )
 @require_active_session("Please start or load a session before adding rules.")
 def _rule_builder(
@@ -62,7 +62,7 @@ def _rule_builder(
 
 
 _rules_display = Label(value="No rules defined.")
-_clear_btn = PushButton(text="Clear Rules")
+_clear_btn = PushButton(text="Clear Rules", tooltip="Remove all pairwise colocalization rules.")
 
 
 def _update_rules_display(rules):
@@ -93,10 +93,10 @@ _clear_btn.clicked.connect(_on_clear_rules)
 @magicgui(
     call_button="Add Tri-Colocalization Rule",
     layout="vertical",
-    anchor_layer={"label": "Anchor Channel"},
-    channel_a_layer={"label": "Channel A"},
-    channel_b_layer={"label": "Channel B"},
-    cutoff={"label": "Cutoff (um)", "min": 0.1, "step": 0.1, "value": 1.0}
+    anchor_layer={"label": "Anchor Channel", "tooltip": "The anchor puncta channel for tri-colocalization."},
+    channel_a_layer={"label": "Channel A", "tooltip": "First comparison channel (must colocalize with anchor)."},
+    channel_b_layer={"label": "Channel B", "tooltip": "Second comparison channel (must colocalize with anchor)."},
+    cutoff={"label": "Cutoff (um)", "min": 0.1, "step": 0.1, "value": 1.0, "tooltip": "Maximum distance in microns for tri-colocalization."}
 )
 @require_active_session("Please start or load a session before adding rules.")
 def _tri_rule_builder(
@@ -128,7 +128,7 @@ def _tri_rule_builder(
 
 
 _tri_rules_display = Label(value="No tri-coloc rules defined.")
-_tri_clear_btn = PushButton(text="Clear Tri-Coloc Rules")
+_tri_clear_btn = PushButton(text="Clear Tri-Coloc Rules", tooltip="Remove all tri-colocalization rules.")
 
 
 def _update_tri_rules_display(tri_rules):
@@ -159,8 +159,8 @@ _tri_clear_btn.clicked.connect(_on_clear_tri_rules)
 # Export
 # =====================================================================
 
-_filename = LineEdit(label="Report Name", value="zFISHer_Analysis_Report.xlsx")
-_export_btn = PushButton(text="Run Analysis & Export Master Report")
+_filename = LineEdit(label="Report Name", value="zFISHer_Analysis_Report.xlsx", tooltip="Filename for the exported Excel report (without extension).")
+_export_btn = PushButton(text="Run Analysis & Export Master Report", tooltip="Run colocalization analysis on all rules and export the master report.")
 
 
 @require_active_session("Please start or load a session before exporting.")

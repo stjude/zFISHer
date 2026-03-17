@@ -488,7 +488,7 @@ def segment_nuclei_cellpose(image_data, gpu=True, merge_splits=True, progress_ca
     # 2. Init model
     if progress_callback: progress_callback(10, "Loading Cellpose model...")
     use_gpu = core.use_gpu() if gpu else False
-    model = models.CellposeModel(gpu=use_gpu, model_type='nuclei')
+    model = models.CellposeModel(gpu=use_gpu)
 
     # 3. Run 2D eval with stitching
     if progress_callback: progress_callback(15, "Running Cellpose (2D + stitch)...")

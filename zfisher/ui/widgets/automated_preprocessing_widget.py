@@ -23,10 +23,10 @@ def _get_qt_parent(viewer):
 
 @magicgui(
     call_button="Run Automated Registration && Warping",
-    r1_dapi_layer={"label": "Round 1 Nuclei Layer"},
-    r2_dapi_layer={"label": "Round 2 Nuclei Layer"},
-    match_nuclei={"label": "Create Consensus Nuclei Mask"},
-    hide_raw={"label": "Hide Raw Layers After?"}
+    r1_dapi_layer={"label": "Round 1 Nuclei Layer", "tooltip": "Select the Round 1 nuclear stain layer for registration."},
+    r2_dapi_layer={"label": "Round 2 Nuclei Layer", "tooltip": "Select the Round 2 nuclear stain layer for registration."},
+    match_nuclei={"label": "Create Consensus Nuclei Mask", "tooltip": "Generate consensus nuclei by matching R1 and R2 masks after alignment."},
+    hide_raw={"label": "Hide Raw Layers After?", "tooltip": "Hide raw input layers after processing, showing only aligned results."}
 )
 @require_active_session("Please start or load a session first.")
 @error_handler("Automated Registration Failed")

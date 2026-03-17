@@ -39,10 +39,10 @@ _puncta_undo = _PunctaUndoStack()
 
 @magicgui(
     call_button="Delete Selected Points",
-    points_layer={"label": "Layer to Edit"},
-    fishing_hook={"label": "Enable Fishing Hook", "value": True},
-    volume_optimization={"label": "Volume Optimization", "value": True},
-    opt_radius={"label": "Opt. Radius (um)", "value": "0.1"}
+    points_layer={"label": "Layer to Edit", "tooltip": "The puncta points layer to edit."},
+    fishing_hook={"label": "Enable Fishing Hook", "value": True, "tooltip": "Click to place puncta. Automatically snaps to the nearest intensity peak."},
+    volume_optimization={"label": "Volume Optimization", "value": True, "tooltip": "Refine each placed punctum position to the local intensity maximum."},
+    opt_radius={"label": "Opt. Radius (um)", "value": "0.1", "tooltip": "Search radius in microns for volume optimization refinement."}
 )
 @require_active_session()
 def _puncta_editor_widget(
@@ -240,7 +240,7 @@ def fishing_hook_callback(layer, event):
         viewer.status = f"Algorithmic Snap: ID {next_id}, Pixel {np.round(target_coord_data, 1)}"
 
 # --- Undo Button ---
-pe_undo_btn = widgets.PushButton(text="Undo")
+pe_undo_btn = widgets.PushButton(text="Undo", tooltip="Undo the last puncta edit (add or remove).")
 
 def _on_puncta_undo():
     viewer = napari.current_viewer()

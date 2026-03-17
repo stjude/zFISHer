@@ -14,8 +14,8 @@ from ._shared import make_header_divider
 @magicgui(
     call_button="Match & Merge Nuclei",
     layout="vertical",
-    r1_mask_layer={"label": "R1 Mask (Aligned)"},
-    r2_mask_layer={"label": "R2 Mask (Warped)"},
+    r1_mask_layer={"label": "R1 Mask (Aligned)", "tooltip": "The segmented nuclei mask from Round 1."},
+    r2_mask_layer={"label": "R2 Mask (Warped)", "tooltip": "The segmented nuclei mask from Round 2 (aligned or warped)."},
     method={
         "label": "Overlap Method",
         "widget_type": "RadioButtons", # Changes dropdown to toggle/radio buttons

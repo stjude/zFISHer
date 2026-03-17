@@ -13,8 +13,8 @@ from ._shared import make_header_divider
 @magicgui(
     call_button="Generate Global Canvas",
     layout="vertical",
-    apply_warp={"label": "Apply Deformable Warping?"},
-    hide_raw={"label": "Hide Raw Layers?"}
+    apply_warp={"label": "Apply Deformable Warping?", "tooltip": "Apply deformable B-spline warping to correct tissue deformation between rounds."},
+    hide_raw={"label": "Hide Raw Layers?", "tooltip": "Hide raw input layers after processing, showing only aligned results."}
 )
 @require_active_session("Please start or load a session before generating the canvas.")
 @error_handler("Canvas Generation Failed")

@@ -31,6 +31,49 @@ from .widgets.capture_widget import capture_widget, capture_with_hotkey, region_
 # Import the event handlers
 from . import events, style
 
+# --- Helper Functions ---
+
+def _show_readme_dialog(viewer, readme_path):
+    """Show the README.md rendered as HTML in a scrollable dialog."""
+    from qtpy.QtWidgets import QDialog, QVBoxLayout, QTextBrowser, QPushButton
+    from qtpy.QtCore import Qt
+
+    try:
+        import markdown
+        html_body = markdown.markdown(
+            readme_path.read_text(encoding="utf-8"),
+            extensions=["tables", "fenced_code", "toc"],
+        )
+    except ImportError:
+        # Fallback: basic rendering without markdown package
+        raw = readme_path.read_text(encoding="utf-8")
+        html_body = "<pre style='white-space: pre-wrap;'>" + raw + "</pre>"
+
+    dialog = QDialog(viewer.window._qt_window)
+    dialog.setWindowTitle("zFISHer — Help & Documentation")
+    dialog.resize(750, 600)
+
+    text_browser = QTextBrowser()
+    text_browser.setOpenExternalLinks(True)
+    text_browser.setStyleSheet(
+        "QTextBrowser { background-color: #1e1e2e; color: #cdd6f4; "
+        "font-size: 13px; padding: 12px; border: none; }"
+        "a { color: #89b4fa; }"
+    )
+    text_browser.setHtml(
+        f"<html><body style='font-family: sans-serif;'>{html_body}</body></html>"
+    )
+
+    close_btn = QPushButton("Close")
+    close_btn.clicked.connect(dialog.close)
+
+    layout = QVBoxLayout(dialog)
+    layout.addWidget(text_browser)
+    layout.addWidget(close_btn)
+
+    dialog.show()
+
+
 # --- Helper Classes ---
 
 from qtpy.QtCore import Qt, QPoint, QTimer, QEvent, QEvent
@@ -254,8 +297,8 @@ def create_welcome_widget(viewer):
     container.extend([title_label, subtitle_label, version_label, workflow_label])
 
     btn_row = widgets.Container(layout="horizontal", labels=False)
-    help_btn = widgets.PushButton(text="Open README / Help")
-    reset_btn = widgets.PushButton(text="Reset")
+    help_btn = widgets.PushButton(text="Open README / Help", tooltip="Open the zFISHer documentation and user guide.")
+    reset_btn = widgets.PushButton(text="Reset", tooltip="Clear all layers and reset the session to start fresh.")
     btn_row.extend([help_btn, reset_btn])
     container.append(btn_row)
     
@@ -263,7 +306,7 @@ def create_welcome_widget(viewer):
     def open_help():
         readme_path = Path(__file__).parent.parent.parent / "README.md"
         if readme_path.exists():
-            webbrowser.open(readme_path.as_uri())
+            _show_readme_dialog(viewer, readme_path)
             
     @reset_btn.changed.connect
     def reset_viewer():
