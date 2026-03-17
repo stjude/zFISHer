@@ -18,7 +18,7 @@ def _make_divider():
 def _get_puncta_channel_choices(viewer):
     """Build the channel filter choices from current puncta layers."""
     if viewer is None:
-        return ["All (Warped + Aligned)"]
+        return ["All (R1 + R2)"]
 
     puncta_layers = [
         l for l in viewer.layers
@@ -32,14 +32,14 @@ def _get_puncta_channel_choices(viewer):
         if constants.ALIGNED_PREFIX.upper() in name_upper or constants.WARPED_PREFIX.upper() in name_upper:
             filtered.append(l)
 
-    r1_layers = [l for l in filtered if constants.ALIGNED_PREFIX.upper() in l.name.upper()]
-    r2_layers = [l for l in filtered if constants.WARPED_PREFIX.upper() in l.name.upper()]
+    r1_layers = [l for l in filtered if "R1" in l.name.upper()]
+    r2_layers = [l for l in filtered if "R2" in l.name.upper()]
 
-    choices = ["All (Warped + Aligned)"]
+    choices = ["All (R1 + R2)"]
     if r1_layers:
-        choices.append("All R1 (Aligned)")
+        choices.append("All R1")
     if r2_layers:
-        choices.append("All R2 (Warped)")
+        choices.append("All R2")
     for l in filtered:
         choices.append(l.name)
 
@@ -60,12 +60,12 @@ def _resolve_puncta_layers(viewer, channel_choice):
         or constants.WARPED_PREFIX.upper() in l.name.upper()
     ]
 
-    if channel_choice == "All (Warped + Aligned)":
+    if channel_choice == "All (R1 + R2)":
         return filtered
-    elif channel_choice == "All R1 (Aligned)":
-        return [l for l in filtered if constants.ALIGNED_PREFIX.upper() in l.name.upper()]
-    elif channel_choice == "All R2 (Warped)":
-        return [l for l in filtered if constants.WARPED_PREFIX.upper() in l.name.upper()]
+    elif channel_choice == "All R1":
+        return [l for l in filtered if "R1" in l.name.upper()]
+    elif channel_choice == "All R2":
+        return [l for l in filtered if "R2" in l.name.upper()]
     else:
         return [l for l in filtered if l.name == channel_choice]
 
@@ -73,14 +73,14 @@ def _resolve_puncta_layers(viewer, channel_choice):
 @magicgui(
     call_button="Re-filter Puncta to Mask",
     mask_layer={"label": "Filter Mask"},
-    channels={"label": "Channels", "choices": ["All (Warped + Aligned)"]},
+    channels={"label": "Channels", "choices": ["All (R1 + R2)"]},
     auto_call=False,
 )
 @require_active_session()
 @error_handler("Re-filter Failed")
 def _refilter_widget(
     mask_layer: "napari.layers.Labels",
-    channels: str = "All (Warped + Aligned)",
+    channels: str = "All (R1 + R2)",
 ):
     """Remove puncta points that fall outside the selected mask."""
     viewer = napari.current_viewer()
@@ -121,7 +121,7 @@ def _refresh_channel_choices():
     viewer = napari.current_viewer()
     choices = _get_puncta_channel_choices(viewer)
     _refilter_widget.channels.choices = choices
-    _refilter_widget.channels.value = choices[0] if choices else "All (Warped + Aligned)"
+    _refilter_widget.channels.value = choices[0] if choices else "All (R1 + R2)"
 
 
 # --- UI Wrapper ---

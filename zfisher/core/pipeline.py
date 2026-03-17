@@ -283,7 +283,7 @@ def run_full_zfisher_pipeline(
     job_count = max(len(raw_puncta_results), 1)
     job_i = 0
     for (rnd, ch), raw_data in raw_puncta_results.items():
-        prefix_str = constants.ALIGNED_PREFIX if rnd == "R1" else constants.WARPED_PREFIX
+        prefix_str = constants.ALIGNED_PREFIX if (rnd == "R1" or bspline_transform is None) else constants.WARPED_PREFIX
         job_base = 70 + int((job_i / job_count) * 15)
         job_span = max(int(15 / job_count), 1)
         _update(job_base, f"Transforming puncta: {rnd} {ch}...")

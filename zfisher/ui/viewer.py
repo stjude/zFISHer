@@ -377,6 +377,15 @@ def launch_zfisher():
     menu_bar.setVisible(False)
     for action in menu_bar.actions():
         action.setShortcut("")
+
+    # Remove "console" from the right-click dock-widget context menu.
+    # Qt's QMainWindow auto-generates the context menu from each dock
+    # widget's toggleViewAction(), so we must hide that action directly.
+    try:
+        console_dock = viewer.window._qt_viewer.dockConsole
+        console_dock.toggleViewAction().setVisible(False)
+    except Exception:
+        pass
     
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", FutureWarning)

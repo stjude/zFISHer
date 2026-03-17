@@ -170,7 +170,7 @@ def _canvas_widget(
                     snr = np.zeros(len(coords))
                 raw_puncta = np.column_stack([coords, nuc_ids, intensity, snr])
 
-                prefix_str = constants.ALIGNED_PREFIX if round_id == "R1" else constants.WARPED_PREFIX
+                prefix_str = constants.ALIGNED_PREFIX if (round_id == "R1" or bspline_transform is None) else constants.WARPED_PREFIX
                 base_name = pts_layer.name.replace(constants.PUNCTA_SUFFIX, "")
                 aligned_layer_name = f"{prefix_str} {base_name.strip()}{constants.PUNCTA_SUFFIX}"
                 csv_out = reports_dir / f"{aligned_layer_name.replace(' ', '_')}.csv"
@@ -203,10 +203,14 @@ def _canvas_widget(
 
     # 8. Final UI Tidy Up
     if hide_raw:
+        nuc_ch = session.get_nuclear_channel()
+        r1_nuc = f"{constants.ALIGNED_PREFIX} R1 - {nuc_ch}"
+        # R2 is "Warped" when deformable warp applied, "Aligned" otherwise
+        r2_warped = f"{constants.WARPED_PREFIX} R2 - {nuc_ch}"
+        r2_aligned = f"{constants.ALIGNED_PREFIX} R2 - {nuc_ch}"
+        show = {r1_nuc, r2_warped, r2_aligned}
         for layer in viewer.layers:
-            # Hide the raw rounds
-            if not any(x in layer.name for x in ["Aligned", "Warped", "Consensus"]):
-                layer.visible = False
+            layer.visible = layer.name in show
 
     viewer.status = "Global Canvas Generation Complete."
 
