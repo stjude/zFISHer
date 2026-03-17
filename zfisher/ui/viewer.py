@@ -317,6 +317,8 @@ def launch_zfisher():
 
     viewer.scale_bar.visible = False
 
+
+
     # Hide the menu bar and remove all Alt+key shortcuts so it can't be reopened
     menu_bar = viewer.window._qt_window.menuBar()
     menu_bar.setVisible(False)
@@ -332,6 +334,205 @@ def launch_zfisher():
     except Exception:
         pass
     
+    # Prevent layers from entering transform mode (which lets users
+    # accidentally drag/rotate/scale layers and corrupt spatial alignment).
+    def _block_transform_mode(event=None):
+        for layer in viewer.layers:
+            if hasattr(layer, 'mode') and layer.mode == 'transform':
+                layer.mode = 'pan_zoom'
+
+    def _on_layer_added(event):
+        layer = event.value
+        if hasattr(layer, 'events') and hasattr(layer.events, 'mode'):
+            layer.events.mode.connect(_block_transform_mode)
+        # Force volume depiction for image layers
+        if hasattr(layer, 'depiction'):
+            layer.depiction = 'volume'
+
+    viewer.layers.events.inserted.connect(_on_layer_added)
+    # Connect existing layers
+    for layer in viewer.layers:
+        if hasattr(layer, 'events') and hasattr(layer.events, 'mode'):
+            layer.events.mode.connect(_block_transform_mode)
+
+    # Hide unwanted controls from napari's layer controls panel.
+    def _hide_unwanted_controls(event=None):
+        try:
+            from qtpy.QtWidgets import QWidget, QComboBox, QGridLayout, QLabel
+            controls = viewer.window._qt_viewer.controls
+
+            selected = viewer.layers.selection.active
+            is_ids_layer = selected is not None and selected.name.endswith("_IDs")
+
+            page = controls.currentWidget()
+            if not page:
+                return
+
+            # Hide transform button (all layers)
+            for child in page.findChildren(QWidget):
+                tip = child.toolTip()
+                if tip and "transform" in tip.lower():
+                    child.setVisible(False)
+
+            # Hide depiction dropdown (volume/plane) for image layers
+            for combo in page.findChildren(QComboBox):
+                items = [combo.itemText(i).lower() for i in range(combo.count())]
+                if "volume" in items and "plane" in items:
+                    combo.setVisible(False)
+
+            if is_ids_layer:
+                from qtpy.QtWidgets import QSlider
+
+                # 1) Identify opacity widgets we want to keep
+                keep = set()
+
+                # Find opacity label
+                opacity_label = None
+                for lbl in page.findChildren(QLabel):
+                    if lbl.text().strip().rstrip(":").lower() == "opacity":
+                        opacity_label = lbl
+                        keep.add(lbl)
+                        break
+
+                # Find opacity slider via named attribute or as sibling
+                for attr in ("opacitySlider", "opacity_slider"):
+                    s = getattr(page, attr, None)
+                    if s is not None:
+                        keep.add(s)
+                        break
+                else:
+                    # Fallback: first QSlider in opacity label's parent
+                    if opacity_label and opacity_label.parent():
+                        for s in opacity_label.parent().findChildren(QSlider):
+                            keep.add(s)
+                            break
+
+                # Also keep all ancestor containers of the opacity widgets
+                for w in list(keep):
+                    p = w.parent()
+                    while p is not None and p is not page:
+                        keep.add(p)
+                        p = p.parent()
+
+                # 2) Hide everything except the opacity widgets + ancestors
+                for child in page.findChildren(QWidget):
+                    if child not in keep:
+                        child.setVisible(False)
+        except Exception:
+            pass
+
+    # Custom controls for _IDs layers: text size slider + color picker
+    _ids_custom_widgets = []  # track so we can remove on deselection
+
+    _NAPARI_SWATCH_SS = (
+        "background-color: {}; border: 1px solid #555; border-radius: 3px;"
+        " min-height: 20px;"
+    )
+
+    def _add_ids_custom_controls(event=None):
+        from qtpy.QtWidgets import (
+            QWidget, QLabel, QSlider, QHBoxLayout, QColorDialog, QPushButton,
+            QFormLayout,
+        )
+        from qtpy.QtCore import Qt
+        controls = viewer.window._qt_viewer.controls
+
+        # Remove previous custom widgets
+        for w in _ids_custom_widgets:
+            w.setParent(None)
+            w.deleteLater()
+        _ids_custom_widgets.clear()
+
+        selected = viewer.layers.selection.active
+        if selected is None or not selected.name.endswith("_IDs"):
+            return
+
+        layer = selected
+        current_page = controls.currentWidget()
+        if not current_page:
+            return
+        page_layout = current_page.layout()
+        if not page_layout:
+            return
+
+        # napari uses QtWrappedLabel (right-aligned, word-wrapped QLabel)
+        # for its form row labels. Replicate that for our custom rows.
+        def _make_label(text):
+            lbl = QLabel(text)
+            lbl.setWordWrap(True)
+            lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            return lbl
+
+        # --- Text Size ---
+        size_label = _make_label("text size:")
+
+        size_slider = QSlider(Qt.Horizontal)
+        size_slider.setFocusPolicy(Qt.NoFocus)
+        size_slider.setMinimum(4)
+        size_slider.setMaximum(40)
+        size_slider.setValue(int(layer.text.size))
+
+        size_value = QLabel(str(int(layer.text.size)))
+        size_value.setFixedWidth(26)
+        size_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+        def _on_size_changed(val):
+            layer.text.size = val
+            size_value.setText(str(val))
+            layer.refresh()
+
+        size_slider.valueChanged.connect(_on_size_changed)
+
+        size_field = QWidget()
+        size_field.setAttribute(Qt.WA_StyledBackground, False)
+        size_field.setStyleSheet("background: transparent;")
+        size_field_layout = QHBoxLayout(size_field)
+        size_field_layout.setContentsMargins(0, 0, 0, 0)
+        size_field_layout.setSpacing(4)
+        size_field_layout.addWidget(size_slider)
+        size_field_layout.addWidget(size_value)
+
+        # --- Text Color ---
+        color_label = _make_label("text color:")
+
+        color_btn = QPushButton()
+        color_btn.setFixedHeight(22)
+        color_btn.setCursor(Qt.PointingHandCursor)
+
+        try:
+            tc = layer.text.color
+            if hasattr(tc, 'constant') and tc.constant is not None:
+                rgba = tc.constant
+            else:
+                rgba = [0.25, 0.71, 0.85, 1.0]
+            hex_color = '#{:02x}{:02x}{:02x}'.format(
+                int(rgba[0] * 255), int(rgba[1] * 255), int(rgba[2] * 255)
+            )
+        except Exception:
+            hex_color = '#40b5d8'
+
+        color_btn.setStyleSheet(_NAPARI_SWATCH_SS.format(hex_color))
+
+        def _on_color_clicked():
+            from qtpy.QtGui import QColor as _QColor
+            current = _QColor(hex_color)
+            chosen = QColorDialog.getColor(current, controls, "Choose Text Color")
+            if chosen.isValid():
+                new_hex = chosen.name()
+                color_btn.setStyleSheet(_NAPARI_SWATCH_SS.format(new_hex))
+                layer.text.color = new_hex
+                layer.refresh()
+
+        color_btn.clicked.connect(_on_color_clicked)
+
+        # Add as proper QFormLayout rows — same as napari does internally
+        page_layout.addRow(size_label, size_field)
+        page_layout.addRow(color_label, color_btn)
+        _ids_custom_widgets.extend([size_label, size_field, color_label, color_btn])
+
+    viewer.layers.selection.events.changed.connect(_hide_unwanted_controls)
+    viewer.layers.selection.events.changed.connect(_add_ids_custom_controls)
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", FutureWarning)
         viewer_canvas_native = viewer.window.qt_viewer.canvas.native

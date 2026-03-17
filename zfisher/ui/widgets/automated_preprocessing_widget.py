@@ -179,24 +179,13 @@ def _automated_preprocessing_magic_widget(
                     progress_callback=lambda p, t: dialog.update_progress(70 + int(p * 0.25), t)
                 )
 
-                # Use the aligned R1 mask layer as the scale/translate reference
-                ref_layer = next(
-                    (l for l in viewer.layers
-                     if isinstance(l, napari.layers.Labels)
-                     and "Aligned" in l.name and "R1" in l.name
-                     and nuc_ch in l.name),
-                    None
-                )
-                if ref_layer:
-                    viewer_helpers.add_consensus_nuclei_to_viewer(viewer, ref_layer, merged_mask, pts1)
-                else:
-                    # Compute world-space translate from canvas offset
-                    translate = np.array(canvas_offset) * np.array(voxels) if canvas_offset is not None else (0,) * len(voxels)
-                    lyr = viewer.add_labels(
-                        merged_mask, name=constants.CONSENSUS_MASKS_NAME,
-                        scale=voxels, translate=translate, opacity=0.5, visible=False,
-                    )
-                    lyr.rendering = 'iso_categorical'
+                # Build a lightweight reference for scale/translate
+                translate = tuple(np.array(canvas_offset) * np.array(voxels)) if canvas_offset is not None else (0,) * len(voxels)
+                ref = type('_ref', (), {
+                    'scale': voxels,
+                    'translate': translate,
+                })()
+                viewer_helpers.add_consensus_nuclei_to_viewer(viewer, ref, merged_mask, pts1)
 
         # === STEP 5: TRANSFORM EXISTING PUNCTA LAYERS ===
         # Find any raw puncta Points layers in the viewer and transform them

@@ -222,9 +222,8 @@ def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, defau
     translate = [0.0, 0.0, 0.0]
     if canvas_offset_pixels:
         # Convert pixel offset to world coordinate translation
-        translate = np.array(canvas_offset_pixels) * np.array(default_scale)
-        logger.debug("Applying canvas translation: %s", translate.tolist())
-    translate = translate.tolist() # Ensure it's a list for JSON compatibility/consistency
+        translate = (np.array(canvas_offset_pixels) * np.array(default_scale)).tolist()
+        logger.debug("Applying canvas translation: %s", translate)
 
     computed_ids_names = []  # deferred: must be rebuilt after all mask layers are loaded
 

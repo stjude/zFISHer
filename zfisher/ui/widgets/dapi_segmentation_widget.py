@@ -158,7 +158,7 @@ class DapiSegmentationWidget(Container):
 
     @error_handler("Nuclei Segmentation Failed")
     def _on_run(self):
-        if not session.is_active():
+        if not session.get_data("output_dir"):
             popups.show_error_popup(
                 None, "No Session",
                 "Please start or load a session before running segmentation."
