@@ -7,7 +7,7 @@ and ease of modification.
 """
 
 # --- File and Directory Names ---
-SESSION_FILENAME = "zfisher_session.json"
+SESSION_FILENAME = "zfisher_session_1.json"
 SEGMENTATION_DIR = "segmentation"
 ALIGNED_DIR = "aligned"
 CAPTURES_DIR = "captures"

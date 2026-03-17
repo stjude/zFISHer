@@ -41,15 +41,34 @@ class LoadSessionWidget(Container):
 
     def _init_layout(self):
         """Arranges all widgets in the container using native layout."""
+        from qtpy.QtWidgets import QLabel, QSpacerItem, QSizePolicy
+
         self._form = Container(labels=True)
         self._form.extend([self._load_session_file])
+        self._form.native.layout().setContentsMargins(0, 10, 0, 20)
+
+        self._desc = QLabel(
+            'Load a zFISHer session from a previous project. Session files are '
+            'found in a project\'s output directory and are numbered variants of '
+            'a "zfisher_session_x.json" file.'
+        )
+        self._desc.setWordWrap(True)
+        self._desc.setStyleSheet("color: white; margin: 4px 2px;")
+
+        spacer = lambda: QSpacerItem(0, 10, QSizePolicy.Minimum, QSizePolicy.Fixed)
 
         _layout = self.native.layout()
+        _layout.setSpacing(2)
+        _layout.setContentsMargins(0, 0, 0, 0)
         _layout.addWidget(self._header.native)
         _layout.addWidget(self._info.native)
         _layout.addWidget(self._make_divider())
+        _layout.addWidget(self._desc)
+        _layout.addSpacerItem(spacer())
         _layout.addWidget(self._form.native)
+        _layout.addSpacerItem(spacer())
         _layout.addWidget(self._load_session_btn.native)
+        _layout.addStretch(1)
 
     def _connect_signals(self):
         """Connects widget signals to their corresponding slots."""
