@@ -21,6 +21,7 @@ def _suppress_napari_notifications():
        so that log messages don't trigger notification toasts.
     3. Replace warnings.showwarning with a no-op so that even if
        catch_warnings doesn't fully block napari's hook, nothing shows.
+    4. Dismiss any already-visible notification toast widgets.
     """
     global _saved_napari_handlers, _saved_showwarning
 
@@ -46,10 +47,28 @@ def _suppress_napari_notifications():
     _saved_showwarning = warnings.showwarning
     warnings.showwarning = lambda *a, **kw: None
 
+    # 4. Close any existing napari notification toast widgets
+    try:
+        from napari._qt.dialogs.qt_notification import NapariQtNotification
+        for w in QApplication.topLevelWidgets():
+            if isinstance(w, NapariQtNotification):
+                w.close()
+    except Exception:
+        pass
+
 
 def _restore_napari_notifications():
     """Re-enable napari notifications and restore removed handlers."""
     global _saved_napari_handlers, _saved_showwarning
+
+    # Dismiss any toast widgets that appeared despite suppression
+    try:
+        from napari._qt.dialogs.qt_notification import NapariQtNotification
+        for w in QApplication.topLevelWidgets():
+            if isinstance(w, NapariQtNotification):
+                w.close()
+    except Exception:
+        pass
 
     try:
         from napari.utils.notifications import notification_manager
