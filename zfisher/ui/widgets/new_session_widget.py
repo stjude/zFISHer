@@ -43,16 +43,44 @@ class NewSessionWidget(Container):
 
     def _init_layout(self):
         """Arranges all widgets in the container using native layout."""
-        # Form container with labels for the file inputs
-        self._form = Container(labels=True)
-        self._form.extend([self._round1_path, self._round2_path, self._output_dir])
+        from qtpy.QtWidgets import QLabel, QSpacerItem, QSizePolicy
+
+        # Wrap each FileEdit in its own labelled container
+        self._r1_form = Container(labels=True)
+        self._r1_form.extend([self._round1_path])
+        self._r1_form.native.layout().setContentsMargins(0, 10, 0, 0)
+        self._r2_form = Container(labels=True)
+        self._r2_form.extend([self._round2_path])
+        self._r2_form.native.layout().setContentsMargins(0, 0, 0, 0)
+        self._out_form = Container(labels=True)
+        self._out_form.extend([self._output_dir])
+        self._out_form.native.layout().setContentsMargins(0, 10, 0, 20)
+
+        self._desc = QLabel(
+            "Define input R1 and R2 .nd2 or OME-TIFF files. "
+            "R2 will be registered and warped to R1. "
+            "All project files will be stored in defined output directory."
+        )
+        self._desc.setWordWrap(True)
+        self._desc.setStyleSheet("color: white; margin: 4px 2px;")
+
+        spacer = lambda: QSpacerItem(0, 10, QSizePolicy.Minimum, QSizePolicy.Fixed)
 
         _layout = self.native.layout()
+        _layout.setSpacing(2)
+        _layout.setContentsMargins(0, 0, 0, 0)
         _layout.addWidget(self._header.native)
         _layout.addWidget(self._info.native)
         _layout.addWidget(self._make_divider())
-        _layout.addWidget(self._form.native)
+        _layout.addWidget(self._desc)
+        _layout.addSpacerItem(spacer())
+        _layout.addWidget(self._r1_form.native)
+        _layout.addWidget(self._r2_form.native)
+        _layout.addSpacerItem(spacer())
+        _layout.addWidget(self._out_form.native)
+        _layout.addSpacerItem(spacer())
         _layout.addWidget(self._new_session_btn.native)
+        _layout.addStretch(1)
 
     def _connect_signals(self):
         """Connects widget signals to their corresponding slots."""
