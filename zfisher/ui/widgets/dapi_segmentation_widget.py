@@ -197,6 +197,36 @@ _layout.addWidget(_make_divider())
 _layout.addWidget(_desc)
 _layout.addItem(QSpacerItem(0, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
 _dapi_segmentation_widget.native.setMinimumWidth(0)
+_dapi_segmentation_widget.native.layout().setContentsMargins(0, 10, 0, 10)
 _layout.addWidget(_dapi_segmentation_widget.native)
+
+# Status label for Cellpose model availability
+_cellpose_status = QLabel("")
+_cellpose_status.setWordWrap(True)
+_cellpose_status.setVisible(False)
+_cellpose_status.setStyleSheet("margin: 4px 2px; font-size: 12px;")
+_layout.addWidget(_cellpose_status)
+
+
+def _check_cellpose_model():
+    """Update the status label based on whether the Cellpose model is cached."""
+    from cellpose.models import MODEL_DIR
+    model_file = MODEL_DIR / "cpsam"
+    if model_file.exists():
+        _cellpose_status.setText("Cellpose model found.")
+        _cellpose_status.setStyleSheet("color: #a6e3a1; margin: 4px 2px; font-size: 12px;")
+    else:
+        _cellpose_status.setText("Cellpose model not found. Download will begin on run (~100 MB).")
+        _cellpose_status.setStyleSheet("color: #f9e2af; margin: 4px 2px; font-size: 12px;")
+
+
+def _on_method_changed(method):
+    is_cellpose = method == "Deep Learning (Cellpose)"
+    _cellpose_status.setVisible(is_cellpose)
+    if is_cellpose:
+        _check_cellpose_model()
+
+
+_dapi_segmentation_widget.method.changed.connect(_on_method_changed)
 
 _layout.addStretch(1)

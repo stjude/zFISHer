@@ -1,5 +1,4 @@
 import napari
-import webbrowser
 import math
 import warnings
 from pathlib import Path
@@ -13,6 +12,7 @@ from ..core import session
 
 # --- RESTORED IMPORTS ---
 # Import all the individual widgets from their own scripts
+from .widgets.home_widget import HomeWidget
 from .widgets.start_session_widget import StartSessionWidget
 from .widgets.nuclei_segmentation_widget import NucleiSegmentationWidget
 from .widgets.alignment_consensus_widget import AlignmentConsensusWidget
@@ -30,49 +30,6 @@ from .widgets.capture_widget import capture_widget, capture_with_hotkey, region_
 
 # Import the event handlers
 from . import events, style
-
-# --- Helper Functions ---
-
-def _show_readme_dialog(viewer, readme_path):
-    """Show the README.md rendered as HTML in a scrollable dialog."""
-    from qtpy.QtWidgets import QDialog, QVBoxLayout, QTextBrowser, QPushButton
-    from qtpy.QtCore import Qt
-
-    try:
-        import markdown
-        html_body = markdown.markdown(
-            readme_path.read_text(encoding="utf-8"),
-            extensions=["tables", "fenced_code", "toc"],
-        )
-    except ImportError:
-        # Fallback: basic rendering without markdown package
-        raw = readme_path.read_text(encoding="utf-8")
-        html_body = "<pre style='white-space: pre-wrap;'>" + raw + "</pre>"
-
-    dialog = QDialog(viewer.window._qt_window)
-    dialog.setWindowTitle("zFISHer — Help & Documentation")
-    dialog.resize(750, 600)
-
-    text_browser = QTextBrowser()
-    text_browser.setOpenExternalLinks(True)
-    text_browser.setStyleSheet(
-        "QTextBrowser { background-color: #1e1e2e; color: #cdd6f4; "
-        "font-size: 13px; padding: 12px; border: none; }"
-        "a { color: #89b4fa; }"
-    )
-    text_browser.setHtml(
-        f"<html><body style='font-family: sans-serif;'>{html_body}</body></html>"
-    )
-
-    close_btn = QPushButton("Close")
-    close_btn.clicked.connect(dialog.close)
-
-    layout = QVBoxLayout(dialog)
-    layout.addWidget(text_browser)
-    layout.addWidget(close_btn)
-
-    dialog.show()
-
 
 # --- Helper Classes ---
 
@@ -263,61 +220,6 @@ class WelcomeWidget(QWidget):
 
 # --- Creation Logic ---
 
-def create_welcome_widget(viewer):
-    container = widgets.Container(labels=False)
-
-    mint = style.COLORS['primary']
-    workflow_html = f"""
-    <h2 style='color: {mint}; margin-bottom: 2px;'>Workflow</h2>
-    <table cellpadding='3' cellspacing='0' style='margin-left: 4px;'>
-      <tr><td colspan='2'><b style='color: {mint};'>1. Session &amp; I/O</b></td></tr>
-      <tr><td width='20'></td><td>Load .nd2 or .tif image stacks</td></tr>
-      <tr><td colspan='2'><b style='color: {mint};'>2. Nuclei Segmentation</b></td></tr>
-      <tr><td></td><td>Segment nuclei channels &#8594; per-round masks</td></tr>
-      <tr><td></td><td>Edit masks (merge, paint, erase)</td></tr>
-      <tr><td colspan='2'><b style='color: {mint};'>3. Puncta Picking</b></td></tr>
-      <tr><td></td><td>Detect puncta on raw channels</td></tr>
-      <tr><td></td><td>Manually add, remove, or edit spots</td></tr>
-      <tr><td colspan='2'><b style='color: {mint};'>4. Alignment &amp; Consensus</b></td></tr>
-      <tr><td></td><td>Register rounds &#8594; Warp to common space</td></tr>
-      <tr><td></td><td>Transform puncta into aligned coordinates</td></tr>
-      <tr><td></td><td>Match nuclei &#8594; Consensus mask</td></tr>
-      <tr><td></td><td>Remove extranuclear puncta</td></tr>
-      <tr><td colspan='2'><b style='color: {mint};'>5. Export &amp; Visualization</b></td></tr>
-      <tr><td></td><td>Colocalization analysis &amp; statistics</td></tr>
-      <tr><td></td><td>Capture &amp; annotate images</td></tr>
-    </table>
-    """
-
-    title_label = widgets.Label(value=f"<h1 {style.CREATE_WELCOME_WIDGET_STYLE['h1']}>Welcome to zFISHer</h1>")
-    subtitle_label = widgets.Label(value=f"<em style='color: {mint};'>Multiplexed Sequential FISH Analysis in Cell Monolayer</em>")
-    version_label = widgets.Label(value="<p>Version 1.0</p>")
-    workflow_label = widgets.Label(value=workflow_html)
-    workflow_label.native.setWordWrap(True)
-    container.extend([title_label, subtitle_label, version_label, workflow_label])
-
-    btn_row = widgets.Container(layout="horizontal", labels=False)
-    help_btn = widgets.PushButton(text="Open README / Help", tooltip="Open the zFISHer documentation and user guide.")
-    reset_btn = widgets.PushButton(text="Reset", tooltip="Clear all layers and reset the session to start fresh.")
-    btn_row.extend([help_btn, reset_btn])
-    container.append(btn_row)
-    
-    @help_btn.changed.connect
-    def open_help():
-        readme_path = Path(__file__).parent.parent.parent / "README.md"
-        if readme_path.exists():
-            _show_readme_dialog(viewer, readme_path)
-            
-    @reset_btn.changed.connect
-    def reset_viewer():
-        import logging as _log
-        _log.getLogger(__name__).info("ACTION: Session reset (all layers cleared)")
-        viewer.layers.clear()
-        session.clear_session()
-        if hasattr(viewer.window, 'custom_scale_bar'):
-            viewer.window.custom_scale_bar.hide()
-            
-    return container
 
 def _patch_vispy_arcball():
     """Fix vispy arcball bug: _arcball receives 3D coords but expects 2D."""
@@ -470,7 +372,7 @@ def launch_zfisher():
     }
 
     widgets_to_add = [
-        (create_welcome_widget(viewer), "zFISHer Home"),
+        (HomeWidget(viewer), "zFISHer Home"),
         (StartSessionWidget(viewer), "1. Session && I/O"),
         (nuclei_segmentation_widget, "2. Nuclei Segmentation"),
         (puncta_picking_widget, "3. Puncta Picking"),
