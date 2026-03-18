@@ -21,7 +21,7 @@ WARPED_PREFIX = "Warped"
 CENTROIDS_SUFFIX = "_centroids"
 MASKS_SUFFIX = "_masks"
 PUNCTA_SUFFIX = "_puncta"
-CONSENSUS_MASKS_NAME = "Consensus_Nuclei_Masks"
+CONSENSUS_MASKS_NAME = "Consensus_Nuclei_masks"
 CONSENSUS_IDS_SUFFIX = "_IDs"
 
 # --- Segmentation Parameters ---

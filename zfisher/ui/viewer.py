@@ -24,12 +24,15 @@ from .widgets.puncta_picking_widget import PunctaPickingWidget
 from .widgets.puncta_widget import puncta_widget
 from .widgets.colocalization_widget import colocalization_widget
 from .widgets.export_visualization_widget import ExportVisualizationWidget
-from .widgets.mask_editor_widget import mask_editor_widget, delete_mask_under_mouse, erase_at_cursor
+from .widgets.mask_editor_widget import mask_editor_widget, delete_mask_under_mouse
 from .widgets.puncta_editor_widget import puncta_editor_widget, delete_point_under_mouse
 from .widgets.capture_widget import capture_widget, capture_with_hotkey, region_capture_with_hotkey, ArrowOverlay
 
 # Import the event handlers
 from . import events, style
+
+# Module-level flag to suppress custom layer control callbacks during batch loading
+_suppress_custom_controls = False
 
 # --- Helper Classes ---
 
@@ -357,8 +360,9 @@ def launch_zfisher():
 
     # Hide unwanted controls from napari's layer controls panel.
     def _strip_to_opacity(page):
-        """Hide all descendants of *page* except the opacity row."""
-        from qtpy.QtWidgets import QWidget, QLabel, QSlider
+        """Hide all descendants of *page* except the opacity row and
+        the move-camera mode button."""
+        from qtpy.QtWidgets import QWidget, QLabel, QSlider, QRadioButton
         keep = set()
 
         # Find opacity label
@@ -381,20 +385,51 @@ def launch_zfisher():
                     keep.add(s)
                     break
 
-        # Keep all ancestor containers of the opacity widgets
+        # Keep the move-camera mode button (napari mode button with
+        # "move" in its tooltip, e.g. "Move point(s)")
+        from qtpy.QtWidgets import QAbstractButton
+        for btn in page.findChildren(QAbstractButton):
+            tip = (btn.toolTip() or '').lower()
+            if 'move' in tip:
+                keep.add(btn)
+
+        # Keep all ancestor containers of the kept widgets
         for w in list(keep):
             p = w.parent()
             while p is not None and p is not page:
                 keep.add(p)
                 p = p.parent()
 
-        # Hide everything except the opacity widgets + ancestors
+        # Hide everything except the kept widgets + ancestors
         for child in page.findChildren(QWidget):
             if child not in keep:
                 child.setVisible(False)
+                child.setMaximumHeight(0)
+
+        # Remove empty rows from QFormLayout to eliminate spacing gaps
+        from qtpy.QtWidgets import QFormLayout
+        layout = page.layout()
+        if isinstance(layout, QFormLayout):
+            for row in range(layout.rowCount() - 1, -1, -1):
+                label_item = layout.itemAt(row, QFormLayout.LabelRole)
+                field_item = layout.itemAt(row, QFormLayout.FieldRole)
+                span_item = layout.itemAt(row, QFormLayout.SpanningRole)
+                label_w = label_item.widget() if label_item else None
+                field_w = field_item.widget() if field_item else None
+                span_w = span_item.widget() if span_item else None
+                # If all widgets in the row are hidden, remove the row
+                all_hidden = True
+                for w in (label_w, field_w, span_w):
+                    if w is not None and w in keep:
+                        all_hidden = False
+                        break
+                if all_hidden and (label_w or field_w or span_w):
+                    layout.removeRow(row)
 
     def _hide_unwanted_controls(event=None):
         try:
+            if _suppress_custom_controls:
+                return
             from qtpy.QtWidgets import QWidget, QComboBox, QLabel
             controls = viewer.window._qt_viewer.controls
 
@@ -406,11 +441,46 @@ def launch_zfisher():
             if not page:
                 return
 
+            is_mask_layer = selected is not None and selected.name.endswith("_masks")
+
             # Hide transform button (all layers)
             for child in page.findChildren(QWidget):
                 tip = child.toolTip()
                 if tip and "transform" in tip.lower():
                     child.setVisible(False)
+
+            # Hide unwanted controls on mask layers
+            if is_mask_layer:
+                from qtpy.QtWidgets import QRadioButton, QFormLayout
+                # Hide fill and polygon mode buttons
+                for btn in page.findChildren(QRadioButton):
+                    tip = (btn.toolTip() or '').lower()
+                    if 'fill' in tip or 'polygon' in tip:
+                        btn.setVisible(False)
+
+                # Hide form rows: contiguous, preserve labels, color mode,
+                # rendering, and display-selected-label
+                # Lock n_edit_dimensions to 3 so paint/erase works across z
+                selected.n_edit_dimensions = 3
+
+                _hide_labels = {'contiguous', 'preserve', 'color mode', 'rendering', 'display', 'n edit', 'contour', 'gradient'}
+                layout = page.layout()
+                if isinstance(layout, QFormLayout):
+                    for row in range(layout.rowCount()):
+                        lbl_item = layout.itemAt(row, QFormLayout.LabelRole)
+                        if not lbl_item:
+                            continue
+                        lbl_w = lbl_item.widget()
+                        if not lbl_w:
+                            continue
+                        txt = lbl_w.text().strip().rstrip(':').lower()
+                        if any(k in txt for k in _hide_labels):
+                            lbl_w.setVisible(False)
+                            lbl_w.setMaximumHeight(0)
+                            field_item = layout.itemAt(row, QFormLayout.FieldRole)
+                            if field_item and field_item.widget():
+                                field_item.widget().setVisible(False)
+                                field_item.widget().setMaximumHeight(0)
 
             # Hide depiction dropdown (volume/plane) for image layers
             for combo in page.findChildren(QComboBox):
@@ -432,6 +502,8 @@ def launch_zfisher():
     )
 
     def _add_ids_custom_controls(event=None):
+        if _suppress_custom_controls:
+            return
         from qtpy.QtWidgets import (
             QWidget, QLabel, QSlider, QHBoxLayout, QColorDialog, QPushButton,
             QFormLayout,
@@ -536,6 +608,8 @@ def launch_zfisher():
     _centroids_custom_widgets = []
 
     def _add_centroids_custom_controls(event=None):
+        if _suppress_custom_controls:
+            return
         from qtpy.QtWidgets import (
             QWidget, QLabel, QSlider, QHBoxLayout, QColorDialog, QPushButton,
         )
@@ -636,6 +710,15 @@ def launch_zfisher():
     viewer.layers.selection.events.changed.connect(_hide_unwanted_controls)
     viewer.layers.selection.events.changed.connect(_add_ids_custom_controls)
     viewer.layers.selection.events.changed.connect(_add_centroids_custom_controls)
+
+    # Disable renaming layers (double-click) and right-click context menu
+    from qtpy.QtWidgets import QAbstractItemView
+    from napari._qt.containers.qt_layer_list import QtLayerList
+    for lv in viewer.window._qt_window.findChildren(QtLayerList):
+        lv.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        delegate = lv.itemDelegate()
+        if hasattr(delegate, 'show_context_menu'):
+            delegate.show_context_menu = lambda *a, **kw: None
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", FutureWarning)
@@ -823,6 +906,5 @@ def launch_zfisher():
     viewer.bind_key('Shift-G', region_capture_with_hotkey, overwrite=True)
     viewer.bind_key('x', delete_point_under_mouse, overwrite=True)
     viewer.bind_key('c', delete_mask_under_mouse, overwrite=True)
-    viewer.bind_key('Shift-E', erase_at_cursor, overwrite=True)
 
     napari.run()

@@ -242,11 +242,17 @@ class DapiSegmentationWidget(Container):
 
             dialog.freeze_canvas()
 
-            n_filtered = max(len(filtered_results), 1)
-            for i, (layer, masks, centroids) in enumerate(filtered_results):
-                pct = 85 + int((i / n_filtered) * 13)
-                dialog.update_progress(pct, f"Loading masks & IDs: {layer.name}...")
-                viewer_helpers.add_segmentation_results_to_viewer(viewer, layer, masks, centroids)
+            # Suppress custom layer control callbacks during batch layer creation
+            from .. import viewer as viewer_module
+            viewer_module._suppress_custom_controls = True
+            try:
+                n_filtered = max(len(filtered_results), 1)
+                for i, (layer, masks, centroids) in enumerate(filtered_results):
+                    pct = 85 + int((i / n_filtered) * 13)
+                    dialog.update_progress(pct, f"Loading masks & IDs: {layer.name}...")
+                    viewer_helpers.add_segmentation_results_to_viewer(viewer, layer, masks, centroids)
+            finally:
+                viewer_module._suppress_custom_controls = False
 
             dialog.update_progress(100, "Complete.")
 

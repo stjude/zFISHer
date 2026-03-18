@@ -198,6 +198,23 @@ def on_layer_inserted(event, widgets):
     # Use a QTimer to delay execution slightly, ensuring the layer is fully added
     QTimer.singleShot(100, update_widgets)
 
+def _remove_layer_and_file(layer_name):
+    """Remove a layer's session entry and delete its file from disk."""
+    from pathlib import Path
+    processed = session.get_data("processed_files", default={})
+    file_info = processed.get(layer_name)
+    if isinstance(file_info, dict):
+        path = file_info.get('path')
+        if path:
+            try:
+                p = Path(path)
+                if p.exists():
+                    p.unlink()
+                    logger.info("Deleted file on disk: %s", path)
+            except Exception as e:
+                logger.warning("Could not delete file for '%s': %s", layer_name, e)
+    session.remove_processed_file(layer_name)
+
 def on_layer_removed(event, widgets):
     """
     Refreshes all widget dropdowns when a layer is removed.
@@ -212,18 +229,20 @@ def on_layer_removed(event, widgets):
     viewer = napari.current_viewer()
 
     if isinstance(layer, napari.layers.Labels):
-        # Cascade: also remove orphan _IDs display layer
+        # Cascade: also remove orphan _IDs and _centroids layers
         if not _programmatic_removal:
-            ids_name = f"{layer.name}_IDs"
-            if viewer and ids_name in viewer.layers:
-                ids_layer = viewer.layers[ids_name]
-                ids_layer._locked = False
-                viewer.layers.remove(ids_layer)
-        session.remove_processed_file(layer.name)
-        session.remove_processed_file(f"{layer.name}_IDs")
+            for suffix in ("_IDs", "_centroids"):
+                child_name = f"{layer.name}{suffix}"
+                if viewer and child_name in viewer.layers:
+                    child_layer = viewer.layers[child_name]
+                    child_layer._locked = False
+                    viewer.layers.remove(child_layer)
+        _remove_layer_and_file(layer.name)
+        _remove_layer_and_file(f"{layer.name}_IDs")
+        _remove_layer_and_file(f"{layer.name}_centroids")
 
     elif isinstance(layer, napari.layers.Points):
-        session.remove_processed_file(layer.name)
+        _remove_layer_and_file(layer.name)
         detach_puncta_listener(layer)
         # Cascade: also remove the parent mask
         if not _programmatic_removal and layer.name.endswith("_IDs"):

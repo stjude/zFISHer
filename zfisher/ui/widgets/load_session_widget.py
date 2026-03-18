@@ -129,13 +129,18 @@ class LoadSessionWidget(Container):
                     def processed_progress(p, text):
                         dialog.update_progress(60 + int(p * 0.35), f"Restoring: {text}")
                     
-                    viewer_helpers.restore_processed_layers(
-                        self._viewer, 
-                        processed_files, 
-                        sanitized_scale,
-                        canvas_offset_pixels,
-                        progress_callback=processed_progress
-                    )
+                    from .. import viewer as viewer_module
+                    viewer_module._suppress_custom_controls = True
+                    try:
+                        viewer_helpers.restore_processed_layers(
+                            self._viewer,
+                            processed_files,
+                            sanitized_scale,
+                            canvas_offset_pixels,
+                            progress_callback=processed_progress
+                        )
+                    finally:
+                        viewer_module._suppress_custom_controls = False
                 
                 dialog.update_progress(95, "Finalizing UI...")
                 refresh_rules_display()

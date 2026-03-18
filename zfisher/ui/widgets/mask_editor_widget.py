@@ -378,15 +378,30 @@ extrude_btn = widgets.PushButton(text="Extrude ID (Fill Z)", tooltip="Extend the
 # --- Erase Section ---
 erase_label = _make_section_header("Erase")
 erase_chk = widgets.CheckBox(text="Erase", tooltip="Enable eraser to remove mask pixels in a brush radius.")
-erase_radius_slider = widgets.Slider(label="Radius", min=1, max=50, value=5, tooltip="Radius of the eraser brush in pixels.")
-erase_depth_slider = widgets.Slider(label="Depth (Z)", min=1, max=20, value=1, tooltip="Number of Z slices affected by each erase stroke.")
-erase_slider_container = widgets.Container(layout="vertical", labels=True)
-erase_slider_container.extend([erase_radius_slider, erase_depth_slider])
+brush_size_slider = widgets.Slider(label="Brush Size", min=1, max=40, value=10, tooltip="Brush size for paint and erase tools. Syncs with layer controls.")
+
+# Delete by ID row
+from qtpy.QtWidgets import QHBoxLayout, QWidget, QPushButton, QSpinBox, QLabel as _QLabel
+_delete_id_row = QWidget()
+_delete_id_layout = QHBoxLayout(_delete_id_row)
+_delete_id_layout.setContentsMargins(0, 0, 0, 0)
+_delete_id_layout.setSpacing(4)
+_delete_id_label = _QLabel("Nucleus ID:")
+_delete_id_spin = QSpinBox()
+_delete_id_spin.setMinimum(1)
+_delete_id_spin.setMaximum(99999)
+_delete_id_spin.setValue(1)
+_delete_id_spin.setToolTip("Enter the nucleus label ID to delete.")
+_delete_id_btn = QPushButton("Delete ID")
+_delete_id_btn.setToolTip("Delete the specified nucleus ID from the mask and ID layers.")
+_delete_id_layout.addWidget(_delete_id_label)
+_delete_id_layout.addWidget(_delete_id_spin, 1)
+_delete_id_layout.addWidget(_delete_id_btn)
+
 hover_chk = widgets.CheckBox(text="Hover Edit Mode (Red + 'C' to Del)", tooltip="Highlight nuclei under the cursor in red. Press C to delete the highlighted nucleus.")
 
 # --- Utilities ---
 undo_btn = widgets.PushButton(text="Undo", tooltip="Revert the last mask edit operation.")
-refresh_ids_btn = widgets.PushButton(text="Show/Refresh IDs", tooltip="Recalculate and display nucleus ID labels on the mask.")
 
 # Layout with dividers — use native layout throughout to maintain order
 _layout = _mask_editor_widget.native.layout()
@@ -403,12 +418,12 @@ _layout.addWidget(extrude_btn.native)
 _layout.addWidget(_make_divider())
 _layout.addWidget(erase_label.native)
 _layout.addWidget(erase_chk.native)
-_layout.addWidget(erase_slider_container.native)
+_layout.addWidget(brush_size_slider.native)
+_layout.addWidget(_delete_id_row)
 _layout.addWidget(hover_chk.native)
 
 _layout.addWidget(_make_divider())
 _layout.addWidget(undo_btn.native)
-_layout.addWidget(refresh_ids_btn.native)
 
 @require_active_session("Please start or load a session before editing masks.")
 def _on_paint(value: bool):
@@ -433,51 +448,6 @@ def _on_paint(value: bool):
             logger.info("MASK EDIT: Paint mode OFF")
             viewer.status = "Painting Mode Off."
 
-def _apply_cylinder_erase(layer, world_pos):
-    """Erases a cylinder of voxels (circle in YX * depth in Z) at the given world position."""
-    coords = layer.world_to_data(world_pos)
-    if len(coords) < 3:
-        return
-    z, y, x = int(round(coords[0])), int(round(coords[1])), int(round(coords[2]))
-    radius = erase_radius_slider.value
-    depth = erase_depth_slider.value
-    dz, dy, dx = layer.data.shape
-
-    z_start = max(0, z - depth // 2)
-    z_end = min(dz, z_start + depth)
-    y_lo = max(0, y - radius)
-    y_hi = min(dy, y + radius + 1)
-    x_lo = max(0, x - radius)
-    x_hi = min(dx, x + radius + 1)
-
-    # Build a circular structuring element and clip to data bounds
-    yy, xx = np.ogrid[-radius:radius + 1, -radius:radius + 1]
-    circle = (yy ** 2 + xx ** 2) <= radius ** 2
-    cy_lo = y_lo - (y - radius)
-    cy_hi = circle.shape[0] - ((y + radius + 1) - y_hi)
-    cx_lo = x_lo - (x - radius)
-    cx_hi = circle.shape[1] - ((x + radius + 1) - x_hi)
-    clipped = circle[cy_lo:cy_hi, cx_lo:cx_hi]
-
-    for zi in range(z_start, z_end):
-        slc = layer.data[zi, y_lo:y_hi, x_lo:x_hi]
-        slc[clipped] = 0
-    layer.refresh()
-
-def erase_at_cursor(viewer):
-    """Hotkey callback: erases a cylinder at the current cursor position (Shift+E)."""
-    if not erase_chk.value:
-        return
-    layer = _mask_editor_widget.mask_layer.value
-    if not isinstance(layer, napari.layers.Labels):
-        return
-    logger.info("MASK EDIT: Erase at cursor, radius=%d, depth=%d, layer='%s'",
-                erase_radius_slider.value, erase_depth_slider.value, layer.name)
-    _mask_undo.begin(layer.data)
-    _apply_cylinder_erase(layer, viewer.cursor.position)
-    _mask_undo.end(layer.data)
-    _schedule_save(layer)
-
 @require_active_session("Please start or load a session before editing masks.")
 def _on_erase(value: bool):
     if not session.get_data("output_dir"):
@@ -490,10 +460,11 @@ def _on_erase(value: bool):
             paint_chk.value = False
             hover_chk.value = False
             viewer.layers.selection.active = layer
-            layer.mode = 'pan_zoom'
+            layer.mode = 'erase'
             logger.info("MASK EDIT: Erase mode ON, layer='%s'", layer.name)
-            viewer.status = "Erase Mode ON. Hover over mask and press Shift+E to erase."
+            viewer.status = "Erase Mode ON. Use brush to erase mask pixels."
         else:
+            layer.mode = 'pan_zoom'
             logger.info("MASK EDIT: Erase mode OFF")
             viewer.status = "Erase Mode Off."
 
@@ -558,10 +529,6 @@ def _on_hover_mode(value: bool):
         viewer.status = "Hover Edit Mode OFF."
 
 @require_active_session("Please start or load a session before refreshing IDs.")
-def _on_refresh_ids():
-    viewer = napari.current_viewer()
-    layer = _mask_editor_widget.mask_layer.value
-    viewer_helpers.add_or_update_label_ids(viewer, layer)
 
 def _on_mask_undo():
     viewer = napari.current_viewer()
@@ -576,14 +543,104 @@ def _on_mask_undo():
     else:
         viewer.status = "Nothing to undo."
 
+def _on_delete_id():
+    viewer = napari.current_viewer()
+    layer = _mask_editor_widget.mask_layer.value
+    if not layer:
+        if viewer:
+            viewer.status = "No mask layer selected."
+        return
+    label_id = _delete_id_spin.value()
+    if label_id == 0:
+        viewer.status = "Cannot delete background (ID 0)."
+        return
+    if not np.any(layer.data == label_id):
+        viewer.status = f"ID {label_id} not found in mask."
+        return
+    _delete_label_inplace(layer, label_id)
+    logger.info("MASK EDIT: Deleted nucleus ID %d on layer '%s'", label_id, layer.name)
+    viewer.status = f"Deleted Nucleus ID {label_id}."
+
 # Connect signals after defining functions
+_delete_id_btn.clicked.connect(_on_delete_id)
 paint_chk.changed.connect(_on_paint)
 erase_chk.changed.connect(_on_erase)
 extrude_btn.clicked.connect(_on_extrude)
 delete_btn.clicked.connect(_on_delete)
 undo_btn.clicked.connect(_on_mask_undo)
 # Note: hover_chk is already connected via @hover_chk.changed.connect decorator on _on_hover_mode
-refresh_ids_btn.clicked.connect(_on_refresh_ids)
+
+# --- Sync erase checkbox with layer mode changes from layer controls ---
+_mask_editor_widget._mode_connection = None
+
+_syncing_brush = False  # guard against recursive sync
+
+def _sync_erase_from_layer_mode(event):
+    """Keep erase_chk in sync when the user toggles erase via napari layer controls."""
+    mode = str(event.mode) if hasattr(event, 'mode') else str(event.value)
+    is_erase = 'erase' in mode.lower()
+    if erase_chk.value != is_erase:
+        erase_chk.changed.disconnect(_on_erase)
+        erase_chk.value = is_erase
+        erase_chk.changed.connect(_on_erase)
+
+def _sync_brush_from_layer(event=None):
+    """Keep brush_size_slider in sync when brush size changes via layer controls."""
+    global _syncing_brush
+    if _syncing_brush:
+        return
+    layer = _mask_editor_widget.mask_layer.value
+    if layer and hasattr(layer, 'brush_size'):
+        val = int(layer.brush_size)
+        if brush_size_slider.value != val:
+            _syncing_brush = True
+            brush_size_slider.value = max(brush_size_slider.min, min(brush_size_slider.max, val))
+            _syncing_brush = False
+
+def _on_brush_slider_changed(val):
+    """Push slider value to the layer's brush_size."""
+    global _syncing_brush
+    if _syncing_brush:
+        return
+    layer = _mask_editor_widget.mask_layer.value
+    if layer and hasattr(layer, 'brush_size'):
+        _syncing_brush = True
+        layer.brush_size = val
+        _syncing_brush = False
+
+brush_size_slider.changed.connect(_on_brush_slider_changed)
+
+_mask_editor_widget._brush_connection = None
+
+def _on_mask_layer_changed(event=None):
+    """Connect/disconnect mode and brush size sync when the selected mask layer changes."""
+    # Disconnect previous mode sync
+    if _mask_editor_widget._mode_connection is not None:
+        old_layer, old_cb = _mask_editor_widget._mode_connection
+        try:
+            old_layer.events.mode.disconnect(old_cb)
+        except (RuntimeError, TypeError):
+            pass
+        _mask_editor_widget._mode_connection = None
+    # Disconnect previous brush size sync
+    if _mask_editor_widget._brush_connection is not None:
+        old_layer, old_cb = _mask_editor_widget._brush_connection
+        try:
+            old_layer.events.brush_size.disconnect(old_cb)
+        except (RuntimeError, TypeError):
+            pass
+        _mask_editor_widget._brush_connection = None
+
+    layer = _mask_editor_widget.mask_layer.value
+    if isinstance(layer, napari.layers.Labels):
+        layer.events.mode.connect(_sync_erase_from_layer_mode)
+        _mask_editor_widget._mode_connection = (layer, _sync_erase_from_layer_mode)
+        layer.events.brush_size.connect(_sync_brush_from_layer)
+        _mask_editor_widget._brush_connection = (layer, _sync_brush_from_layer)
+        # Initialize slider to current layer value
+        _sync_brush_from_layer()
+
+_mask_editor_widget.mask_layer.changed.connect(_on_mask_layer_changed)
 
 # --- Auto-saving for selected mask layer ---
 
