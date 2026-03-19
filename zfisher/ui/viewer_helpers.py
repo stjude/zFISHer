@@ -556,7 +556,6 @@ def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napa
             border_width=0,
             scale=source_layer.scale,
             properties={'id': ids},
-            text={'string': '{id}', 'size': 8, 'color': 'white', 'translation': np.array([0, -5, 0])},
             blending='translucent_no_depth',
             visible=False,
         )
