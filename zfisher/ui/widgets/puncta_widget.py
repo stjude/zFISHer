@@ -255,9 +255,16 @@ _bg_header = widgets.Label(value="<b>Background Subtraction:</b>")
 _inner.insertWidget(13, _make_divider())
 _inner.insertWidget(14, _bg_header.native)
 
+# Tighten inner magicgui form
+_inner.setSpacing(2)
+_inner.setContentsMargins(0, 0, 0, 0)
+
 # Outer layout: whole form as one block
 _layout = puncta_widget.native.layout()
+_layout.setSpacing(2)
+_layout.setContentsMargins(0, 0, 0, 0)
 _layout.addWidget(header.native)
 _layout.addWidget(info.native)
 _layout.addWidget(_make_divider())
 _layout.addWidget(_puncta_widget.native)
+_layout.addStretch(1)

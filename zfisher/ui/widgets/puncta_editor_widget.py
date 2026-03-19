@@ -298,10 +298,17 @@ _inner.insertWidget(3, _fishing_hook_desc)
 _inner.insertWidget(7, _make_divider())
 _inner.insertWidget(8, _erase_header.native)
 
-# Outer layout: add the whole form as one block (preserves tight magicgui spacing)
+# Tighten the inner magicgui form layout
+_inner.setSpacing(2)
+_inner.setContentsMargins(0, 0, 0, 0)
+
+# Outer layout: add the whole form as one block
 _layout = puncta_editor_widget.native.layout()
+_layout.setSpacing(2)
+_layout.setContentsMargins(0, 0, 0, 0)
 _layout.addWidget(header.native)
 _layout.addWidget(info.native)
 _layout.addWidget(_make_divider())
 _layout.addWidget(_puncta_editor_widget.native)
 _layout.addWidget(pe_undo_btn.native)
+_layout.addStretch(1)
