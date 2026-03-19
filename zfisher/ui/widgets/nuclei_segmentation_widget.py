@@ -31,6 +31,11 @@ class NucleiSegmentationWidget(widgets.Container):
         self.toolbox.addItem(self.dapi_widget.native, "Nuclei Mapping")
         self.toolbox.addItem(self.mask_editor_widget.native, "Mask Editor")
 
+        # Ensure QToolBox internal scroll areas allow content to resize with panel
+        from qtpy.QtWidgets import QScrollArea
+        for sa in self.toolbox.findChildren(QScrollArea):
+            sa.setWidgetResizable(True)
+
         layout.addWidget(self.toolbox)
 
     def reset_choices(self):

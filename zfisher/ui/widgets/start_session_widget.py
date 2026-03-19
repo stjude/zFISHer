@@ -37,6 +37,11 @@ class StartSessionWidget(widgets.Container):
         # Batch Process
         self.toolbox.addItem(self.batch_process_widget.native, "Batch Process")
 
+        # Ensure QToolBox internal scroll areas allow content to resize with panel
+        from qtpy.QtWidgets import QScrollArea
+        for sa in self.toolbox.findChildren(QScrollArea):
+            sa.setWidgetResizable(True)
+
         # Add the toolbox to the layout of this magicgui container's native widget
         layout.addWidget(self.toolbox)
 

@@ -301,8 +301,12 @@ def launch_zfisher():
         except Exception:
             pass
 
+    # Apply icon immediately on the new window to prevent napari icon flash
+    if not icon.isNull():
+        viewer.window._qt_window.setWindowIcon(icon)
+    # Also apply deferred as a safety net (napari may re-set during init)
     from qtpy.QtCore import QTimer
-    QTimer.singleShot(500, _apply_icon)
+    QTimer.singleShot(100, _apply_icon)
     
     # Permanently disable napari's native welcome screen
     with warnings.catch_warnings():
@@ -777,6 +781,12 @@ def launch_zfisher():
         if hasattr(widget, "reset_choices"):
             widget.reset_choices()
         toolbox.addItem(widget.native, name)
+
+    # Make all widgetInfo labels expand to full width so word-wrap uses all space
+    from qtpy.QtWidgets import QSizePolicy
+    for lbl in toolbox.findChildren(QLabel):
+        if lbl.objectName() == "widgetInfo":
+            lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
     dock_widget = viewer.window.add_dock_widget(toolbox, area="right", name="zFISHer Workflow")
 

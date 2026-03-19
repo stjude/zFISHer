@@ -731,33 +731,34 @@ def delete_label(mask_data, label_id):
 
 def extrude_label(mask_data, z_index, label_id):
     """
-    Extrudes a 2D label mask on a given Z-slice through all other Z-slices.
+    Extrudes a label by computing the union of its 2D mask across all Z slices,
+    then applying that merged footprint to every slice. Eliminates overhangs.
 
     Parameters
     ----------
     mask_data : np.ndarray
         The 3D label mask data.
     z_index : int
-        The index of the Z-slice containing the 2D mask to extrude.
+        Unused (kept for API compatibility). The union is computed over all slices.
     label_id : int
         The ID of the label to extrude.
 
     Returns
     -------
     np.ndarray
-        A new 3D mask array with the label extruded.
+        A new 3D mask array with the label extruded using the max XY footprint.
     """
     if mask_data.ndim != 3 or label_id == 0:
         return mask_data
-    
-    current_slice = mask_data[z_index]
-    mask_2d = (current_slice == label_id)
-    
-    if not np.any(mask_2d):
+
+    # Union of the label across all Z slices — gives the largest XY footprint
+    union_2d = np.any(mask_data == label_id, axis=0)
+
+    if not np.any(union_2d):
         return mask_data
-        
+
     new_data = mask_data.copy()
-    new_data[:, mask_2d] = label_id
+    new_data[:, union_2d] = label_id
     return new_data
 
 

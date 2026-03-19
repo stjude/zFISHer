@@ -402,52 +402,52 @@ def _add_or_replace_ids_layer(viewer, name, coords, labels, scale, translate=Non
     if translate is None:
         translate = (0,) * len(scale)
 
-    if name in viewer.layers:
-        old = viewer.layers[name]
-        old._locked = False  # unlock so guarded_remove allows it
-        _events_mod._programmatic_removal = True
-        try:
-            viewer.layers.remove(old)
-        finally:
-            _events_mod._programmatic_removal = False
-
-    # Determine the parent mask's visibility and position so we can place
-    # the IDs layer directly above it.
+    # Determine the parent mask's visibility for new layers
     parent_mask_name = name[:-4] if name.endswith("_IDs") else None
     parent_visible = False
-    target_idx = None
     if parent_mask_name and parent_mask_name in viewer.layers:
-        parent = viewer.layers[parent_mask_name]
-        parent_visible = parent.visible
-        target_idx = list(viewer.layers).index(parent) + 1  # just above mask
+        parent_visible = viewer.layers[parent_mask_name].visible
 
-    # Use a very large size so that out_of_slice_display keeps every point
-    # in the visible set regardless of the current Z-slice (napari hides
-    # points farther than size/2 from the slice).  The dot itself is
-    # transparent — only the text label matters visually.
-    layer = viewer.add_points(
-        coords, name=name, size=9999, face_color='transparent',
-        border_color='transparent', border_width=0, scale=scale,
-        translate=translate, properties={'label': labels},
-        text={'string': '{label}', 'size': 12, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
-        blending='translucent_no_depth', visible=parent_visible,
-    )
-    layer.out_of_slice_display = True
-    # Disable depth testing on the text visual so ID numbers render
-    # in front of iso_categorical mask surfaces in 3D.
-    try:
-        layer.text.blending = 'translucent_no_depth'
-    except Exception:
-        pass
+    if name in viewer.layers:
+        # UPDATE IN-PLACE — avoids destroying GL buffers which causes vispy crashes
+        layer = viewer.layers[name]
+        layer.data = coords
+        layer.properties = {'label': labels}
+        layer.text = {'string': '{label}', 'size': 12, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])}
+        layer.scale = scale
+        layer.translate = translate
+    else:
+        # CREATE NEW — only when the layer doesn't exist yet
+        target_idx = None
+        if parent_mask_name and parent_mask_name in viewer.layers:
+            target_idx = list(viewer.layers).index(viewer.layers[parent_mask_name]) + 1
 
-    # Position directly above parent mask so it renders on top in 3D
-    if target_idx is not None:
-        # Layer was appended at the end; move it just above the mask
-        viewer.layers.move(len(viewer.layers) - 1, target_idx)
+        # Use a very large size so that out_of_slice_display keeps every point
+        # in the visible set regardless of the current Z-slice (napari hides
+        # points farther than size/2 from the slice).  The dot itself is
+        # transparent — only the text label matters visually.
+        layer = viewer.add_points(
+            coords, name=name, size=9999, face_color='transparent',
+            border_color='transparent', border_width=0, scale=scale,
+            translate=translate, properties={'label': labels},
+            text={'string': '{label}', 'size': 12, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])},
+            blending='translucent_no_depth', visible=parent_visible,
+        )
+        layer.out_of_slice_display = True
+        # Disable depth testing on the text visual so ID numbers render
+        # in front of iso_categorical mask surfaces in 3D.
+        try:
+            layer.text.blending = 'translucent_no_depth'
+        except Exception:
+            pass
 
-    # Attach visibility sync (idempotent — skips if already connected)
-    if parent_mask_name and parent_mask_name in viewer.layers:
-        _attach_ids_visibility_sync(viewer.layers[parent_mask_name], layer)
+        # Position directly above parent mask so it renders on top in 3D
+        if target_idx is not None:
+            viewer.layers.move(len(viewer.layers) - 1, target_idx)
+
+        # Attach visibility sync (idempotent — skips if already connected)
+        if parent_mask_name and parent_mask_name in viewer.layers:
+            _attach_ids_visibility_sync(viewer.layers[parent_mask_name], layer)
 
 
 # --- Mask ↔ IDs visibility syncing -------------------------------------------

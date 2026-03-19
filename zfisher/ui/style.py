@@ -51,6 +51,7 @@ TOOLBOX_STYLESHEET = f"""
     }}
     QLabel#widgetInfo {{
         color: {COLORS['primary']};
+        qproperty-wordWrap: true;
     }}
 """
 
@@ -64,6 +65,10 @@ NESTED_TOOLBOX_STYLESHEET = f"""
     QToolBox::tab:selected {{
         background: {COLORS['nested_toolbox_tab_selected_bg']};
         border: 1px solid {COLORS['primary']};
+    }}
+    QToolBox > QScrollArea > QWidget > QWidget {{
+        padding: 0px;
+        margin: 0px;
     }}
 """
 
