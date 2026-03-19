@@ -220,6 +220,26 @@ def _make_divider():
     line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
     return line
 
+def _make_section_header(text):
+    """Create a left-aligned bold section header in light purple using plain QLabel."""
+    label = QLabel(f"<b style='color: #7a6b8a;'>{text}</b>")
+    label.setContentsMargins(0, 0, 0, 0)
+    label.setStyleSheet("margin: 0px 2px; padding: 0px;")
+    return label
+
+def _make_section_desc(text):
+    """Create a white description label with word wrap and bottom margin."""
+    desc = QLabel(text)
+    desc.setWordWrap(True)
+    desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
+    return desc
+
+def _make_spacer():
+    from qtpy.QtWidgets import QWidget as _W
+    s = _W()
+    s.setFixedHeight(20)
+    return s
+
 class _PunctaWidgetContainer(widgets.Container):
     """Wrapper that delegates reset_choices to the inner magicgui widget."""
     def reset_choices(self):
@@ -238,22 +258,50 @@ info.native.setObjectName("widgetInfo")
 #   use_tophat(8), tophat_radius(9), call_button(10)
 _inner = _puncta_widget.native.layout()
 
-# "Algorithm" header + description after nuclei_only (index 3 -> before method)
-_algo_header = widgets.Label(value="<b>Algorithm:</b>")
-_inner.insertWidget(3, _make_divider())
-_inner.insertWidget(4, _algo_header.native)
-# method is now at 5, description after it at 6
-_inner.insertWidget(6, _method_desc_qlabel)
+# --- Rearrange: move nuclei_only out of its original position ---
+# Original order: image_layer(0), nuclei_layer(1), nuclei_only(2), method(3), ...
+_nuclei_only_native = _puncta_widget.nuclei_only.native
+_nuclei_only_native.setParent(None)  # detach from layout
+# Now: image_layer(0), nuclei_layer(1), method(2), threshold(3), ...
 
-# "Detection Parameters" header before threshold (was 4, now shifted to 7)
-_params_header = widgets.Label(value="<b>Detection Parameters:</b>")
-_inner.insertWidget(7, _make_divider())
-_inner.insertWidget(8, _params_header.native)
+# --- "Target" section: image_layer(0), nuclei_layer(1) ---
+_target_header = _make_section_header("Target")
+_target_desc = _make_section_desc("Select the fluorescent channel and nuclei mask for puncta detection.")
+_inner.insertWidget(0, _target_header)
+_inner.insertWidget(1, _target_desc)
+# image_layer(2), nuclei_layer(3)
 
-# "Background Subtraction" header before use_tophat (was 8, now shifted to 13)
-_bg_header = widgets.Label(value="<b>Background Subtraction:</b>")
-_inner.insertWidget(13, _make_divider())
-_inner.insertWidget(14, _bg_header.native)
+# --- "Algorithm" section: method(4) ---
+_algo_header = _make_section_header("Algorithm")
+_algo_desc = _make_section_desc("Choose the detection algorithm. Parameters adjust automatically per method.")
+_inner.insertWidget(4, _make_spacer())
+_inner.insertWidget(5, _make_divider())
+_inner.insertWidget(6, _algo_header)
+_inner.insertWidget(7, _algo_desc)
+# method is now at 8, insert description after it at 9
+_inner.insertWidget(9, _method_desc_qlabel)
+
+# --- "Detection Parameters" section: nuclei_only, threshold, min_distance, sigma, z_scale ---
+_params_header = _make_section_header("Detection Parameters")
+_params_desc = _make_section_desc("Fine-tune sensitivity, spacing, and spot size for your data.")
+_inner.insertWidget(10, _make_spacer())
+_inner.insertWidget(11, _make_divider())
+_inner.insertWidget(12, _params_header)
+_inner.insertWidget(13, _params_desc)
+_inner.insertWidget(14, _nuclei_only_native)
+# threshold(15), min_distance(16), sigma(17), z_scale(18)
+
+# --- "Background Subtraction" section: use_tophat, tophat_radius ---
+_bg_header = _make_section_header("Background Subtraction")
+_bg_desc = _make_section_desc("Apply top-hat filtering to remove uneven background before detection.")
+_inner.insertWidget(19, _make_spacer())
+_inner.insertWidget(20, _make_divider())
+_inner.insertWidget(21, _bg_header)
+_inner.insertWidget(22, _bg_desc)
+# use_tophat(23), tophat_radius(24), call_button(25)
+
+# Add spacer above the Detect Puncta button (last widget = call_button)
+_inner.insertWidget(_inner.count() - 1, _make_spacer())
 
 # Tighten inner magicgui form
 _inner.setSpacing(2)

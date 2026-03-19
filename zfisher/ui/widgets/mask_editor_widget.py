@@ -13,7 +13,6 @@ from .. import popups, viewer_helpers
 from ..decorators import require_active_session
 from ...core import segmentation
 from ... import constants
-from ._shared import make_header_divider
 
 logger = logging.getLogger(__name__)
 
@@ -381,9 +380,10 @@ def _make_divider():
     return line
 
 def _make_section_header(text):
-    """Create a left-aligned bold section header."""
-    label = widgets.Label(value=f"<b>{text}</b>")
-    label.native.setAlignment(Qt.AlignLeft)
+    """Create a left-aligned bold section header in light purple using plain QLabel."""
+    label = _QLabel(f"<b style='color: #7a6b8a;'>{text}</b>")
+    label.setContentsMargins(0, 0, 0, 0)
+    label.setStyleSheet("margin: 0px 2px; padding: 0px;")
     return label
 
 from qtpy.QtWidgets import QPushButton, QLabel as _QLabel
@@ -395,28 +395,36 @@ delete_btn = widgets.PushButton(text="Delete Source ID", tooltip="Delete the nuc
 # --- Paint Section ---
 paint_label = _make_section_header("Paint New Mask")
 paint_chk = widgets.CheckBox(text="Paint (New ID)", tooltip="Enable paint mode to draw a new mask region with the Source ID.")
-# Extrude ID — magicgui SpinBox in Container(labels=True) for proper resize
-_extrude_spinbox = widgets.SpinBox(label="Nucleus ID:", min=1, max=99999, value=1, tooltip="Enter the nucleus label ID to extrude through all Z slices.")
-_extrude_form = widgets.Container(labels=True)
-_extrude_form.extend([_extrude_spinbox])
-_extrude_form.native.layout().setContentsMargins(0, 2, 0, 2)
-# Full-width extrude button
-_extrude_btn = QPushButton("Extrude ID (Fill Z)")
+from qtpy.QtWidgets import QHBoxLayout as _QHBoxLayout, QWidget as _QWidget
+
+# Extrude ID — label + spinbox + button in one row
+_extrude_spinbox = widgets.SpinBox(label="", min=1, max=99999, value=1, tooltip="Enter the nucleus label ID to extrude through all Z slices.")
+_extrude_btn = QPushButton("Extrude (Fill Z)")
 _extrude_btn.setToolTip("Extend the specified nucleus label through all Z slices.")
+_extrude_row = _QWidget()
+_extrude_row_layout = _QHBoxLayout(_extrude_row)
+_extrude_row_layout.setContentsMargins(0, 2, 0, 2)
+_extrude_row_layout.setSpacing(4)
+_extrude_row_layout.addWidget(_QLabel("Nucleus ID:"))
+_extrude_row_layout.addWidget(_extrude_spinbox.native, 1)
+_extrude_row_layout.addWidget(_extrude_btn)
 
 # --- Erase Section ---
 erase_label = _make_section_header("Erase")
 erase_chk = widgets.CheckBox(text="Erase", tooltip="Enable eraser to remove mask pixels in a brush radius.")
 brush_size_slider = widgets.Slider(label="", min=1, max=40, value=10, tooltip="Brush size for paint and erase tools. Syncs with layer controls.")
 
-# Delete by ID — magicgui SpinBox in Container(labels=True) for proper resize
-_delete_id_spinbox = widgets.SpinBox(label="Nucleus ID:", min=1, max=99999, value=1, tooltip="Enter the nucleus label ID to delete.")
-_delete_id_form = widgets.Container(labels=True)
-_delete_id_form.extend([_delete_id_spinbox])
-_delete_id_form.native.layout().setContentsMargins(0, 2, 0, 2)
-# Full-width delete button
+# Delete by ID — label + spinbox + button in one row
+_delete_id_spinbox = widgets.SpinBox(label="", min=1, max=99999, value=1, tooltip="Enter the nucleus label ID to delete.")
 _delete_id_btn = QPushButton("Delete ID")
 _delete_id_btn.setToolTip("Delete the specified nucleus ID from the mask and ID layers.")
+_delete_id_row = _QWidget()
+_delete_id_row_layout = _QHBoxLayout(_delete_id_row)
+_delete_id_row_layout.setContentsMargins(0, 2, 0, 2)
+_delete_id_row_layout.setSpacing(4)
+_delete_id_row_layout.addWidget(_QLabel("Nucleus ID:"))
+_delete_id_row_layout.addWidget(_delete_id_spinbox.native, 1)
+_delete_id_row_layout.addWidget(_delete_id_btn)
 
 hover_chk = widgets.CheckBox(text="Hover Edit Mode (Red + 'C' to Del)", tooltip="Highlight nuclei under the cursor in red. Press C to delete the highlighted nucleus.")
 
@@ -455,57 +463,81 @@ _inf = widgets.Label(value="<i>Merge, paint, erase, and delete nuclei masks. Cha
 _inf.native.setObjectName("widgetInfo")
 _layout.addWidget(_hdr.native)
 _layout.addWidget(_inf.native)
-_layout.addWidget(make_header_divider().native)
+_layout.addWidget(_make_divider())
 
-_desc = _QLabel(
-    "Select a mask layer to edit. Merge combines two nuclei, "
-    "paint draws new masks, and erase removes pixels. "
-    "Use hover mode to highlight and delete nuclei interactively."
-)
-_desc.setWordWrap(True)
-_desc.setStyleSheet("color: white; margin: 4px 2px;")
-_layout.addWidget(_desc)
+# --- Target Layer section ---
+_target_label = _make_section_header("Target Layer")
+_layout.addWidget(_target_label)
+_target_desc = _QLabel("Select the nuclei mask layer to edit.")
+_target_desc.setWordWrap(True)
+_target_desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
+_layout.addWidget(_target_desc)
 
-# --- Layer selector — wrapped in Container(labels=True) for proper resize ---
 _mask_editor_widget.mask_layer.label = "Layer to Edit:"
 _layer_form = widgets.Container(labels=True)
 _layer_form.extend([_mask_editor_widget.mask_layer])
 _layer_form.native.layout().setContentsMargins(0, 4, 0, 4)
 _layout.addWidget(_layer_form.native)
 
+from qtpy.QtWidgets import QSpacerItem as _QSpacerItem, QSizePolicy as _QSizePolicy
+_spacer = lambda: _QSpacerItem(0, 20, _QSizePolicy.Minimum, _QSizePolicy.Fixed)
+
 # --- Merge Nuclei section ---
+_layout.addSpacerItem(_spacer())
 _layout.addWidget(_make_divider())
-_layout.addWidget(merge_label.native)
+_layout.addWidget(merge_label)
+_merge_desc = _QLabel("Combine two nuclei into one. Nucleus A is absorbed into Nucleus B.")
+_merge_desc.setWordWrap(True)
+_merge_desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
+_layout.addWidget(_merge_desc)
 
-# Nucleus A — wrapped in Container(labels=True) for proper resize
+# Nucleus A & B — in the same Container so QFormLayout aligns label columns
 _mask_editor_widget.source_id.label = "Nucleus A:"
-_nuc_a_form = widgets.Container(labels=True)
-_nuc_a_form.extend([_mask_editor_widget.source_id])
-_nuc_a_form.native.layout().setContentsMargins(0, 2, 0, 2)
-_layout.addWidget(_nuc_a_form.native)
-
-# Nucleus B — wrapped in Container(labels=True) for proper resize
 _mask_editor_widget.target_id.label = "Nucleus B:"
-_nuc_b_form = widgets.Container(labels=True)
-_nuc_b_form.extend([_mask_editor_widget.target_id])
-_nuc_b_form.native.layout().setContentsMargins(0, 2, 0, 2)
-_layout.addWidget(_nuc_b_form.native)
+_merge_form = widgets.Container(labels=True)
+_merge_form.extend([_mask_editor_widget.source_id, _mask_editor_widget.target_id])
+_merge_form.native.layout().setContentsMargins(0, 2, 0, 2)
+_layout.addWidget(_merge_form.native)
 
 _layout.addWidget(_mask_editor_widget.call_button.native)
 
 # --- Paint section ---
+_layout.addSpacerItem(_spacer())
 _layout.addWidget(_make_divider())
-_layout.addWidget(paint_label.native)
+_layout.addWidget(paint_label)
+_paint_desc = _QLabel("Draw new mask regions or extend existing nuclei. Use Paint New ID to auto-assign the next available label.")
+_paint_desc.setWordWrap(True)
+_paint_desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
+_layout.addWidget(_paint_desc)
 
 # Paint ID — magicgui SpinBox in Container(labels=True) for proper resize
 _paint_id_spinbox = widgets.SpinBox(label="Nucleus ID:", min=1, max=99999, value=1, tooltip="Enter the nucleus label ID to paint with.")
 _paint_id_form = widgets.Container(labels=True)
 _paint_id_form.extend([_paint_id_spinbox])
 _paint_id_form.native.layout().setContentsMargins(0, 2, 0, 2)
-# Full-width paint toggle button
-_paint_toggle_btn = QPushButton("Paint")
+# Icon imports for paint/erase buttons
+from pathlib import Path as _Path
+from qtpy.QtGui import QIcon as _QIcon, QPixmap as _QPixmap, QPainter as _QPainter
+from qtpy.QtCore import QByteArray as _QByteArray
+from qtpy.QtSvg import QSvgRenderer as _QSvgRenderer
+
+# Full-width paint toggle button with napari paint icon
+_paint_toggle_btn = QPushButton()
 _paint_toggle_btn.setCheckable(True)
 _paint_toggle_btn.setToolTip("Toggle paint mode using the specified nucleus ID.")
+_paint_icon_path = _Path(napari.__file__).parent / "resources" / "icons" / "paint.svg"
+if _paint_icon_path.exists():
+    _paint_svg = _paint_icon_path.read_text()
+    _paint_svg_white = _paint_svg.replace('viewBox=', 'fill="white" viewBox=')
+    _p_renderer = _QSvgRenderer(_QByteArray(_paint_svg_white.encode()))
+    _p_pixmap = _QPixmap(24, 24)
+    _p_pixmap.fill(Qt.transparent)
+    _p_painter = _QPainter(_p_pixmap)
+    _p_renderer.render(_p_painter)
+    _p_painter.end()
+    _paint_toggle_btn.setIcon(_QIcon(_p_pixmap))
+else:
+    _paint_toggle_btn.setText("Paint")
 
 def _on_paint_toggle(checked):
     layer = _mask_editor_widget.mask_layer.value
@@ -567,16 +599,44 @@ def _on_paint_new(_checked=False):
 _paint_new_btn.clicked.connect(_on_paint_new)
 _layout.addWidget(_paint_new_btn)
 
-_layout.addWidget(_extrude_form.native)
-_layout.addWidget(_extrude_btn)
+# --- Extrude Mask section ---
+_layout.addSpacerItem(_spacer())
+_layout.addWidget(_make_divider())
+_extrude_label = _make_section_header("Extrude Mask")
+_layout.addWidget(_extrude_label)
+_extrude_desc = _QLabel("Fills the specified nucleus through all Z slices using the largest XY footprint across the stack.")
+_extrude_desc.setWordWrap(True)
+_extrude_desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
+_layout.addWidget(_extrude_desc)
+_layout.addWidget(_extrude_row)
 
 # --- Erase section ---
+_layout.addSpacerItem(_spacer())
 _layout.addWidget(_make_divider())
-_layout.addWidget(erase_label.native)
+_layout.addWidget(erase_label)
+_erase_desc = _QLabel("Remove mask pixels with a brush, delete a nucleus by ID, or hover over nuclei and press C to delete.")
+_erase_desc.setWordWrap(True)
+_erase_desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
+_layout.addWidget(_erase_desc)
 
-_erase_toggle_btn = QPushButton("Erase")
+_erase_toggle_btn = QPushButton()
 _erase_toggle_btn.setCheckable(True)
 _erase_toggle_btn.setToolTip("Toggle erase mode on the selected mask layer.")
+# Use napari's erase icon
+_erase_icon_path = _Path(napari.__file__).parent / "resources" / "icons" / "erase.svg"
+if _erase_icon_path.exists():
+    # Recolor the SVG to white for dark theme visibility
+    _erase_svg = _erase_icon_path.read_text()
+    _erase_svg_white = _erase_svg.replace('viewBox=', 'fill="white" viewBox=')
+    _renderer = _QSvgRenderer(_QByteArray(_erase_svg_white.encode()))
+    _pixmap = _QPixmap(24, 24)
+    _pixmap.fill(Qt.transparent)
+    _painter = _QPainter(_pixmap)
+    _renderer.render(_painter)
+    _painter.end()
+    _erase_toggle_btn.setIcon(_QIcon(_pixmap))
+else:
+    _erase_toggle_btn.setText("Erase")
 
 def _on_erase_toggle(checked):
     layer = _mask_editor_widget.mask_layer.value
@@ -605,12 +665,13 @@ _brush_form.extend([brush_size_slider])
 _brush_form.native.layout().setContentsMargins(0, 2, 0, 2)
 _layout.addWidget(_brush_form.native)
 
-_layout.addWidget(_delete_id_form.native)
-_layout.addWidget(_delete_id_btn)
+_layout.addWidget(_delete_id_row)
 _layout.addWidget(hover_chk.native)
 
 # --- Undo ---
+_layout.addSpacerItem(_spacer())
 _layout.addWidget(_make_divider())
+_layout.addSpacerItem(_QSpacerItem(0, 40, _QSizePolicy.Minimum, _QSizePolicy.Fixed))
 _layout.addWidget(undo_btn.native)
 
 _layout.addStretch(1)
@@ -881,6 +942,100 @@ def _on_mask_layer_changed(event=None):
         _sync_brush_from_layer()
 
 _mask_editor_widget.mask_layer.changed.connect(_on_mask_layer_changed)
+
+# --- Visibility & selection sync between dropdown and layer list ---
+
+_syncing_layer_selection = False  # guard against recursive sync
+
+def _on_mask_layer_dropdown_changed(event=None):
+    """When Layer to Edit dropdown changes, show mask + DAPI, hide others, set active."""
+    global _syncing_layer_selection
+    if _syncing_layer_selection:
+        return
+    layer = _mask_editor_widget.mask_layer.value
+    if not layer:
+        return
+    viewer = napari.current_viewer()
+    if not viewer:
+        return
+
+    _syncing_layer_selection = True
+    try:
+        # Determine the related DAPI layer name (e.g. "R2 - DAPI_masks" → "R2 - DAPI")
+        # Strip "_masks" suffix to get the base DAPI channel name
+        base_name = layer.name.replace("_masks", "")
+
+        for l in viewer.layers:
+            # Show: the mask layer, its IDs, its centroids, and the base DAPI image
+            if l is layer:
+                l.visible = True
+            elif l.name == f"{layer.name}_IDs":
+                l.visible = True
+            elif l.name == f"{layer.name}_centroids":
+                l.visible = True
+            elif l.name == base_name and isinstance(l, napari.layers.Image):
+                l.visible = True
+            else:
+                l.visible = False
+
+        viewer.layers.selection.active = layer
+    finally:
+        _syncing_layer_selection = False
+
+_mask_editor_widget.mask_layer.changed.connect(_on_mask_layer_dropdown_changed)
+
+def _on_viewer_layer_selection_changed(event=None):
+    """When a mask or DAPI layer is selected in the layer list, set the dropdown."""
+    global _syncing_layer_selection
+    if _syncing_layer_selection:
+        return
+    # Skip during batch loading / segmentation
+    from .. import viewer as _viewer_mod
+    if getattr(_viewer_mod, '_suppress_custom_controls', False):
+        return
+    try:
+        viewer = napari.current_viewer()
+        if not viewer:
+            return
+        active = viewer.layers.selection.active
+        if active is None:
+            return
+
+        # Find the relevant mask layer name
+        mask_name = None
+        if active.name.endswith("_masks"):
+            mask_name = active.name
+        elif active.name.endswith("_masks_IDs"):
+            mask_name = active.name.replace("_IDs", "")
+        elif active.name.endswith("_masks_centroids"):
+            mask_name = active.name.replace("_centroids", "")
+        else:
+            # Check if it's a DAPI image layer with a matching mask
+            candidate = f"{active.name}_masks"
+            if candidate in viewer.layers:
+                mask_name = candidate
+
+        if mask_name and mask_name in viewer.layers:
+            mask_layer = viewer.layers[mask_name]
+            if isinstance(mask_layer, napari.layers.Labels):
+                current = _mask_editor_widget.mask_layer.value
+                if current is not mask_layer:
+                    _syncing_layer_selection = True
+                    try:
+                        _mask_editor_widget.reset_choices()
+                        _mask_editor_widget.mask_layer.value = mask_layer
+                    finally:
+                        _syncing_layer_selection = False
+    except Exception:
+        pass  # Silently skip — layer may not be fully initialized yet
+
+# Connect after a short delay so the viewer is fully initialized
+def _connect_layer_selection_sync():
+    viewer = napari.current_viewer()
+    if viewer:
+        viewer.layers.selection.events.changed.connect(_on_viewer_layer_selection_changed)
+
+QTimer.singleShot(500, _connect_layer_selection_sync)
 
 # --- Auto-saving for selected mask layer ---
 

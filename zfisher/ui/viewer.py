@@ -788,6 +788,52 @@ def launch_zfisher():
         if lbl.objectName() == "widgetInfo":
             lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
+    # Reset to pan_zoom (move camera) when switching toolbox tabs
+    def _reset_to_pan_zoom(_index=None):
+        active = viewer.layers.selection.active
+        if active is not None and hasattr(active, 'mode') and active.mode != 'pan_zoom':
+            active.mode = 'pan_zoom'
+
+    toolbox.currentChanged.connect(_reset_to_pan_zoom)
+    # Also connect nested toolboxes (inside StartSessionWidget, NucleiSegmentationWidget, etc.)
+    for child_toolbox in toolbox.findChildren(QToolBox):
+        child_toolbox.currentChanged.connect(_reset_to_pan_zoom)
+
+    # Auto-open Mask Editor when paint/erase mode is activated on a _masks layer
+    _mask_mode_connections = {}
+
+    def _on_mask_mode_changed(event, layer=None):
+        if layer is None:
+            return
+        mode = str(event.mode) if hasattr(event, 'mode') else str(event.value)
+        if mode in ('paint', 'erase'):
+            # Switch main toolbox to "2. Nuclei Segmentation" (index 2)
+            if toolbox.currentIndex() != 2:
+                toolbox.setCurrentIndex(2)
+            # Switch nested toolbox to "Mask Editor" (index 1)
+            nested_tb = nuclei_segmentation_widget.toolbox
+            if nested_tb.currentIndex() != 1:
+                nested_tb.setCurrentIndex(1)
+
+    def _connect_mask_mode_listeners(event=None):
+        """Connect mode listeners to any _masks layers, disconnect removed ones."""
+        current_layers = set()
+        for layer in viewer.layers:
+            if layer.name.endswith("_masks"):
+                current_layers.add(id(layer))
+                if id(layer) not in _mask_mode_connections:
+                    cb = lambda evt, l=layer: _on_mask_mode_changed(evt, layer=l)
+                    layer.events.mode.connect(cb)
+                    _mask_mode_connections[id(layer)] = (layer, cb)
+        # Clean up connections for removed layers
+        for lid in list(_mask_mode_connections):
+            if lid not in current_layers:
+                del _mask_mode_connections[lid]
+
+    viewer.layers.events.inserted.connect(_connect_mask_mode_listeners)
+    viewer.layers.events.removed.connect(_connect_mask_mode_listeners)
+    _connect_mask_mode_listeners()  # connect to any already-existing layers
+
     dock_widget = viewer.window.add_dock_widget(toolbox, area="right", name="zFISHer Workflow")
 
     def _hide_title_bar_buttons(dock):

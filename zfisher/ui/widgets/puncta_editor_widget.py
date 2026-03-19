@@ -260,11 +260,30 @@ pe_undo_btn.clicked.connect(_on_puncta_undo)
 from qtpy.QtWidgets import QFrame
 from ..style import COLORS
 
+from qtpy.QtWidgets import QLabel as _QLabel, QWidget as _QWidget
+
 def _make_divider():
     line = QFrame()
     line.setFixedHeight(2)
     line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
     return line
+
+def _make_section_header(text):
+    label = _QLabel(f"<b style='color: #7a6b8a;'>{text}</b>")
+    label.setContentsMargins(0, 0, 0, 0)
+    label.setStyleSheet("margin: 0px 2px; padding: 0px;")
+    return label
+
+def _make_section_desc(text):
+    desc = _QLabel(text)
+    desc.setWordWrap(True)
+    desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
+    return desc
+
+def _make_spacer():
+    s = _QWidget()
+    s.setFixedHeight(20)
+    return s
 
 class _PunctaEditorWidgetContainer(widgets.Container):
     """Wrapper that delegates reset_choices to the inner magicgui widget."""
@@ -281,22 +300,37 @@ info.native.setObjectName("widgetInfo")
 # Insert section headers/dividers into the magicgui form's internal layout
 # Widget order: points_layer(0), fishing_hook(1), volume_opt(2), opt_radius(3), call_button(4)
 _inner = _puncta_editor_widget.native.layout()
-_fishing_hook_header = widgets.Label(value="<b>Fishing Hook:</b>")
-from qtpy.QtWidgets import QLabel
-_fishing_hook_desc = QLabel(
-    "<i>Shift+Click to place a punctum. The algorithm casts a ray through "
+
+# --- "Target Layer" section: points_layer(0) ---
+_pe_target_header = _make_section_header("Target Layer")
+_pe_target_desc = _make_section_desc("Select the puncta layer to edit.")
+_inner.insertWidget(0, _pe_target_header)
+_inner.insertWidget(1, _pe_target_desc)
+# points_layer(2)
+
+# --- "Fishing Hook" section: fishing_hook(3), volume_opt(4), opt_radius(5) ---
+_fishing_hook_header = _make_section_header("Fishing Hook")
+_fishing_hook_desc = _make_section_desc(
+    "Shift+Click to place a punctum. The algorithm casts a ray through "
     "the volume along your viewing angle, finds the brightest voxel, then "
-    "refines to the local intensity peak. Ideal for accurate placement in 3D.</i>"
+    "refines to the local intensity peak. Ideal for accurate placement in 3D."
 )
-_fishing_hook_desc.setWordWrap(True)
-_erase_header = widgets.Label(value="<b>Erase:</b>")
-# Insert before fishing_hook (index 1) — pushes everything after it down
-_inner.insertWidget(1, _make_divider())
-_inner.insertWidget(2, _fishing_hook_header.native)
-_inner.insertWidget(3, _fishing_hook_desc)
-# call_button is now at index 7 (was 4, +3 from divider/header/desc inserts)
-_inner.insertWidget(7, _make_divider())
-_inner.insertWidget(8, _erase_header.native)
+_inner.insertWidget(3, _make_spacer())
+_inner.insertWidget(4, _make_divider())
+_inner.insertWidget(5, _fishing_hook_header)
+_inner.insertWidget(6, _fishing_hook_desc)
+# fishing_hook(7), volume_opt(8), opt_radius(9), call_button(10)
+
+# --- "Erase" section: call_button stays at the end ---
+# Remove call_button from its position and re-add after the erase section
+_erase_header = _make_section_header("Erase")
+_erase_desc = _make_section_desc("Select points in the viewer and click Delete to remove them.")
+_inner.insertWidget(10, _make_spacer())
+_inner.insertWidget(11, _make_divider())
+_inner.insertWidget(12, _erase_header)
+_inner.insertWidget(13, _erase_desc)
+# call_button is now at 14 — that's the fishing hook's call button, not erase
+# We don't want it here, move it after erase content
 
 # Tighten the inner magicgui form layout
 _inner.setSpacing(2)
@@ -310,5 +344,9 @@ _layout.addWidget(header.native)
 _layout.addWidget(info.native)
 _layout.addWidget(_make_divider())
 _layout.addWidget(_puncta_editor_widget.native)
+
+# Undo in its own section
+_layout.addWidget(_make_spacer())
+_layout.addWidget(_make_divider())
 _layout.addWidget(pe_undo_btn.native)
 _layout.addStretch(1)
