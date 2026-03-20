@@ -554,10 +554,12 @@ def _on_paint_toggle(checked):
         if viewer:
             viewer.layers.selection.active = layer
         layer.selected_label = _paint_id_spinbox.value
+        _mask_undo.begin(layer.data)  # snapshot before paint session
         layer.mode = 'paint'
         if viewer:
             viewer.status = f"Painting with ID {_paint_id_spinbox.value}"
     else:
+        _mask_undo.end(layer.data)  # store diff of entire paint session
         layer.mode = 'pan_zoom'
         # Refresh IDs after painting so new/modified labels get their centroid label
         viewer = napari.current_viewer()
@@ -643,6 +645,7 @@ def _on_paint_new(_checked=False):
     if viewer:
         viewer.layers.selection.active = layer
     layer.selected_label = new_id
+    _mask_undo.begin(layer.data)  # snapshot before paint session
     layer.mode = 'paint'
     _paint_toggle_btn.blockSignals(True)
     _paint_toggle_btn.setChecked(True)
@@ -741,8 +744,10 @@ def _on_erase_toggle(checked):
         viewer = napari.current_viewer()
         if viewer:
             viewer.layers.selection.active = layer
+        _mask_undo.begin(layer.data)  # snapshot before erase session
         layer.mode = 'erase'
     else:
+        _mask_undo.end(layer.data)  # store diff of entire erase session
         layer.mode = 'pan_zoom'
 
 _erase_toggle_btn.clicked.connect(_on_erase_toggle)
@@ -941,11 +946,28 @@ def _on_mask_undo():
     if not layer:
         viewer.status = "No mask layer selected."
         return
+    # If currently in paint/erase mode, finalize the current session first
+    in_edit_mode = False
+    if hasattr(layer, 'mode'):
+        mode = str(layer.mode).lower()
+        if 'paint' in mode or 'erase' in mode:
+            in_edit_mode = True
+            if _mask_undo._pre_edit is not None:
+                _mask_undo.end(layer.data)
     if _mask_undo.undo(layer.data):
         layer.refresh()
+        # Restart a snapshot if still in edit mode so future strokes are tracked
+        if in_edit_mode:
+            _mask_undo.begin(layer.data)
+        # Refresh IDs to match reverted mask data
+        QTimer.singleShot(50, lambda: viewer_helpers.add_or_update_label_ids(viewer, layer))
+        _schedule_save(layer)
         logger.info("MASK EDIT: Undo on layer '%s' (%d remaining)", layer.name, len(_mask_undo))
         viewer.status = f"Undo ({len(_mask_undo)} remaining)."
     else:
+        # Restart snapshot if in edit mode so we don't lose future strokes
+        if in_edit_mode:
+            _mask_undo.begin(layer.data)
         viewer.status = "Nothing to undo."
 
 def _on_delete_id():
@@ -981,18 +1003,32 @@ _mask_editor_widget._mode_connection = None
 _syncing_brush = False  # guard against recursive sync
 
 _was_painting = False  # track paint mode to refresh IDs on exit
+_was_erasing = False   # track erase mode for undo snapshots
 
 def _sync_erase_from_layer_mode(event):
     """Keep paint/erase buttons and checkbox in sync when mode changes via layer controls."""
-    global _was_painting
+    global _was_painting, _was_erasing
     mode = str(event.mode) if hasattr(event, 'mode') else str(event.value)
     mode_lower = mode.lower()
     is_erase = 'erase' in mode_lower
     is_paint = 'paint' in mode_lower
 
+    layer = _mask_editor_widget.mask_layer.value
+
+    # If we just left paint or erase mode, finalize the undo snapshot
+    if (_was_painting and not is_paint) or (_was_erasing and not is_erase):
+        if layer and _mask_undo._pre_edit is not None:
+            _mask_undo.end(layer.data)
+
+    # If we just entered paint or erase mode (via layer controls), start a snapshot
+    if layer:
+        if is_paint and not _was_painting and _mask_undo._pre_edit is None:
+            _mask_undo.begin(layer.data)
+        elif is_erase and not _was_erasing and _mask_undo._pre_edit is None:
+            _mask_undo.begin(layer.data)
+
     # If we just left paint mode, refresh IDs so new labels get their text
     if _was_painting and not is_paint:
-        layer = _mask_editor_widget.mask_layer.value
         if layer:
             viewer = napari.current_viewer()
             if viewer:
@@ -1000,6 +1036,7 @@ def _sync_erase_from_layer_mode(event):
                 if ids_name in viewer.layers:
                     QTimer.singleShot(100, lambda: viewer_helpers.add_or_update_label_ids(viewer, layer))
     _was_painting = is_paint
+    _was_erasing = is_erase
 
     is_pick = 'pick' in mode_lower
 

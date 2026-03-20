@@ -2,7 +2,7 @@ import logging
 import warnings
 
 from qtpy.QtWidgets import (
-    QProgressDialog, QMessageBox, QApplication,
+    QMessageBox, QApplication,
     QDialog, QVBoxLayout, QLabel, QProgressBar, QWidget
 )
 from qtpy.QtCore import Qt
@@ -112,9 +112,9 @@ class _DimOverlay(QWidget):
             self.setGeometry(self.parent().rect())
 
 
-class ProgressDialog(QProgressDialog):
+class ProgressDialog(QDialog):
     """
-    A custom, non-cancellable QProgressDialog that provides a simple interface
+    A custom, non-cancellable progress dialog that provides a simple interface
     for updating progress and status text.
 
     Suppresses Python warnings and napari notification toasts while active
@@ -127,20 +127,30 @@ class ProgressDialog(QProgressDialog):
             dialog.update_progress(100, "Done.")
     """
     def __init__(self, parent=None, title="Processing...", text="Please wait..."):
-        super().__init__(text, None, 0, 100, parent)
+        super().__init__(parent)
         self._canvas_frozen = False
         self._warnings_ctx = None
         self.setWindowTitle(title)
         self.setWindowModality(Qt.WindowModal)
-        # Frameless window — no title bar, no close button, matches macOS look.
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowModal)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
-        # Style child widgets only; background is painted in paintEvent.
-        self.setStyleSheet("""
-            QLabel {
-                color: white;
-                background: transparent;
-            }
+        self.setMinimumWidth(320)
+
+        _pad = 28
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(_pad, _pad, _pad, _pad)
+        layout.setSpacing(10)
+
+        self._label = QLabel(text)
+        self._label.setAlignment(Qt.AlignCenter)
+        self._label.setStyleSheet("color: white; background: transparent;")
+        layout.addWidget(self._label)
+
+        self._bar = QProgressBar()
+        self._bar.setRange(0, 100)
+        self._bar.setValue(0)
+        self._bar.setTextVisible(True)
+        self._bar.setStyleSheet("""
             QProgressBar {
                 border: 1px solid #7a6b8a;
                 border-radius: 6px;
@@ -154,18 +164,16 @@ class ProgressDialog(QProgressDialog):
                 border-radius: 5px;
             }
         """)
-        self.setContentsMargins(64, 64, 64, 64)
-        self.setMinimumDuration(0)  # Show immediately
-        self.setCancelButton(None)  # No cancel button
-        self.setValue(0)
+        layout.addWidget(self._bar)
+
         # Create dim overlay behind the dialog
         self._overlay = None
-        parent = self.parent()
-        if parent is not None:
-            self._overlay = _DimOverlay(parent)
+        par = self.parent()
+        if par is not None:
+            self._overlay = _DimOverlay(par)
             self._overlay.raise_()
         self.show()
-        self.raise_()  # Ensure dialog is above overlay
+        self.raise_()
         self._center_on_parent()
         QApplication.processEvents()
 
@@ -189,13 +197,21 @@ class ProgressDialog(QProgressDialog):
         painter.drawPath(path)
         painter.end()
 
+    def setLabelText(self, text):
+        """Compatibility shim for code that calls setLabelText."""
+        self._label.setText(text)
+
+    def setValue(self, value):
+        """Compatibility shim for code that calls setValue."""
+        self._bar.setValue(value)
+
     def update_progress(self, value: int, text: str = None):
         """Updates the progress bar and optionally the label text."""
         if text:
-            self.setLabelText(text)
-        self.setValue(value)
+            self._label.setText(text)
+        self._bar.setValue(value)
         if not self._canvas_frozen:
-            QApplication.processEvents()  # Ensure UI updates are visible
+            QApplication.processEvents()
 
     def freeze_canvas(self):
         """Suppress processEvents during layer mutations to prevent vispy
@@ -245,46 +261,112 @@ class BatchProgressDialog(QDialog):
     A non-cancellable dialog with two progress bars:
     one for overall batch progress and one for the current item's pipeline progress.
     """
+    _BAR_SS = """
+        QProgressBar {
+            border: 1px solid #7a6b8a;
+            border-radius: 6px;
+            background-color: #251f2e;
+            text-align: center;
+            color: white;
+            min-height: 18px;
+        }
+        QProgressBar::chunk {
+            background-color: #4aa87c;
+            border-radius: 5px;
+        }
+    """
+
     def __init__(self, parent=None, title="Batch Processing...", text="Please wait..."):
         super().__init__(parent)
         self._warnings_ctx = None
+        self._canvas_frozen = False
         self.setWindowTitle(title)
         self.setWindowModality(Qt.WindowModal)
-        self.setMinimumWidth(450)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowCloseButtonHint)
+        self.setMinimumWidth(380)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowModal)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
 
+        _pad = 28
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(_pad, _pad, _pad, _pad)
+        layout.setSpacing(8)
 
         self._batch_label = QLabel("Batch Progress")
+        self._batch_label.setAlignment(Qt.AlignCenter)
+        self._batch_label.setStyleSheet("color: white; background: transparent;")
         layout.addWidget(self._batch_label)
         self._batch_bar = QProgressBar()
         self._batch_bar.setRange(0, 100)
         self._batch_bar.setValue(0)
+        self._batch_bar.setTextVisible(True)
+        self._batch_bar.setStyleSheet(self._BAR_SS)
         layout.addWidget(self._batch_bar)
 
+        layout.addSpacing(6)
+
         self._item_label = QLabel(text)
+        self._item_label.setAlignment(Qt.AlignCenter)
+        self._item_label.setStyleSheet("color: white; background: transparent;")
         layout.addWidget(self._item_label)
         self._item_bar = QProgressBar()
         self._item_bar.setRange(0, 100)
         self._item_bar.setValue(0)
+        self._item_bar.setTextVisible(True)
+        self._item_bar.setStyleSheet(self._BAR_SS)
         layout.addWidget(self._item_bar)
 
+        # Create dim overlay behind the dialog
+        self._overlay = None
+        par = self.parent()
+        if par is not None:
+            self._overlay = _DimOverlay(par)
+            self._overlay.raise_()
         self.show()
+        self.raise_()
+        self._center_on_parent()
         QApplication.processEvents()
+
+    def _center_on_parent(self):
+        parent = self.parent()
+        if parent is not None:
+            parent_rect = parent.geometry()
+            x = parent_rect.x() + (parent_rect.width() - self.width()) // 2
+            y = parent_rect.y() + (parent_rect.height() - self.height()) // 2
+            self.move(x, y)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(0.0, 0.0, float(self.width()), float(self.height()), 20.0, 20.0)
+        painter.fillPath(path, QColor("#1a1421"))
+        painter.setPen(QColor("#7a6b8a"))
+        painter.drawPath(path)
+        painter.end()
 
     def update_batch_progress(self, value: int, text: str = None):
         """Updates the overall batch progress bar."""
         if text:
             self._batch_label.setText(text)
         self._batch_bar.setValue(value)
-        QApplication.processEvents()
+        if not self._canvas_frozen:
+            QApplication.processEvents()
 
     def update_item_progress(self, value: int, text: str = None):
         """Updates the current item's pipeline progress bar."""
         if text:
             self._item_label.setText(text)
         self._item_bar.setValue(value)
-        QApplication.processEvents()
+        if not self._canvas_frozen:
+            QApplication.processEvents()
+
+    def freeze_canvas(self):
+        self._canvas_frozen = True
+
+    def unfreeze_canvas(self):
+        if self._canvas_frozen:
+            self._canvas_frozen = False
+            QApplication.processEvents()
 
     def __enter__(self):
         self._warnings_ctx = warnings.catch_warnings()
@@ -294,7 +376,12 @@ class BatchProgressDialog(QDialog):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        self.unfreeze_canvas()
         self.close()
+        if self._overlay is not None:
+            self._overlay.close()
+            self._overlay.deleteLater()
+            self._overlay = None
         QApplication.processEvents()
         if self._warnings_ctx:
             self._warnings_ctx.__exit__(None, None, None)

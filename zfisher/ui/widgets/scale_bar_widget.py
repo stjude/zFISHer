@@ -54,16 +54,33 @@ class DraggableScaleBar(QWidget):
     def on_layer_change(self, event=None):
         self.recalculate()
 
+    def _get_reference_pixel_size(self):
+        """Get pixel size from a reference Image layer with real physical scale.
+
+        Prefers DAPI/channel layers over utility layers (checkerboard, etc.)
+        since they carry the correct voxel spacing from OME metadata.
+        """
+        import napari
+        fallback = None
+        for layer in self.viewer.layers:
+            if isinstance(layer, napari.layers.Image) and len(layer.scale) >= 2:
+                s = layer.scale[-1]
+                if s == 1.0:
+                    continue  # likely a utility layer with default scale
+                # Prefer named channel layers (DAPI, FITC, Cy5, Aligned, Warped)
+                name_upper = layer.name.upper()
+                if any(k in name_upper for k in ('DAPI', 'FITC', 'CY5', 'ALIGNED', 'WARPED', 'R1', 'R2')):
+                    return s
+                if fallback is None:
+                    fallback = s
+        return fallback if fallback is not None else 1.0
+
     def on_zoom(self, event=None):
         zoom = self.viewer.camera.zoom
         if zoom == 0: return
         target_px = 150
 
-        active_layer = self.viewer.layers.selection.active
-        if active_layer:
-             pixel_size_x = active_layer.scale[-1]
-        else:
-             pixel_size_x = 1.0
+        pixel_size_x = self._get_reference_pixel_size()
 
         um_per_canvas_px = pixel_size_x / zoom if pixel_size_x > 0 else 1.0 / zoom
 
