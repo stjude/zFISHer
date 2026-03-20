@@ -567,8 +567,61 @@ def _on_paint_toggle(checked):
                 QTimer.singleShot(100, lambda: viewer_helpers.add_or_update_label_ids(viewer, layer))
 
 _paint_toggle_btn.clicked.connect(_on_paint_toggle)
+
+# Paint eyedropper button — pick mode to select a nucleus ID
+_paint_pick_btn = QPushButton()
+_paint_pick_btn.setCheckable(True)
+_paint_pick_btn.setToolTip("Pick a nucleus ID from the canvas (eyedropper).")
+_pick_icon_path = _Path(napari.__file__).parent / "resources" / "icons" / "picker.svg"
+if _pick_icon_path.exists():
+    _pick_svg = _pick_icon_path.read_text()
+    _pick_svg_white = _pick_svg.replace('viewBox=', 'fill="white" viewBox=')
+    _pick_r = _QSvgRenderer(_QByteArray(_pick_svg_white.encode()))
+    _pick_px = _QPixmap(24, 24)
+    _pick_px.fill(Qt.transparent)
+    _pick_pa = _QPainter(_pick_px)
+    _pick_r.render(_pick_pa)
+    _pick_pa.end()
+    _paint_pick_btn.setIcon(_QIcon(_pick_px))
+else:
+    _paint_pick_btn.setText("Pick")
+
+def _on_paint_pick_toggle(checked):
+    layer = _mask_editor_widget.mask_layer.value
+    if not layer:
+        _paint_pick_btn.setChecked(False)
+        return
+    if checked:
+        # Uncheck paint and erase
+        _paint_toggle_btn.blockSignals(True)
+        _paint_toggle_btn.setChecked(False)
+        _paint_toggle_btn.blockSignals(False)
+        _erase_toggle_btn.blockSignals(True)
+        _erase_toggle_btn.setChecked(False)
+        _erase_toggle_btn.blockSignals(False)
+        erase_chk.value = False
+        hover_chk.value = False
+        viewer = napari.current_viewer()
+        if viewer:
+            viewer.layers.selection.active = layer
+        layer.mode = 'pick'
+        if viewer:
+            viewer.status = "Click a nucleus to select its ID."
+    else:
+        layer.mode = 'pan_zoom'
+
+_paint_pick_btn.clicked.connect(_on_paint_pick_toggle)
+
+# Row with paint + pick buttons side by side
+_paint_btn_row = _QWidget()
+_paint_btn_layout = _QHBoxLayout(_paint_btn_row)
+_paint_btn_layout.setContentsMargins(0, 0, 0, 0)
+_paint_btn_layout.setSpacing(4)
+_paint_btn_layout.addWidget(_paint_toggle_btn, 1)
+_paint_btn_layout.addWidget(_paint_pick_btn, 0)
+
 _layout.addWidget(_paint_id_form.native)
-_layout.addWidget(_paint_toggle_btn)
+_layout.addWidget(_paint_btn_row)
 
 # Paint New ID button — auto-assigns max+1
 _paint_new_btn = QPushButton("Paint New ID")
@@ -580,6 +633,7 @@ def _on_paint_new(_checked=False):
         return
     new_id = int(layer.data.max()) + 1
     _paint_id_spinbox.value = new_id
+    _extrude_spinbox.value = new_id
     erase_chk.value = False
     hover_chk.value = False
     _erase_toggle_btn.blockSignals(True)
@@ -598,6 +652,42 @@ def _on_paint_new(_checked=False):
 
 _paint_new_btn.clicked.connect(_on_paint_new)
 _layout.addWidget(_paint_new_btn)
+
+# Paint brush size row — independent from erase brush size
+_paint_brush_slider = widgets.Slider(label="", min=1, max=40, value=10, tooltip="Brush size for painting.")
+_paint_brush_slider.label = "Brush Size:"
+_paint_brush_form = widgets.Container(labels=True)
+_paint_brush_form.extend([_paint_brush_slider])
+_paint_brush_form.native.layout().setContentsMargins(0, 2, 0, 2)
+_layout.addWidget(_paint_brush_form.native)
+
+# Paint slider → layer.brush_size (only when paint mode is active)
+def _on_paint_brush_changed(val):
+    global _syncing_brush
+    if _syncing_brush:
+        return
+    layer = _mask_editor_widget.mask_layer.value
+    if layer and hasattr(layer, 'mode') and 'paint' in str(layer.mode).lower():
+        _syncing_brush = True
+        layer.brush_size = val
+        _syncing_brush = False
+
+_paint_brush_slider.changed.connect(_on_paint_brush_changed)
+
+# Refresh IDs button
+_refresh_ids_btn = QPushButton("Refresh IDs")
+_refresh_ids_btn.setToolTip("Recompute centroids and refresh the ID labels overlay.")
+
+def _on_refresh_ids(_checked=False):
+    viewer = napari.current_viewer()
+    layer = _mask_editor_widget.mask_layer.value
+    if not viewer or not layer:
+        return
+    viewer_helpers.add_or_update_label_ids(viewer, layer)
+    viewer.status = "IDs refreshed."
+
+_refresh_ids_btn.clicked.connect(_on_refresh_ids)
+_layout.addWidget(_refresh_ids_btn)
 
 # --- Extrude Mask section ---
 _layout.addSpacerItem(_spacer())
@@ -656,7 +746,55 @@ def _on_erase_toggle(checked):
         layer.mode = 'pan_zoom'
 
 _erase_toggle_btn.clicked.connect(_on_erase_toggle)
-_layout.addWidget(_erase_toggle_btn)
+
+# Erase eyedropper button — pick mode to select ID for delete
+_erase_pick_btn = QPushButton()
+_erase_pick_btn.setCheckable(True)
+_erase_pick_btn.setToolTip("Pick a nucleus ID from the canvas to set the delete ID.")
+if _pick_icon_path.exists():
+    _erase_pick_btn.setIcon(_QIcon(_pick_px))
+else:
+    _erase_pick_btn.setText("Pick")
+
+def _on_erase_pick_toggle(checked):
+    layer = _mask_editor_widget.mask_layer.value
+    if not layer:
+        _erase_pick_btn.setChecked(False)
+        return
+    if checked:
+        # Uncheck paint and erase
+        _paint_toggle_btn.blockSignals(True)
+        _paint_toggle_btn.setChecked(False)
+        _paint_toggle_btn.blockSignals(False)
+        _erase_toggle_btn.blockSignals(True)
+        _erase_toggle_btn.setChecked(False)
+        _erase_toggle_btn.blockSignals(False)
+        _paint_pick_btn.blockSignals(True)
+        _paint_pick_btn.setChecked(False)
+        _paint_pick_btn.blockSignals(False)
+        erase_chk.value = False
+        hover_chk.value = False
+        viewer = napari.current_viewer()
+        if viewer:
+            viewer.layers.selection.active = layer
+        # Use pick mode; the selected_label sync will update the erase delete spinbox
+        layer.mode = 'pick'
+        if viewer:
+            viewer.status = "Click a nucleus to set the delete ID."
+    else:
+        layer.mode = 'pan_zoom'
+
+_erase_pick_btn.clicked.connect(_on_erase_pick_toggle)
+
+# Row with erase + pick buttons side by side
+_erase_btn_row = _QWidget()
+_erase_btn_layout = _QHBoxLayout(_erase_btn_row)
+_erase_btn_layout.setContentsMargins(0, 0, 0, 0)
+_erase_btn_layout.setSpacing(4)
+_erase_btn_layout.addWidget(_erase_toggle_btn, 1)
+_erase_btn_layout.addWidget(_erase_pick_btn, 0)
+
+_layout.addWidget(_erase_btn_row)
 
 # Brush size row with label
 brush_size_slider.label = "Brush Size:"
@@ -744,28 +882,22 @@ def _on_extrude(_checked=False):
 
     logger.info("MASK EDIT: Extrude ID %d, layer='%s'", label_id, layer.name)
 
-    # Hide IDs layer to prevent vispy GL crash during data mutation
-    ids_name = f"{layer.name}_IDs"
-    ids_layer = viewer.layers[ids_name] if ids_name in viewer.layers else None
-    if ids_layer is not None:
-        ids_layer.visible = False
-
     # Switch to pan_zoom before data mutation to avoid brush cursor repaint
     if hasattr(layer, 'mode') and layer.mode != 'pan_zoom':
         layer.mode = 'pan_zoom'
 
     _mask_undo.begin(layer.data)
-    # Compute union footprint and apply in-place to avoid full array replacement
+    # Compute union XY footprint across all Z slices
     union_2d = np.any(layer.data == label_id, axis=0)
-    layer.data[:, union_2d] = label_id
+    # Only fill where the voxel is background (0) or already this label —
+    # never overwrite other nuclei that overlap the XY footprint
+    fill_mask = union_2d[np.newaxis, :, :] & ((layer.data == 0) | (layer.data == label_id))
+    layer.data[fill_mask] = label_id
     _mask_undo.end(layer.data)
 
-    # Defer visual refresh
-    def _deferred_extrude_refresh():
-        layer.refresh()
-        if ids_layer is not None:
-            ids_layer.visible = True
-    QTimer.singleShot(0, _deferred_extrude_refresh)
+    # Refresh mask visual and recompute IDs (in-place update, no hide needed)
+    layer.refresh()
+    viewer_helpers.add_or_update_label_ids(viewer, layer)
 
     _schedule_save(layer)
     viewer.status = f"Extruded ID {label_id} through all Z slices."
@@ -869,6 +1001,16 @@ def _sync_erase_from_layer_mode(event):
                     QTimer.singleShot(100, lambda: viewer_helpers.add_or_update_label_ids(viewer, layer))
     _was_painting = is_paint
 
+    is_pick = 'pick' in mode_lower
+
+    # Apply the correct brush size for the new mode
+    layer = _mask_editor_widget.mask_layer.value
+    if layer and hasattr(layer, 'brush_size'):
+        if is_paint:
+            layer.brush_size = _paint_brush_slider.value
+        elif is_erase:
+            layer.brush_size = brush_size_slider.value
+
     # Sync paint toggle button
     if _paint_toggle_btn.isChecked() != is_paint:
         _paint_toggle_btn.blockSignals(True)
@@ -879,6 +1021,16 @@ def _sync_erase_from_layer_mode(event):
         _erase_toggle_btn.blockSignals(True)
         _erase_toggle_btn.setChecked(is_erase)
         _erase_toggle_btn.blockSignals(False)
+    # Sync pick/eyedropper buttons — uncheck if mode is no longer pick
+    if not is_pick:
+        if _paint_pick_btn.isChecked():
+            _paint_pick_btn.blockSignals(True)
+            _paint_pick_btn.setChecked(False)
+            _paint_pick_btn.blockSignals(False)
+        if _erase_pick_btn.isChecked():
+            _erase_pick_btn.blockSignals(True)
+            _erase_pick_btn.setChecked(False)
+            _erase_pick_btn.blockSignals(False)
     # Sync legacy checkbox
     if erase_chk.value != is_erase:
         erase_chk.changed.disconnect(_on_erase)
@@ -886,35 +1038,94 @@ def _sync_erase_from_layer_mode(event):
         erase_chk.changed.connect(_on_erase)
 
 def _sync_brush_from_layer(event=None):
-    """Keep brush_size_slider in sync when brush size changes via layer controls."""
+    """Keep the active slider in sync when brush size changes via layer controls."""
     global _syncing_brush
     if _syncing_brush:
         return
     layer = _mask_editor_widget.mask_layer.value
     if layer and hasattr(layer, 'brush_size'):
         val = int(layer.brush_size)
-        if brush_size_slider.value != val:
-            _syncing_brush = True
-            brush_size_slider.value = max(brush_size_slider.min, min(brush_size_slider.max, val))
-            _syncing_brush = False
+        mode = str(layer.mode).lower()
+        _syncing_brush = True
+        if 'erase' in mode:
+            if brush_size_slider.value != val:
+                brush_size_slider.value = max(brush_size_slider.min, min(brush_size_slider.max, val))
+        elif 'paint' in mode:
+            if _paint_brush_slider.value != val:
+                _paint_brush_slider.value = max(_paint_brush_slider.min, min(_paint_brush_slider.max, val))
+        _syncing_brush = False
 
-def _on_brush_slider_changed(val):
-    """Push slider value to the layer's brush_size."""
+def _on_erase_brush_slider_changed(val):
+    """Push erase slider value to layer.brush_size (only when erase mode is active)."""
     global _syncing_brush
     if _syncing_brush:
         return
     layer = _mask_editor_widget.mask_layer.value
-    if layer and hasattr(layer, 'brush_size'):
+    if layer and hasattr(layer, 'mode') and 'erase' in str(layer.mode).lower():
         _syncing_brush = True
         layer.brush_size = val
         _syncing_brush = False
 
-brush_size_slider.changed.connect(_on_brush_slider_changed)
+brush_size_slider.changed.connect(_on_erase_brush_slider_changed)
 
 _mask_editor_widget._brush_connection = None
+_mask_editor_widget._selected_label_connection = None
+
+# --- selected_label ↔ spinbox sync (Option C) ---
+_syncing_selected_label = False
+
+def _sync_spinboxes_from_layer(event=None):
+    """When pick mode or layer controls change selected_label, update our spinboxes."""
+    global _syncing_selected_label
+    if _syncing_selected_label:
+        return
+    layer = _mask_editor_widget.mask_layer.value
+    if not layer or not hasattr(layer, 'selected_label'):
+        return
+    val = int(layer.selected_label)
+    if val < 1:
+        return
+    _syncing_selected_label = True
+    try:
+        if _erase_pick_btn.isChecked():
+            # Erase eyedropper: only update the delete spinbox
+            if _delete_id_spinbox.value != val:
+                _delete_id_spinbox.value = max(_delete_id_spinbox.min, min(_delete_id_spinbox.max, val))
+        elif _paint_pick_btn.isChecked():
+            # Paint eyedropper: update paint and extrude spinboxes only
+            if _paint_id_spinbox.value != val:
+                _paint_id_spinbox.value = max(_paint_id_spinbox.min, min(_paint_id_spinbox.max, val))
+            if _extrude_spinbox.value != val:
+                _extrude_spinbox.value = max(_extrude_spinbox.min, min(_extrude_spinbox.max, val))
+        else:
+            # No eyedropper active (e.g. layer controls pick button): update paint and extrude
+            if _paint_id_spinbox.value != val:
+                _paint_id_spinbox.value = max(_paint_id_spinbox.min, min(_paint_id_spinbox.max, val))
+            if _extrude_spinbox.value != val:
+                _extrude_spinbox.value = max(_extrude_spinbox.min, min(_extrude_spinbox.max, val))
+    finally:
+        _syncing_selected_label = False
+
+def _on_paint_spinbox_changed(val):
+    """Push paint spinbox value to layer.selected_label and sync extrude spinbox."""
+    global _syncing_selected_label
+    if _syncing_selected_label:
+        return
+    layer = _mask_editor_widget.mask_layer.value
+    if not layer or not hasattr(layer, 'selected_label'):
+        return
+    _syncing_selected_label = True
+    try:
+        layer.selected_label = val
+        if _extrude_spinbox.value != val:
+            _extrude_spinbox.value = max(_extrude_spinbox.min, min(_extrude_spinbox.max, val))
+    finally:
+        _syncing_selected_label = False
+
+_paint_id_spinbox.changed.connect(_on_paint_spinbox_changed)
 
 def _on_mask_layer_changed(event=None):
-    """Connect/disconnect mode and brush size sync when the selected mask layer changes."""
+    """Connect/disconnect mode, brush size, and selected_label sync when the selected mask layer changes."""
     # Disconnect previous mode sync
     if _mask_editor_widget._mode_connection is not None:
         old_layer, old_cb = _mask_editor_widget._mode_connection
@@ -931,6 +1142,14 @@ def _on_mask_layer_changed(event=None):
         except (RuntimeError, TypeError):
             pass
         _mask_editor_widget._brush_connection = None
+    # Disconnect previous selected_label sync
+    if _mask_editor_widget._selected_label_connection is not None:
+        old_layer, old_cb = _mask_editor_widget._selected_label_connection
+        try:
+            old_layer.events.selected_label.disconnect(old_cb)
+        except (RuntimeError, TypeError):
+            pass
+        _mask_editor_widget._selected_label_connection = None
 
     layer = _mask_editor_widget.mask_layer.value
     if isinstance(layer, napari.layers.Labels):
@@ -938,8 +1157,11 @@ def _on_mask_layer_changed(event=None):
         _mask_editor_widget._mode_connection = (layer, _sync_erase_from_layer_mode)
         layer.events.brush_size.connect(_sync_brush_from_layer)
         _mask_editor_widget._brush_connection = (layer, _sync_brush_from_layer)
-        # Initialize slider to current layer value
+        layer.events.selected_label.connect(_sync_spinboxes_from_layer)
+        _mask_editor_widget._selected_label_connection = (layer, _sync_spinboxes_from_layer)
+        # Initialize sliders/spinboxes to current layer values
         _sync_brush_from_layer()
+        _sync_spinboxes_from_layer()
 
 _mask_editor_widget.mask_layer.changed.connect(_on_mask_layer_changed)
 
@@ -1026,8 +1248,18 @@ def _on_viewer_layer_selection_changed(event=None):
                         _mask_editor_widget.mask_layer.value = mask_layer
                     finally:
                         _syncing_layer_selection = False
+        else:
+            # Selected a non-mask layer — disable hover edit mode
+            if hover_chk.value:
+                hover_chk.value = False
     except Exception:
         pass  # Silently skip — layer may not be fully initialized yet
+
+
+def deactivate_hover_edit():
+    """Disable hover edit mode. Called when switching away from the mask editor widget."""
+    if hover_chk.value:
+        hover_chk.value = False
 
 # Connect after a short delay so the viewer is fully initialized
 def _connect_layer_selection_sync():

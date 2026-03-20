@@ -273,7 +273,7 @@ def _automated_preprocessing_magic_widget(
         viewer.status = "Automated Registration Complete."
 
 # UI Wrapper
-from qtpy.QtWidgets import QFrame
+from qtpy.QtWidgets import QFrame, QLabel, QSizePolicy
 from ..style import COLORS
 
 def _make_divider():
@@ -282,17 +282,49 @@ def _make_divider():
     line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
     return line
 
-# Insert "Options" header into the magicgui form before match_nuclei
+def _make_section_header(text):
+    label = QLabel(f"<b style='color: #7a6b8a;'>{text}</b>")
+    label.setContentsMargins(0, 0, 0, 0)
+    label.setStyleSheet("margin: 0px 2px; padding: 0px;")
+    return label
+
+def _make_section_desc(text):
+    desc = QLabel(text)
+    desc.setWordWrap(True)
+    desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
+    return desc
+
+def _make_spacer():
+    from qtpy.QtWidgets import QWidget as _W
+    s = _W()
+    s.setFixedHeight(20)
+    return s
+
+# Insert section headers into the magicgui form
 # Widget order: r1_dapi(0), r2_dapi(1), match_nuclei(2), hide_raw(3), call_button(4)
 _inner = _automated_preprocessing_magic_widget.native.layout()
-_options_header = Label(value="<b>Options:</b>")
-_inner.insertWidget(2, _make_divider())
-_inner.insertWidget(3, _options_header.native)
+
+_input_header = _make_section_header("Input Layers")
+_input_desc = _make_section_desc("Select the nuclear stain layers from each round for registration.")
+_inner.insertWidget(0, _input_header)
+_inner.insertWidget(1, _input_desc)
+# r1_dapi(2), r2_dapi(3)
+
+_inner.insertWidget(4, _make_spacer())
+_inner.insertWidget(5, _make_divider())
+_options_header = _make_section_header("Options")
+_options_desc = _make_section_desc("Configure consensus nuclei generation and raw layer visibility.")
+_inner.insertWidget(6, _options_header)
+_inner.insertWidget(7, _options_desc)
+# match_nuclei(8), hide_raw(9), call_button(10)
+
+_inner.insertWidget(_inner.count() - 1, _make_spacer())
+_inner.setSpacing(2)
+_inner.setContentsMargins(0, 0, 0, 0)
+
 
 class _AutomatedPreprocessingContainer(Container):
-    """Wrapper that delegates reset_choices and exposes the inner magicgui."""
     _automated_preprocessing_magic_widget = None
-
     def reset_choices(self):
         _automated_preprocessing_magic_widget.reset_choices()
 
@@ -300,8 +332,9 @@ automated_preprocessing_widget = _AutomatedPreprocessingContainer(labels=False)
 automated_preprocessing_widget._automated_preprocessing_magic_widget = _automated_preprocessing_magic_widget
 header = Label(value="Automated Registration && Warping")
 header.native.setObjectName("widgetHeader")
-info = Label(value="<i>Registration, Warping, and Consensus Nuclei.</i>")
+info = Label(value="<i>Registration, warping, and consensus nuclei.</i>")
 info.native.setObjectName("widgetInfo")
+info.native.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
 _layout = automated_preprocessing_widget.native.layout()
 _layout.setSpacing(2)

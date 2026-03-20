@@ -141,9 +141,36 @@ def _nuclei_matching_widget(
         viewer.status = f"Matched {len(pts1) if pts1 else 0} nuclei using {method}.{outlier_msg}"
         dialog.update_progress(100, "Done.")
 
+# --- UI Helpers ---
+from qtpy.QtWidgets import QLabel, QFrame, QSizePolicy
+from ..style import COLORS
+
+def _make_divider():
+    line = QFrame()
+    line.setFixedHeight(2)
+    line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
+    return line
+
+def _make_section_header(text):
+    label = QLabel(f"<b style='color: #7a6b8a;'>{text}</b>")
+    label.setContentsMargins(0, 0, 0, 0)
+    label.setStyleSheet("margin: 0px 2px; padding: 0px;")
+    return label
+
+def _make_section_desc(text):
+    desc = QLabel(text)
+    desc.setWordWrap(True)
+    desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
+    return desc
+
+def _make_spacer():
+    from qtpy.QtWidgets import QWidget as _W
+    s = _W()
+    s.setFixedHeight(20)
+    return s
+
 # --- UI Wrapper ---
 class _NucleiMatchingContainer(Container):
-    """Wrapper that delegates reset_choices and exposes the inner magicgui."""
     def reset_choices(self):
         _nuclei_matching_widget.reset_choices()
 
@@ -153,8 +180,32 @@ header = Label(value="Match Nuclei")
 header.native.setObjectName("widgetHeader")
 info = Label(value="<i>Matches nuclei between rounds.</i>")
 info.native.setObjectName("widgetInfo")
-nuclei_matching_widget.extend([header, info, make_header_divider(), _nuclei_matching_widget])
-_nm_layout = nuclei_matching_widget.native.layout()
-_nm_layout.setSpacing(2)
-_nm_layout.setContentsMargins(0, 0, 0, 0)
-_nm_layout.addStretch(1)
+info.native.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+_layout = nuclei_matching_widget.native.layout()
+_layout.setSpacing(2)
+_layout.setContentsMargins(0, 0, 0, 0)
+_layout.addWidget(header.native)
+_layout.addWidget(info.native)
+_layout.addWidget(_make_divider())
+
+# Insert section headers into inner form
+_inner = _nuclei_matching_widget.native.layout()
+_masks_header = _make_section_header("Mask Layers")
+_masks_desc = _make_section_desc("Select the aligned R1 and warped R2 nuclei mask layers.")
+_inner.insertWidget(0, _masks_header)
+_inner.insertWidget(1, _masks_desc)
+
+_inner.insertWidget(4, _make_spacer())
+_inner.insertWidget(5, _make_divider())
+_method_header = _make_section_header("Method")
+_method_desc = _make_section_desc("Choose how to combine overlapping nuclei between rounds.")
+_inner.insertWidget(6, _method_header)
+_inner.insertWidget(7, _method_desc)
+
+_inner.insertWidget(_inner.count() - 1, _make_spacer())
+_inner.setSpacing(2)
+_inner.setContentsMargins(0, 0, 0, 0)
+
+_layout.addWidget(_nuclei_matching_widget.native)
+_layout.addStretch(1)

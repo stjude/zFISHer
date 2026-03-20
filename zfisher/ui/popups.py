@@ -3,7 +3,7 @@ import warnings
 
 from qtpy.QtWidgets import (
     QProgressDialog, QMessageBox, QApplication,
-    QDialog, QVBoxLayout, QLabel, QProgressBar
+    QDialog, QVBoxLayout, QLabel, QProgressBar, QWidget
 )
 from qtpy.QtCore import Qt
 from qtpy.QtGui import QPainter, QColor, QPainterPath
@@ -91,6 +91,27 @@ def _restore_napari_notifications():
         _saved_showwarning = None
 
 
+class _DimOverlay(QWidget):
+    """Semi-transparent dark overlay covering the parent window during loading."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setWindowFlags(Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        if parent:
+            self.setGeometry(parent.rect())
+        self.show()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 100))
+        painter.end()
+
+    def resizeToParent(self):
+        if self.parent():
+            self.setGeometry(self.parent().rect())
+
+
 class ProgressDialog(QProgressDialog):
     """
     A custom, non-cancellable QProgressDialog that provides a simple interface
@@ -133,11 +154,18 @@ class ProgressDialog(QProgressDialog):
                 border-radius: 5px;
             }
         """)
-        self.setContentsMargins(14, 14, 14, 14)
+        self.setContentsMargins(64, 64, 64, 64)
         self.setMinimumDuration(0)  # Show immediately
         self.setCancelButton(None)  # No cancel button
         self.setValue(0)
+        # Create dim overlay behind the dialog
+        self._overlay = None
+        parent = self.parent()
+        if parent is not None:
+            self._overlay = _DimOverlay(parent)
+            self._overlay.raise_()
         self.show()
+        self.raise_()  # Ensure dialog is above overlay
         self._center_on_parent()
         QApplication.processEvents()
 
@@ -155,7 +183,7 @@ class ProgressDialog(QProgressDialog):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         path = QPainterPath()
-        path.addRoundedRect(0.0, 0.0, float(self.width()), float(self.height()), 12.0, 12.0)
+        path.addRoundedRect(0.0, 0.0, float(self.width()), float(self.height()), 20.0, 20.0)
         painter.fillPath(path, QColor("#1a1421"))
         painter.setPen(QColor("#7a6b8a"))
         painter.drawPath(path)
@@ -198,6 +226,11 @@ class ProgressDialog(QProgressDialog):
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.unfreeze_canvas()
         self.close()
+        # Remove dim overlay
+        if self._overlay is not None:
+            self._overlay.close()
+            self._overlay.deleteLater()
+            self._overlay = None
         # Flush any remaining Qt events while notifications are still suppressed
         # so that deferred napari toasts from layer mutations don't appear.
         QApplication.processEvents()

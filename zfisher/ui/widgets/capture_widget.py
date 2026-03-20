@@ -748,7 +748,7 @@ def _on_arrow_show_toggled(state: bool):
         viewer.window.arrow_overlay.setVisible(state)
 
 # --- UI Wrapper ---
-from qtpy.QtWidgets import QFrame
+from qtpy.QtWidgets import QFrame, QLabel, QSizePolicy
 from ..style import COLORS
 
 def _make_divider():
@@ -757,16 +757,31 @@ def _make_divider():
     line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
     return line
 
+def _make_section_header(text):
+    lbl = QLabel(text)
+    lbl.setStyleSheet(f"color: {COLORS['separator_color']}; font-weight: bold; font-size: 13px; margin: 0px; padding: 0px;")
+    lbl.setContentsMargins(0, 0, 0, 0)
+    return lbl
+
+def _make_section_desc(text):
+    lbl = QLabel(text)
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet("color: white; font-size: 11px; margin: 0px; padding: 0px;")
+    lbl.setContentsMargins(0, 0, 0, 10)
+    return lbl
+
+def _make_spacer(height=20):
+    spacer = QFrame()
+    spacer.setFixedHeight(height)
+    spacer.setStyleSheet("background: transparent; border: none;")
+    return spacer
+
 capture_widget = widgets.Container(labels=False)
 header = widgets.Label(value="Capture & Annotate")
 header.native.setObjectName("widgetHeader")
 info = widgets.Label(value="<i>Save screenshots and draw annotations.</i>")
 info.native.setObjectName("widgetInfo")
-_hotkey_label = widgets.Label(value="<i>Shift+P: Capture  |  Shift+G: Region Capture</i>")
-
-_capture_header = widgets.Label(value="<b>Capture:</b>")
-_arrow_header = widgets.Label(value="<b>Annotations:</b>")
-_sb_header = widgets.Label(value="<b>Scale Bar:</b>")
+info.native.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
 _layout = capture_widget.native.layout()
 _layout.setSpacing(2)
@@ -775,22 +790,23 @@ _layout.addWidget(header.native)
 _layout.addWidget(info.native)
 _layout.addWidget(_make_divider())
 # --- Capture ---
-_layout.addWidget(_capture_header.native)
-_layout.addWidget(_hotkey_label.native)
+_layout.addWidget(_make_section_header("Capture"))
+_layout.addWidget(_make_section_desc("Save the current view as an image. Use Shift+P for quick capture or Shift+G for region selection."))
 _layout.addWidget(_capture_widget.output_filename.native)
 _layout.addWidget(_capture_widget.call_button.native)
+_layout.addWidget(_make_spacer())
 # --- Annotations ---
 _layout.addWidget(_make_divider())
-_layout.addWidget(_arrow_header.native)
+_layout.addWidget(_make_section_header("Annotations"))
+_layout.addWidget(_make_section_desc("Draw arrows on the canvas. Press A to start/end, D to delete nearest, Ctrl+Z to undo."))
 _layout.addWidget(arrow_chk.native)
 _layout.addWidget(arrow_show_chk.native)
 _layout.addWidget(arrow_count_label.native)
-_arrow_hint = widgets.Label(value="<i style='color: white;'>Press D over arrow to delete</i>")
-_arrow_hint.native.setObjectName("widgetInfo")
-_layout.addWidget(_arrow_hint.native)
 _layout.addWidget(arrow_clear_btn.native)
+_layout.addWidget(_make_spacer())
 # --- Scale Bar ---
 _layout.addWidget(_make_divider())
-_layout.addWidget(_sb_header.native)
+_layout.addWidget(_make_section_header("Scale Bar"))
+_layout.addWidget(_make_section_desc("Control the on-canvas scale bar visibility and position."))
 _layout.addWidget(sb_container.native)
 _layout.addStretch(1)

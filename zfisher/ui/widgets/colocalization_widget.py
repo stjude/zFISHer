@@ -22,6 +22,26 @@ def _make_divider():
     line.setStyleSheet("background-color: #7a6b8a; border: none; margin: 8px 0px;")
     return line
 
+def _make_section_header(text):
+    from qtpy.QtWidgets import QLabel
+    label = QLabel(f"<b style='color: #7a6b8a;'>{text}</b>")
+    label.setContentsMargins(0, 0, 0, 0)
+    label.setStyleSheet("margin: 0px 2px; padding: 0px;")
+    return label
+
+def _make_section_desc(text):
+    from qtpy.QtWidgets import QLabel
+    desc = QLabel(text)
+    desc.setWordWrap(True)
+    desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
+    return desc
+
+def _make_spacer():
+    from qtpy.QtWidgets import QWidget as _W
+    s = _W()
+    s.setFixedHeight(20)
+    return s
+
 
 # =====================================================================
 # Pairwise Colocalization
@@ -253,7 +273,6 @@ def _filter_non_puncta_layers(widget):
 
 
 class _ColocalizationContainer(Container):
-    """Wrapper that delegates reset_choices and exposes the inner magicgui."""
     def reset_choices(self):
         _rule_builder.reset_choices()
         _filter_non_puncta_layers(_rule_builder)
@@ -266,13 +285,8 @@ header = Label(value="Colocalization Analysis")
 header.native.setObjectName("widgetHeader")
 info = Label(value="<i>Define distance rules between puncta channels, then export a report.</i>")
 info.native.setObjectName("widgetInfo")
-
-# Build layout using native layout to keep dividers in correct order
-_pairwise_header = Label(value="<b>Pairwise Colocalization:</b>")
-_active_rules_header = Label(value="<b>Active Rules:</b>")
-_tri_header = Label(value="<b>Tri-Colocalization:</b>")
-_tri_active_header = Label(value="<b>Active Tri-Coloc Rules:</b>")
-_export_header = Label(value="<b>Export:</b>")
+from qtpy.QtWidgets import QSizePolicy as _QSP
+info.native.setSizePolicy(_QSP.Expanding, _QSP.Preferred)
 
 _layout = colocalization_widget.native.layout()
 _layout.setSpacing(2)
@@ -280,24 +294,33 @@ _layout.setContentsMargins(0, 0, 0, 0)
 _layout.addWidget(header.native)
 _layout.addWidget(info.native)
 _layout.addWidget(_make_divider())
+
 # --- Pairwise Colocalization ---
-_layout.addWidget(_pairwise_header.native)
+_layout.addWidget(_make_section_header("Pairwise Colocalization"))
+_layout.addWidget(_make_section_desc("Define distance rules between two puncta channels."))
 _layout.addWidget(_rule_builder.native)
-_layout.addWidget(_active_rules_header.native)
+_layout.addWidget(_make_spacer())
+_layout.addWidget(_make_section_header("Active Rules"))
 _layout.addWidget(_rules_display.native)
 _layout.addWidget(_clear_btn.native)
-# --- Divider ---
-_layout.addWidget(_make_divider())
+
 # --- Tri-Colocalization ---
-_layout.addWidget(_tri_header.native)
+_layout.addWidget(_make_spacer())
+_layout.addWidget(_make_divider())
+_layout.addWidget(_make_section_header("Tri-Colocalization"))
+_layout.addWidget(_make_section_desc("Define three-channel proximity rules. Anchor must be near both channels."))
 _layout.addWidget(_tri_rule_builder.native)
-_layout.addWidget(_tri_active_header.native)
+_layout.addWidget(_make_spacer())
+_layout.addWidget(_make_section_header("Active Tri-Coloc Rules"))
 _layout.addWidget(_tri_rules_display.native)
 _layout.addWidget(_tri_clear_btn.native)
-# --- Divider ---
-_layout.addWidget(_make_divider())
+
 # --- Export ---
-_layout.addWidget(_export_header.native)
+_layout.addWidget(_make_spacer())
+_layout.addWidget(_make_divider())
+_layout.addWidget(_make_section_header("Export"))
+_layout.addWidget(_make_section_desc("Run analysis on all rules and export the master Excel report."))
 _layout.addWidget(_filename.native)
+_layout.addWidget(_make_spacer())
 _layout.addWidget(_export_btn.native)
 _layout.addStretch(1)

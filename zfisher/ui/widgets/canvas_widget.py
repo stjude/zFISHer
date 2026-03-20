@@ -214,19 +214,63 @@ def _canvas_widget(
 
     viewer.status = "Global Canvas Generation Complete."
 
+# --- UI Helpers ---
+from qtpy.QtWidgets import QLabel, QFrame, QSizePolicy
+from ..style import COLORS
+
+def _make_divider():
+    line = QFrame()
+    line.setFixedHeight(2)
+    line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
+    return line
+
+def _make_section_header(text):
+    label = QLabel(f"<b style='color: #7a6b8a;'>{text}</b>")
+    label.setContentsMargins(0, 0, 0, 0)
+    label.setStyleSheet("margin: 0px 2px; padding: 0px;")
+    return label
+
+def _make_section_desc(text):
+    desc = QLabel(text)
+    desc.setWordWrap(True)
+    desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
+    return desc
+
+def _make_spacer():
+    from qtpy.QtWidgets import QWidget as _W
+    s = _W()
+    s.setFixedHeight(20)
+    return s
+
 # --- UI Wrapper ---
 class _CanvasContainer(Container):
-    """Wrapper that delegates reset_choices."""
     def reset_choices(self):
         _canvas_widget.reset_choices()
 
 canvas_widget = _CanvasContainer(labels=False)
+canvas_widget._canvas_widget = _canvas_widget
 header = Label(value="Global Canvas")
 header.native.setObjectName("widgetHeader")
 info = Label(value="<i>Applies registration and creates aligned layers.</i>")
 info.native.setObjectName("widgetInfo")
-canvas_widget.extend([header, info, make_header_divider(), _canvas_widget])
-_canvas_layout = canvas_widget.native.layout()
-_canvas_layout.setSpacing(2)
-_canvas_layout.setContentsMargins(0, 0, 0, 0)
-_canvas_layout.addStretch(1)
+info.native.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+_layout = canvas_widget.native.layout()
+_layout.setSpacing(2)
+_layout.setContentsMargins(0, 0, 0, 0)
+_layout.addWidget(header.native)
+_layout.addWidget(info.native)
+_layout.addWidget(_make_divider())
+
+# Insert section headers into inner form
+_inner = _canvas_widget.native.layout()
+_options_header = _make_section_header("Options")
+_options_desc = _make_section_desc("Configure warping and layer visibility after alignment.")
+_inner.insertWidget(0, _options_header)
+_inner.insertWidget(1, _options_desc)
+_inner.insertWidget(_inner.count() - 1, _make_spacer())
+_inner.setSpacing(2)
+_inner.setContentsMargins(0, 0, 0, 0)
+
+_layout.addWidget(_canvas_widget.native)
+_layout.addStretch(1)

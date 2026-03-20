@@ -467,7 +467,7 @@ def launch_zfisher():
                 # Lock n_edit_dimensions to 3 so paint/erase works across z
                 selected.n_edit_dimensions = 3
 
-                _hide_labels = {'contiguous', 'preserve', 'color mode', 'rendering', 'display', 'n edit', 'contour', 'gradient'}
+                _hide_labels = {'contiguous', 'preserve', 'color mode', 'rendering', 'display', 'n edit', 'contour', 'gradient', 'label'}
                 layout = page.layout()
                 if isinstance(layout, QFormLayout):
                     for row in range(layout.rowCount()):
@@ -793,6 +793,12 @@ def launch_zfisher():
         active = viewer.layers.selection.active
         if active is not None and hasattr(active, 'mode') and active.mode != 'pan_zoom':
             active.mode = 'pan_zoom'
+        # Disable hover edit mode when switching widgets
+        try:
+            from .widgets.mask_editor_widget import deactivate_hover_edit
+            deactivate_hover_edit()
+        except Exception:
+            pass
 
     toolbox.currentChanged.connect(_reset_to_pan_zoom)
     # Also connect nested toolboxes (inside StartSessionWidget, NucleiSegmentationWidget, etc.)

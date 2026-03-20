@@ -48,9 +48,36 @@ def _registration_widget(
 _registration_widget.result_label = widgets.Label(value="")
 _registration_widget.append(_registration_widget.result_label)
 
+# --- UI Helpers ---
+from qtpy.QtWidgets import QLabel, QFrame, QSizePolicy
+from ..style import COLORS
+
+def _make_divider():
+    line = QFrame()
+    line.setFixedHeight(2)
+    line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
+    return line
+
+def _make_section_header(text):
+    label = QLabel(f"<b style='color: #7a6b8a;'>{text}</b>")
+    label.setContentsMargins(0, 0, 0, 0)
+    label.setStyleSheet("margin: 0px 2px; padding: 0px;")
+    return label
+
+def _make_section_desc(text):
+    desc = QLabel(text)
+    desc.setWordWrap(True)
+    desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
+    return desc
+
+def _make_spacer():
+    from qtpy.QtWidgets import QWidget as _W
+    s = _W()
+    s.setFixedHeight(20)
+    return s
+
 # --- UI Wrapper ---
 class _RegistrationContainer(widgets.Container):
-    """Wrapper that delegates reset_choices and exposes the inner magicgui."""
     def reset_choices(self):
         _registration_widget.reset_choices()
 
@@ -60,8 +87,24 @@ header = widgets.Label(value="Registration")
 header.native.setObjectName("widgetHeader")
 info = widgets.Label(value="<i>Calculates shift between rounds.</i>")
 info.native.setObjectName("widgetInfo")
-registration_widget.extend([header, info, make_header_divider(), _registration_widget])
-_reg_layout = registration_widget.native.layout()
-_reg_layout.setSpacing(2)
-_reg_layout.setContentsMargins(0, 0, 0, 0)
-_reg_layout.addStretch(1)
+info.native.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+_layout = registration_widget.native.layout()
+_layout.setSpacing(2)
+_layout.setContentsMargins(0, 0, 0, 0)
+_layout.addWidget(header.native)
+_layout.addWidget(info.native)
+_layout.addWidget(_make_divider())
+
+# Insert section headers into inner form
+_inner = _registration_widget.native.layout()
+_centroid_header = _make_section_header("Centroid Layers")
+_centroid_desc = _make_section_desc("Select the R1 and R2 centroid point layers for shift calculation.")
+_inner.insertWidget(0, _centroid_header)
+_inner.insertWidget(1, _centroid_desc)
+_inner.insertWidget(_inner.count() - 1, _make_spacer())
+_inner.setSpacing(2)
+_inner.setContentsMargins(0, 0, 0, 0)
+
+_layout.addWidget(_registration_widget.native)
+_layout.addStretch(1)

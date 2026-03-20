@@ -124,13 +124,32 @@ def _refresh_channel_choices():
     _refilter_widget.channels.value = choices[0] if choices else "All (R1 + R2)"
 
 
+# --- UI Helpers ---
+def _make_section_header(text):
+    from qtpy.QtWidgets import QLabel
+    label = QLabel(f"<b style='color: #7a6b8a;'>{text}</b>")
+    label.setContentsMargins(0, 0, 0, 0)
+    label.setStyleSheet("margin: 0px 2px; padding: 0px;")
+    return label
+
+def _make_section_desc(text):
+    from qtpy.QtWidgets import QLabel
+    desc = QLabel(text)
+    desc.setWordWrap(True)
+    desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
+    return desc
+
+def _make_spacer():
+    from qtpy.QtWidgets import QWidget as _W
+    s = _W()
+    s.setFixedHeight(20)
+    return s
+
 # --- UI Wrapper ---
 class _RefilterWidgetContainer(widgets.Container):
-    """Wrapper that delegates reset_choices."""
     def reset_choices(self):
         _refilter_widget.reset_choices()
         _refresh_channel_choices()
-
 
 refilter_puncta_widget = _RefilterWidgetContainer(labels=False)
 refilter_puncta_widget._refilter_widget = _refilter_widget
@@ -139,6 +158,8 @@ header = widgets.Label(value="Puncta Cleanup")
 header.native.setObjectName("widgetHeader")
 info = widgets.Label(value="<i>Remove puncta outside a mask after editing.</i>")
 info.native.setObjectName("widgetInfo")
+from qtpy.QtWidgets import QSizePolicy as _QSP
+info.native.setSizePolicy(_QSP.Expanding, _QSP.Preferred)
 
 _layout = refilter_puncta_widget.native.layout()
 _layout.setSpacing(2)
@@ -146,5 +167,14 @@ _layout.setContentsMargins(0, 0, 0, 0)
 _layout.addWidget(header.native)
 _layout.addWidget(info.native)
 _layout.addWidget(_make_divider())
+
+# Insert section headers into inner form
+_inner = _refilter_widget.native.layout()
+_inner.insertWidget(0, _make_section_header("Filter Settings"))
+_inner.insertWidget(1, _make_section_desc("Select a nuclei mask and channel(s) to remove extranuclear puncta."))
+_inner.insertWidget(_inner.count() - 1, _make_spacer())
+_inner.setSpacing(2)
+_inner.setContentsMargins(0, 0, 0, 0)
+
 _layout.addWidget(_refilter_widget.native)
 _layout.addStretch(1)

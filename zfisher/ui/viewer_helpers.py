@@ -416,6 +416,17 @@ def _add_or_replace_ids_layer(viewer, name, coords, labels, scale, translate=Non
         layer.text = {'string': '{label}', 'size': 12, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])}
         layer.scale = scale
         layer.translate = translate
+        # Re-apply 3D rendering properties that may be lost after data replacement
+        layer.size = 9999
+        layer.face_color = 'transparent'
+        layer.border_color = 'transparent'
+        layer.border_width = 0
+        layer.blending = 'translucent_no_depth'
+        layer.out_of_slice_display = True
+        try:
+            layer.text.blending = 'translucent_no_depth'
+        except Exception:
+            pass
     else:
         # CREATE NEW — only when the layer doesn't exist yet
         target_idx = None
