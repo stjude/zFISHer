@@ -40,7 +40,7 @@ _puncta_undo = _PunctaUndoStack()
 @magicgui(
     call_button="Delete Selected Points",
     points_layer={"label": "Layer to Edit", "tooltip": "The puncta points layer to edit."},
-    fishing_hook={"label": "Enable Fishing Hook", "value": True, "tooltip": "Click to place puncta. Automatically snaps to the nearest intensity peak."},
+    fishing_hook={"label": "Enable Fishing Hook", "value": False, "tooltip": "Click to place puncta. Automatically snaps to the nearest intensity peak."},
     volume_optimization={"label": "Volume Optimization", "value": True, "tooltip": "Refine each placed punctum position to the local intensity maximum."},
     opt_radius={"label": "Opt. Radius (um)", "value": "0.1", "tooltip": "Search radius in microns for volume optimization refinement."}
 )
@@ -79,8 +79,72 @@ def register_editor_hotkeys(viewer):
 
 _previous_editor_layer = [None]  # mutable container to allow closure mutation
 
+_prev_data_connection = [None]  # (layer, callback) for data event
+_prev_point_count = [0]
+_skip_data_sync = False  # set True when our own code modifies data
+
+def _on_points_data_changed(event=None):
+    """Auto-assign unique puncta_id when points are added via napari's native Add mode."""
+    global _skip_data_sync
+    if _skip_data_sync:
+        return
+    layer = _puncta_editor_widget.points_layer.value
+    if not layer:
+        return
+    n = len(layer.data)
+    prev = _prev_point_count[0]
+    _prev_point_count[0] = n
+
+    if n <= prev:
+        return  # points were removed or unchanged, not added
+
+    # Points were added — assign unique IDs to all new points
+    n_new = n - prev
+    features = layer.features
+    if 'puncta_id' not in features.columns:
+        features['puncta_id'] = pd.Series(dtype='float')
+
+    max_id = features['puncta_id'].dropna().max()
+    next_id = int(max_id) + 1 if pd.notna(max_id) else 0
+
+    for i in range(prev, n):
+        idx = features.index[i] if i < len(features) else i
+        if i < len(features) and pd.notna(features.loc[idx].get('puncta_id')) and features.loc[idx]['puncta_id'] != features.iloc[prev - 1]['puncta_id'] if prev > 0 else False:
+            continue  # already has a unique ID (set by fishing hook)
+        features.loc[idx, 'puncta_id'] = next_id
+        # Fill other required columns with defaults
+        for col, default in [('Nucleus_ID', 0), ('Intensity', np.nan), ('SNR', np.nan)]:
+            if col not in features.columns:
+                features[col] = default
+            elif pd.isna(features.loc[idx].get(col, np.nan)):
+                features.loc[idx, col] = default
+        next_id += 1
+
+    _skip_data_sync = True
+    try:
+        layer.features = features
+        layer.text = {
+            'string': '{puncta_id:.0f}', 'size': layer.text.size,
+            'color': 'white', 'translation': np.array([0, 5, 5]),
+        }
+        layer.refresh()
+    finally:
+        _skip_data_sync = False
+
 @_puncta_editor_widget.points_layer.changed.connect
 def _on_layer_change(new_layer):
+    # Clear undo stack when switching layers to prevent cross-layer undo
+    _puncta_undo.clear()
+
+    # Disconnect previous data event
+    if _prev_data_connection[0] is not None:
+        old_layer, old_cb = _prev_data_connection[0]
+        try:
+            old_layer.events.data.disconnect(old_cb)
+        except (RuntimeError, TypeError):
+            pass
+        _prev_data_connection[0] = None
+
     # Remove fishing hook from the *previous* layer so callbacks don't accumulate
     old_layer = _previous_editor_layer[0]
     if old_layer is not None and old_layer is not new_layer:
@@ -94,6 +158,10 @@ def _on_layer_change(new_layer):
     if new_layer:
         if fishing_hook_callback not in new_layer.mouse_drag_callbacks:
             new_layer.mouse_drag_callbacks.append(fishing_hook_callback)
+        # Connect data change listener for auto-ID assignment
+        _prev_point_count[0] = len(new_layer.data)
+        new_layer.events.data.connect(_on_points_data_changed)
+        _prev_data_connection[0] = (new_layer, _on_points_data_changed)
 
 # --- 1. Algorithmic Math (Operates strictly on Pixel Arrays) ---
 # --- 1. Algorithmic Math (Operates strictly on Pixel Arrays) ---
@@ -152,9 +220,30 @@ def calculate_fishing_hook(img_layer, data_pos, viewer, use_optimization=True, r
             
     return target_coord_data
 
+# --- F key state tracking for fishing hook ---
+_f_key_held = False
+_f_key_bound = False
+
+def _ensure_f_key_bound():
+    """Lazily bind the F key to the viewer for fishing hook activation."""
+    global _f_key_bound
+    if _f_key_bound:
+        return
+    viewer = napari.current_viewer()
+    if not viewer:
+        return
+    @viewer.bind_key('f', overwrite=True)
+    def _on_f_press(viewer):
+        global _f_key_held
+        _f_key_held = True
+        yield
+        _f_key_held = False
+    _f_key_bound = True
+
 # --- 2. The Yield Callback (Emulates puncta.py segmentation) ---
 def fishing_hook_callback(layer, event):
-    if 'Shift' not in event.modifiers or not _puncta_editor_widget.fishing_hook.value:
+    _ensure_f_key_bound()
+    if not _f_key_held or not _puncta_editor_widget.fishing_hook.value:
         return
 
     viewer = napari.current_viewer()
@@ -180,7 +269,9 @@ def fishing_hook_callback(layer, event):
         yield
         
     if target_coord_data is not None:
+        global _skip_data_sync
         _puncta_undo.push(layer)
+        _skip_data_sync = True
         new_data = layer.data.copy()
 
         search_data = new_data[:-1] if layer.mode == 'add' and len(new_data) > 0 else new_data
@@ -235,6 +326,8 @@ def fishing_hook_callback(layer, event):
             
         layer.data = new_data
         layer.features = current_features
+        _prev_point_count[0] = len(new_data)  # sync count so data listener doesn't re-process
+        _skip_data_sync = False
         layer.refresh()
         logger.info("PUNCTA EDIT: Added point ID %d at %s on layer '%s'", next_id, np.round(target_coord_data, 1), layer.name)
         viewer.status = f"Algorithmic Snap: ID {next_id}, Pixel {np.round(target_coord_data, 1)}"
@@ -311,7 +404,7 @@ _inner.insertWidget(1, _pe_target_desc)
 # --- "Fishing Hook" section: fishing_hook(3), volume_opt(4), opt_radius(5) ---
 _fishing_hook_header = _make_section_header("Fishing Hook")
 _fishing_hook_desc = _make_section_desc(
-    "Shift+Click to place a punctum. The algorithm casts a ray through "
+    "Hold F + Click to place a punctum. The algorithm casts a ray through "
     "the volume along your viewing angle, finds the brightest voxel, then "
     "refines to the local intensity peak. Ideal for accurate placement in 3D."
 )

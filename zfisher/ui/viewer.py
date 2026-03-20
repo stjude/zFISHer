@@ -486,6 +486,29 @@ def launch_zfisher():
                                 field_item.widget().setVisible(False)
                                 field_item.widget().setMaximumHeight(0)
 
+            # Hide unwanted controls on puncta layers
+            is_puncta_layer = selected is not None and selected.name.endswith("_puncta")
+            if is_puncta_layer:
+                from qtpy.QtWidgets import QFormLayout
+                _hide_puncta = {'blending', 'projection', 'symbol', 'border color'}
+                layout = page.layout()
+                if isinstance(layout, QFormLayout):
+                    for row in range(layout.rowCount()):
+                        lbl_item = layout.itemAt(row, QFormLayout.LabelRole)
+                        if not lbl_item:
+                            continue
+                        lbl_w = lbl_item.widget()
+                        if not lbl_w:
+                            continue
+                        txt = lbl_w.text().strip().rstrip(':').lower()
+                        if any(k in txt for k in _hide_puncta):
+                            lbl_w.setVisible(False)
+                            lbl_w.setMaximumHeight(0)
+                            field_item = layout.itemAt(row, QFormLayout.FieldRole)
+                            if field_item and field_item.widget():
+                                field_item.widget().setVisible(False)
+                                field_item.widget().setMaximumHeight(0)
+
             # Hide depiction dropdown (volume/plane) for image layers
             for combo in page.findChildren(QComboBox):
                 items = [combo.itemText(i).lower() for i in range(combo.count())]
@@ -711,9 +734,171 @@ def launch_zfisher():
         page_layout.addRow(color_label, color_btn)
         _centroids_custom_widgets.extend([size_label, size_field, color_label, color_btn])
 
+    # Custom controls for _puncta layers: point size, symbol color, text size, text color
+    _puncta_custom_widgets = []
+
+    def _add_puncta_custom_controls(event=None):
+        if _suppress_custom_controls:
+            return
+        from qtpy.QtWidgets import (
+            QWidget, QLabel, QSlider, QHBoxLayout, QColorDialog, QPushButton,
+        )
+        from qtpy.QtCore import Qt
+        import numpy as np
+        controls = viewer.window._qt_viewer.controls
+
+        # Remove previous custom widgets
+        for w in _puncta_custom_widgets:
+            w.setParent(None)
+            w.deleteLater()
+        _puncta_custom_widgets.clear()
+
+        selected = viewer.layers.selection.active
+        if selected is None or not selected.name.endswith("_puncta"):
+            return
+
+        layer = selected
+        current_page = controls.currentWidget()
+        if not current_page:
+            return
+        page_layout = current_page.layout()
+        if not page_layout:
+            return
+
+        def _make_label(text):
+            lbl = QLabel(text)
+            lbl.setWordWrap(True)
+            lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            return lbl
+
+        def _make_slider_row(label_text, min_val, max_val, current_val, on_change):
+            lbl = _make_label(label_text)
+            slider = QSlider(Qt.Horizontal)
+            slider.setFocusPolicy(Qt.NoFocus)
+            slider.setMinimum(min_val)
+            slider.setMaximum(max_val)
+            slider.setValue(current_val)
+            val_lbl = QLabel(str(current_val))
+            val_lbl.setFixedWidth(26)
+            val_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            def _changed(v):
+                on_change(v)
+                val_lbl.setText(str(v))
+            slider.valueChanged.connect(_changed)
+            field = QWidget()
+            field.setAttribute(Qt.WA_StyledBackground, False)
+            field.setStyleSheet("background: transparent;")
+            fl = QHBoxLayout(field)
+            fl.setContentsMargins(0, 0, 0, 0)
+            fl.setSpacing(4)
+            fl.addWidget(slider)
+            fl.addWidget(val_lbl)
+            return lbl, field
+
+        def _make_color_btn(get_color, set_color, dialog_title):
+            btn = QPushButton()
+            btn.setFixedHeight(22)
+            btn.setCursor(Qt.PointingHandCursor)
+            hex_c = get_color()
+            btn.setStyleSheet(_NAPARI_SWATCH_SS.format(hex_c))
+            def _clicked():
+                from qtpy.QtGui import QColor as _QColor
+                chosen = QColorDialog.getColor(_QColor(hex_c), controls, dialog_title)
+                if chosen.isValid():
+                    new_hex = chosen.name()
+                    btn.setStyleSheet(_NAPARI_SWATCH_SS.format(new_hex))
+                    set_color(new_hex)
+            btn.clicked.connect(_clicked)
+            return btn
+
+        # --- Point Size ---
+        current_pt_size = int(np.mean(layer.size)) if len(layer.size) > 0 else 3
+        pt_lbl, pt_field = _make_slider_row(
+            "point size:", 1, 30, current_pt_size,
+            lambda v: setattr(layer, 'size', v)
+        )
+
+        # --- Symbol Color (face color) ---
+        sym_color_lbl = _make_label("symbol color:")
+        def _get_face_color():
+            try:
+                fc = layer.face_color
+                if len(fc) > 0:
+                    rgba = fc[0]
+                    return '#{:02x}{:02x}{:02x}'.format(int(rgba[0]*255), int(rgba[1]*255), int(rgba[2]*255))
+            except Exception:
+                pass
+            return '#ffff00'
+        sym_color_btn = _make_color_btn(
+            _get_face_color,
+            lambda c: setattr(layer, 'face_color', c),
+            "Choose Symbol Color"
+        )
+
+        # --- Text Size ---
+        current_text_size = int(layer.text.size) if hasattr(layer.text, 'size') else 8
+        txt_size_lbl, txt_size_field = _make_slider_row(
+            "text size:", 4, 40, current_text_size,
+            lambda v: (setattr(layer.text, 'size', v), layer.refresh())
+        )
+
+        # --- Text Color ---
+        txt_color_lbl = _make_label("text color:")
+        def _get_text_color():
+            try:
+                tc = layer.text.color
+                if hasattr(tc, 'constant') and tc.constant is not None:
+                    rgba = tc.constant
+                else:
+                    rgba = [1.0, 1.0, 1.0, 1.0]
+                return '#{:02x}{:02x}{:02x}'.format(int(rgba[0]*255), int(rgba[1]*255), int(rgba[2]*255))
+            except Exception:
+                return '#ffffff'
+        def _set_text_color(c):
+            layer.text.color = c
+            layer.refresh()
+        txt_color_btn = _make_color_btn(_get_text_color, _set_text_color, "Choose Text Color")
+
+        # --- Draw on Top checkbox ---
+        from qtpy.QtWidgets import QCheckBox
+        top_chk = QCheckBox()
+        is_on_top = (str(layer.blending).lower() == 'translucent_no_depth')
+        top_chk.setChecked(is_on_top)
+
+        def _on_top_toggled(checked):
+            if checked:
+                layer.blending = 'translucent_no_depth'
+                try:
+                    layer.text.blending = 'translucent_no_depth'
+                except Exception:
+                    pass
+            else:
+                layer.blending = 'translucent'
+                try:
+                    layer.text.blending = 'translucent'
+                except Exception:
+                    pass
+            layer.refresh()
+
+        top_chk.stateChanged.connect(lambda state: _on_top_toggled(bool(state)))
+        top_label = _make_label("draw on top:")
+
+        # Add rows
+        page_layout.addRow(pt_lbl, pt_field)
+        page_layout.addRow(sym_color_lbl, sym_color_btn)
+        page_layout.addRow(txt_size_lbl, txt_size_field)
+        page_layout.addRow(txt_color_lbl, txt_color_btn)
+        page_layout.addRow(top_label, top_chk)
+        _puncta_custom_widgets.extend([
+            pt_lbl, pt_field, sym_color_lbl, sym_color_btn,
+            txt_size_lbl, txt_size_field, txt_color_lbl, txt_color_btn,
+            top_label, top_chk,
+        ])
+
     viewer.layers.selection.events.changed.connect(_hide_unwanted_controls)
     viewer.layers.selection.events.changed.connect(_add_ids_custom_controls)
     viewer.layers.selection.events.changed.connect(_add_centroids_custom_controls)
+    viewer.layers.selection.events.changed.connect(_add_puncta_custom_controls)
 
     # Disable renaming layers (double-click) and right-click context menu
     from qtpy.QtWidgets import QAbstractItemView
@@ -797,6 +982,12 @@ def launch_zfisher():
         try:
             from .widgets.mask_editor_widget import deactivate_hover_edit
             deactivate_hover_edit()
+        except Exception:
+            pass
+        # Disable fishing hook when switching widgets
+        try:
+            from .widgets.puncta_editor_widget import _puncta_editor_widget
+            _puncta_editor_widget.fishing_hook.value = False
         except Exception:
             pass
 

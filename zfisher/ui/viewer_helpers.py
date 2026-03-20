@@ -336,23 +336,13 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
         combined_coords = segmentation.merge_puncta(existing_coords, coords)
         combined_features = pd.concat([existing_features, new_features], ignore_index=True)
 
-        # Remove and recreate the layer atomically to avoid vispy OpenGL
-        # access violations caused by intermediate redraws between separate
-        # .data / .features / .text assignments.
-        layer_scale = pts_layer.scale
-        layer_translate = pts_layer.translate
-        viewer.layers.remove(pts_layer)
-        viewer.add_points(
-            combined_coords,
-            name=layer_name,
-            size=3,
-            face_color="yellow",
-            scale=layer_scale,
-            translate=layer_translate,
-            features=combined_features,
-            text=text_params,
-            visible=False,
-        )
+        # Update in-place to avoid destroying GL buffers (which causes
+        # vispy access violations on the next draw cycle).
+        pts_layer.data = combined_coords
+        pts_layer.features = combined_features
+        pts_layer.text = text_params
+        pts_layer.size = 3
+        pts_layer.face_color = "yellow"
 
     else:
         # Create new layer

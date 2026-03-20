@@ -77,8 +77,16 @@ def _puncta_widget(
             output_path=csv_path,
             progress_callback=lambda p, t: dialog.update_progress(p, t)
         )
-        
-        viewer_helpers.add_or_update_puncta_layer(viewer, image_layer, results)
+
+        # Freeze canvas before adding/updating the points layer to prevent
+        # vispy from drawing stale GL buffers during processEvents()
+        dialog.freeze_canvas()
+        from .. import viewer as _viewer_mod
+        _viewer_mod._suppress_custom_controls = True
+        try:
+            viewer_helpers.add_or_update_puncta_layer(viewer, image_layer, results)
+        finally:
+            _viewer_mod._suppress_custom_controls = False
 
         # Persist the detection parameters for this channel in the session
         puncta_params_all = session.get_data("puncta_params", default={})

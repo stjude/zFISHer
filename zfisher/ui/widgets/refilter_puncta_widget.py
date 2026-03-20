@@ -1,11 +1,45 @@
 import napari
 import numpy as np
+from collections import deque
 from magicgui import magicgui, widgets
-from qtpy.QtWidgets import QFrame
+from qtpy.QtWidgets import QFrame, QPushButton
 
 from ..decorators import require_active_session, error_handler
 from .. import style
 from ... import constants
+
+
+class _RefilterUndoStack:
+    """Stores snapshots of all affected layers before a refilter operation."""
+    def __init__(self, maxlen=5):
+        self._stack = deque(maxlen=maxlen)
+
+    def push(self, layers):
+        """Save (data, features) for each layer before refilter."""
+        snapshot = []
+        for layer in layers:
+            feats = layer.features.copy() if layer.features is not None and len(layer.features) > 0 else None
+            snapshot.append((layer, layer.data.copy(), feats))
+        self._stack.append(snapshot)
+
+    def undo(self):
+        if not self._stack:
+            return False
+        snapshot = self._stack.pop()
+        for layer, data, features in snapshot:
+            layer.data = data
+            if features is not None:
+                layer.features = features
+        return True
+
+    def clear(self):
+        self._stack.clear()
+
+    def __len__(self):
+        return len(self._stack)
+
+
+_refilter_undo = _RefilterUndoStack()
 
 
 def _make_divider():
@@ -95,6 +129,9 @@ def _refilter_widget(
         viewer.status = "No matching puncta layers found."
         return
 
+    # Snapshot all affected layers before modification
+    _refilter_undo.push(target_layers)
+
     total_removed = 0
     for layer in target_layers:
         coords = layer.data
@@ -177,4 +214,21 @@ _inner.setSpacing(2)
 _inner.setContentsMargins(0, 0, 0, 0)
 
 _layout.addWidget(_refilter_widget.native)
+
+# Undo button
+_refilter_undo_btn = QPushButton("Undo")
+_refilter_undo_btn.setToolTip("Undo the last refilter operation, restoring removed puncta.")
+
+def _on_refilter_undo(_checked=False):
+    viewer = napari.current_viewer()
+    if _refilter_undo.undo():
+        if viewer:
+            viewer.status = f"Refilter undone ({len(_refilter_undo)} remaining)."
+    else:
+        if viewer:
+            viewer.status = "Nothing to undo."
+
+_refilter_undo_btn.clicked.connect(_on_refilter_undo)
+_layout.addWidget(_refilter_undo_btn)
+
 _layout.addStretch(1)

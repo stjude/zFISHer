@@ -257,21 +257,15 @@ def _mask_editor_widget(
     mask_layer.data[mask_layer.data == source_id] = target_id
     _mask_undo.end(mask_layer.data)
     mask_layer.refresh()
-    _remove_id_from_points_layer(mask_layer, source_id)
     _schedule_save(mask_layer)
+    # Refresh IDs layer from scratch — more reliable than incremental removal
+    QTimer.singleShot(50, lambda: viewer_helpers.add_or_update_label_ids(viewer, mask_layer))
 
     viewer.status = f"Merged ID {source_id} into {target_id} ({count} pixels)."
 
 def _delete_label_inplace(layer, label_id, reset_mode=False):
     """Delete a label in-place and refresh without triggering a full data reassignment."""
     viewer = napari.current_viewer()
-
-    # Hide the IDs points layer before any mutation to prevent vispy
-    # from drawing stale GL buffers during intermediate repaints.
-    ids_name = f"{layer.name}_IDs"
-    ids_layer = viewer.layers[ids_name] if viewer and ids_name in viewer.layers else None
-    if ids_layer is not None:
-        ids_layer.visible = False
 
     # Reset mode before data mutation
     if reset_mode and hasattr(layer, 'mode'):
@@ -283,13 +277,16 @@ def _delete_label_inplace(layer, label_id, reset_mode=False):
 
     # Defer all visual updates to next event loop iteration so vispy
     # finishes any in-progress GL draw before buffers are modified.
+    ids_name = f"{layer.name}_IDs"
+
     def _deferred_updates():
         layer.refresh()
-        _remove_id_from_points_layer(layer, label_id)
-        # Re-show the IDs layer after buffers are updated
-        if ids_layer is not None:
-            ids_layer.visible = True
-    QTimer.singleShot(0, _deferred_updates)
+        # Full IDs refresh — rebuilds data+text from scratch, avoids stale cache
+        viewer_helpers.add_or_update_label_ids(viewer, layer)
+        # Re-show the IDs layer (look up fresh reference in case it was recreated)
+        if ids_name in viewer.layers:
+            viewer.layers[ids_name].visible = True
+    QTimer.singleShot(50, _deferred_updates)
     # Debounce save to disk
     _schedule_save(layer)
 
@@ -314,6 +311,16 @@ def _remove_id_from_points_layer(mask_layer, deleted_id):
         return
     pts_layer.selected_data = to_remove
     pts_layer.remove_selected()
+    # Force text to re-sync with updated data/features to prevent IndexError
+    # (napari's text cache can get stale after remove_selected)
+    try:
+        remaining_labels = np.asarray(pts_layer.properties.get('label', np.empty(0)))
+        pts_layer.text = {
+            'string': '{label}', 'size': 12, 'color': '#40b5d8',
+            'translation': np.array([0, -5, 0]),
+        }
+    except Exception:
+        pass
 
 _save_timer = QTimer()
 _save_timer.setSingleShot(True)
@@ -1027,14 +1034,17 @@ def _sync_erase_from_layer_mode(event):
         elif is_erase and not _was_erasing and _mask_undo._pre_edit is None:
             _mask_undo.begin(layer.data)
 
-    # If we just left paint mode, refresh IDs so new labels get their text
-    if _was_painting and not is_paint:
+    # If we just left paint or erase mode, refresh IDs and ensure visibility
+    if (_was_painting and not is_paint) or (_was_erasing and not is_erase):
         if layer:
             viewer = napari.current_viewer()
             if viewer:
                 ids_name = f"{layer.name}_IDs"
-                if ids_name in viewer.layers:
-                    QTimer.singleShot(100, lambda: viewer_helpers.add_or_update_label_ids(viewer, layer))
+                def _refresh_and_show(v=viewer, l=layer, n=ids_name):
+                    viewer_helpers.add_or_update_label_ids(v, l)
+                    if n in v.layers:
+                        v.layers[n].visible = True
+                QTimer.singleShot(100, _refresh_and_show)
     _was_painting = is_paint
     _was_erasing = is_erase
 

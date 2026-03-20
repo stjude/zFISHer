@@ -123,3 +123,6 @@ class NewSessionWidget(Container):
             self._viewer.layers.clear()
             load_raw_data_into_viewer(self._viewer, session.get_data("r1_path"), session.get_data("r2_path"), output_dir=session.get_data("output_dir"), progress_callback=dialog.update_progress)
 
+            if hasattr(self._viewer.window, 'custom_scale_bar'):
+                self._viewer.window.custom_scale_bar.show()
+
