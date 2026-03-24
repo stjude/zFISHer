@@ -2,7 +2,7 @@ import logging
 import warnings
 
 from qtpy.QtWidgets import (
-    QMessageBox, QApplication,
+    QApplication,
     QDialog, QVBoxLayout, QLabel, QProgressBar, QWidget
 )
 from qtpy.QtCore import Qt
@@ -417,18 +417,129 @@ def select_nuclear_channel(parent, channels):
     return choice if ok else None
 
 
+class _ThemedPopup(QDialog):
+    """Dark-themed popup dialog matching the ProgressDialog style."""
+
+    def __init__(self, parent, title, text, icon_text="", buttons=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setWindowModality(Qt.WindowModal)
+        self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.WindowModal)
+        self.setStyleSheet("_ThemedPopup { background-color: #1a1421; }")
+        self.setMinimumWidth(340)
+        self.setMaximumWidth(480)
+        self._result_value = None
+
+        from qtpy.QtWidgets import QPushButton, QHBoxLayout
+
+        _pad = 24
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(_pad, _pad, _pad, _pad)
+        layout.setSpacing(12)
+
+        # Title row with icon
+        title_label = QLabel(f"{icon_text}  {title}" if icon_text else title)
+        title_label.setStyleSheet("color: white; font-weight: bold; font-size: 14px; background: transparent;")
+        title_label.setWordWrap(True)
+        layout.addWidget(title_label)
+
+        # Message body
+        body_label = QLabel(text)
+        body_label.setStyleSheet("color: #c0b8c8; font-size: 12px; background: transparent;")
+        body_label.setWordWrap(True)
+        layout.addWidget(body_label)
+
+        layout.addSpacing(8)
+
+        # Buttons
+        if buttons is None:
+            buttons = [("OK", True)]
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch(1)
+        for label, is_accept in buttons:
+            btn = QPushButton(label)
+            btn.setMinimumWidth(80)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #3a2f48;
+                    color: white;
+                    border: 1px solid #7a6b8a;
+                    border-radius: 6px;
+                    padding: 6px 16px;
+                    font-size: 12px;
+                }
+                QPushButton:hover {
+                    background-color: #4a3f58;
+                }
+                QPushButton:pressed {
+                    background-color: #2a1f38;
+                }
+            """)
+            if is_accept:
+                btn.clicked.connect(lambda _=False, v=label: self._on_click(v, True))
+            else:
+                btn.clicked.connect(lambda _=False, v=label: self._on_click(v, False))
+            btn_layout.addWidget(btn)
+        layout.addLayout(btn_layout)
+
+        # Dim overlay
+        self._overlay = None
+        par = self.parent()
+        if par is not None:
+            self._overlay = _DimOverlay(par)
+            self._overlay.raise_()
+        self.show()
+        self.raise_()
+        self._center_on_parent()
+
+    def _on_click(self, value, accept):
+        self._result_value = value
+        if accept:
+            self.accept()
+        else:
+            self.reject()
+
+    def _center_on_parent(self):
+        parent = self.parent()
+        if parent is not None:
+            parent_rect = parent.geometry()
+            x = parent_rect.x() + (parent_rect.width() - self.width()) // 2
+            y = parent_rect.y() + (parent_rect.height() - self.height()) // 2
+            self.move(x, y)
+
+    def _cleanup_overlay(self):
+        if self._overlay is not None:
+            self._overlay.close()
+            self._overlay.deleteLater()
+            self._overlay = None
+
+    def done(self, result):
+        self._cleanup_overlay()
+        super().done(result)
+
+    def closeEvent(self, event):
+        self._cleanup_overlay()
+        super().closeEvent(event)
+
+
 def show_info_popup(parent, title, text):
-    """Shows a simple informational message box (e.g., for success)."""
-    msg = QMessageBox(parent)
-    msg.setWindowTitle(title)
-    msg.setText(text)
-    msg.setIcon(QMessageBox.Information)
-    msg.exec_()
+    """Shows a dark-themed informational popup."""
+    dlg = _ThemedPopup(parent, title, text, icon_text="\u2713")
+    dlg.exec_()
 
 def show_error_popup(parent, title, text):
-    """Shows a simple error message box."""
-    msg = QMessageBox(parent)
-    msg.setWindowTitle(title)
-    msg.setText(text)
-    msg.setIcon(QMessageBox.Critical)
-    msg.exec_()
+    """Shows a dark-themed error popup."""
+    dlg = _ThemedPopup(parent, title, text, icon_text="\u2716")
+    dlg.exec_()
+
+def show_warning_popup(parent, title, text):
+    """Shows a dark-themed warning popup."""
+    dlg = _ThemedPopup(parent, title, text, icon_text="\u26A0")
+    dlg.exec_()
+
+def show_yes_no_popup(parent, title, text):
+    """Shows a dark-themed Yes/No confirmation dialog. Returns True if Yes was clicked."""
+    dlg = _ThemedPopup(parent, title, text, icon_text="\u26A0",
+                        buttons=[("No", False), ("Yes", True)])
+    result = dlg.exec_()
+    return result == QDialog.Accepted

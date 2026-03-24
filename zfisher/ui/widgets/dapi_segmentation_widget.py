@@ -2,7 +2,7 @@ import logging
 import napari
 import numpy as np
 from magicgui.widgets import Container, PushButton, Label, ComboBox, create_widget
-from qtpy.QtWidgets import QFrame, QLabel, QMessageBox
+from qtpy.QtWidgets import QFrame, QLabel
 
 from ...core import session
 from .. import popups, viewer_helpers
@@ -187,15 +187,12 @@ class DapiSegmentationWidget(Container):
             from cellpose.models import MODEL_DIR
             model_file = MODEL_DIR / "cpsam"
             if not model_file.exists():
-                reply = QMessageBox.question(
+                if not popups.show_yes_no_popup(
                     viewer.window._qt_window,
                     "Cellpose Model Not Found",
                     "The Cellpose model (cpsam) needs to be downloaded (~100 MB).\n\n"
                     "This is a one-time download. Continue?",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.Yes,
-                )
-                if reply != QMessageBox.Yes:
+                ):
                     viewer.status = "Cellpose download cancelled."
                     return
                 MODEL_DIR.mkdir(parents=True, exist_ok=True)

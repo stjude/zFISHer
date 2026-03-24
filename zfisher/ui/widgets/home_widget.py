@@ -4,8 +4,9 @@ from pathlib import Path
 from magicgui.widgets import Container, PushButton, Label
 from qtpy.QtWidgets import (
     QDialog, QVBoxLayout, QTextBrowser, QPushButton as QtPushButton,
-    QSpacerItem, QSizePolicy, QMessageBox,
+    QSpacerItem, QSizePolicy,
 )
+from qtpy.QtCore import Qt
 
 from ...core import session
 from .. import style
@@ -25,6 +26,7 @@ def _show_readme_dialog(viewer, readme_path):
 
     dialog = QDialog(viewer.window._qt_window)
     dialog.setWindowTitle("zFISHer — Help & Documentation")
+    dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
     dialog.resize(750, 600)
 
     text_browser = QTextBrowser()
@@ -123,14 +125,12 @@ class HomeWidget(Container):
         webbrowser.open("https://github.com/sethstaller/zFISHer")
 
     def _on_reset(self):
-        reply = QMessageBox.warning(
+        from ..popups import show_yes_no_popup
+        if not show_yes_no_popup(
             self._viewer.window._qt_window,
             "Reset Session",
             "Are you sure you wish to reset the project?\n\nAll unsaved progress will be lost.",
-            QMessageBox.Yes | QMessageBox.Cancel,
-            QMessageBox.Cancel,
-        )
-        if reply != QMessageBox.Yes:
+        ):
             return
         import logging
         logging.getLogger(__name__).info("ACTION: Session reset (all layers cleared)")

@@ -3,7 +3,7 @@ from pathlib import Path
 import logging
 import napari
 import pandas as pd
-from qtpy.QtWidgets import QFrame, QFileDialog, QMessageBox
+from qtpy.QtWidgets import QFrame, QFileDialog
 
 from ...core import pipeline
 from ...core.generate_batch_template import (
@@ -177,26 +177,20 @@ class BatchProcessWidget(Container):
                 + "\n".join(f"  - {w}" for w in channel_warnings)
                 + "\n\nDo you want to continue anyway?"
             )
-            reply = QMessageBox.warning(
+            if not popups.show_yes_no_popup(
                 self._viewer.window._qt_window,
                 "Batch Validation Warnings",
                 msg,
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if reply != QMessageBox.Yes:
+            ):
                 return
         else:
             # No warnings — confirm start
-            reply = QMessageBox.question(
+            if not popups.show_yes_no_popup(
                 self._viewer.window._qt_window,
                 "Batch Validation Passed",
                 f"All {len(config['datasets'])} dataset(s) validated successfully.\n\n"
                 "Start batch processing?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes,
-            )
-            if reply != QMessageBox.Yes:
+            ):
                 return
 
         output_base.mkdir(parents=True, exist_ok=True)
