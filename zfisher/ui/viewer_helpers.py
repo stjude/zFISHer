@@ -288,11 +288,61 @@ def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, defau
             except Exception as e:
                 logger.error("Error recomputing IDs for '%s': %s", mask_name, e)
 
-def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layers.Image, puncta_data: np.ndarray):
+def ask_replace_or_merge(parent, layer_name, n_existing):
+    """Show a popup asking Replace/Merge/Cancel. Returns 'replace', 'merge', or 'cancel'."""
+    from qtpy.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
+    from qtpy.QtCore import Qt
+    from .popups import _DimOverlay
+
+    dlg = QDialog(parent)
+    dlg.setWindowTitle("Puncta Already Exist")
+    dlg.setWindowModality(Qt.WindowModal)
+    dlg.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.WindowModal)
+    dlg.setStyleSheet("QDialog { background-color: #1a1421; }")
+    dlg.setMinimumWidth(360)
+    dlg._result_action = None
+    pad = 24
+    layout = QVBoxLayout(dlg)
+    layout.setContentsMargins(pad, pad, pad, pad)
+    layout.setSpacing(12)
+    title = QLabel(f"'{layer_name}' already has {n_existing} points.")
+    title.setStyleSheet("color: white; font-weight: bold; font-size: 14px;")
+    title.setWordWrap(True)
+    layout.addWidget(title)
+    body = QLabel("Replace existing puncta with new detection, or merge\n(skipping duplicates within min distance)?")
+    body.setStyleSheet("color: #c0b8c8; font-size: 12px;")
+    body.setWordWrap(True)
+    layout.addWidget(body)
+    layout.addSpacing(8)
+    btn_style = """QPushButton { background-color: #3a2f48; color: white; border: 1px solid #7a6b8a;
+        border-radius: 6px; padding: 6px 16px; font-size: 12px; }
+        QPushButton:hover { background-color: #4a3f58; }"""
+    btn_layout = QHBoxLayout()
+    for label, action in [("Cancel", "cancel"), ("Merge (Deduplicated)", "merge"), ("Replace", "replace")]:
+        btn = QPushButton(label)
+        btn.setStyleSheet(btn_style)
+        btn.clicked.connect(lambda _=False, a=action: (setattr(dlg, '_result_action', a), dlg.accept()))
+        btn_layout.addWidget(btn)
+    layout.addLayout(btn_layout)
+    overlay = _DimOverlay(parent) if parent else None
+    if overlay:
+        overlay.raise_()
+    dlg.show()
+    dlg.raise_()
+    dlg.exec_()
+    if overlay:
+        overlay.close()
+        overlay.deleteLater()
+    return dlg._result_action
+
+
+def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layers.Image,
+                                puncta_data: np.ndarray, existing_action=None):
     """
     Adds or updates a puncta layer with full feature support.
 
     Handles merging new data, creating unique IDs, and setting up text display.
+    existing_action: 'replace', 'merge', or None (new layer).
     """
     if puncta_data is None or puncta_data.shape[0] == 0:
         return
@@ -314,35 +364,58 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
         'translation': np.array([0, 5, 5]),
     }
 
-    if layer_name in viewer.layers:
-        # Update existing layer
+    if layer_name in viewer.layers and existing_action:
         pts_layer = viewer.layers[layer_name]
 
-        # Get existing data and features
-        existing_coords = pts_layer.data
-        existing_features = pts_layer.features
+        if existing_action == 'replace':
+            # Replace: clear existing, use only new data
+            new_features['puncta_id'] = np.arange(len(new_features))
+            pts_layer._Points__indices_view = np.empty(0, int)
+            pts_layer.visible = False
+            pts_layer.data = coords
+            pts_layer.features = new_features
+            pts_layer.text = text_params
+            pts_layer.size = 3
+            pts_layer.face_color = "yellow"
+            pts_layer.visible = True
 
-        # Determine next ID based on existing points
-        if not existing_features.empty and 'puncta_id' in existing_features:
-            max_id = existing_features['puncta_id'].dropna().max()
-            next_id = int(max_id) + 1 if pd.notna(max_id) else 0
-        else:
-            next_id = 0
+        elif existing_action == 'merge':
+            # Merge: deduplicate — skip new points within min_distance of existing
+            from scipy.spatial import cKDTree
+            existing_coords = pts_layer.data
+            existing_features = pts_layer.features
+            min_distance = 3  # default; matches typical detection min_distance
 
-        # Assign new unique IDs to the new data
-        new_features['puncta_id'] = np.arange(next_id, next_id + len(new_features))
+            if len(existing_coords) > 0 and len(coords) > 0:
+                tree = cKDTree(existing_coords)
+                dists, _ = tree.query(coords)
+                keep_mask = dists > min_distance
+                coords = coords[keep_mask]
+                new_features = new_features.iloc[keep_mask.nonzero()[0]].reset_index(drop=True)
 
-        # Merge data
-        combined_coords = segmentation.merge_puncta(existing_coords, coords)
-        combined_features = pd.concat([existing_features, new_features], ignore_index=True)
+            if len(coords) == 0:
+                viewer.status = "No new unique puncta to add (all duplicates)."
+                return
 
-        # Update in-place to avoid destroying GL buffers (which causes
-        # vispy access violations on the next draw cycle).
-        pts_layer.data = combined_coords
-        pts_layer.features = combined_features
-        pts_layer.text = text_params
-        pts_layer.size = 3
-        pts_layer.face_color = "yellow"
+            # Assign new IDs continuing from existing max
+            if not existing_features.empty and 'puncta_id' in existing_features:
+                max_id = existing_features['puncta_id'].dropna().max()
+                next_id = int(max_id) + 1 if pd.notna(max_id) else 0
+            else:
+                next_id = 0
+            new_features['puncta_id'] = np.arange(next_id, next_id + len(new_features))
+
+            combined_coords = np.vstack([existing_coords, coords])
+            combined_features = pd.concat([existing_features, new_features], ignore_index=True)
+
+            pts_layer._Points__indices_view = np.empty(0, int)
+            pts_layer.visible = False
+            pts_layer.data = combined_coords
+            pts_layer.features = combined_features
+            pts_layer.text = text_params
+            pts_layer.size = 3
+            pts_layer.face_color = "yellow"
+            pts_layer.visible = True
 
     else:
         # Create new layer

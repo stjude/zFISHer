@@ -208,15 +208,20 @@ class ProgressDialog(QDialog):
     def update_progress(self, value: int, text: str = None):
         """Updates the progress bar and optionally the label text.
 
-        Uses self.repaint() instead of QApplication.processEvents() to
-        avoid triggering vispy draw cycles that can corrupt the GL context
-        when layer state is inconsistent (e.g. after mask edits).
+        Pass value=-1 to switch to indeterminate (bouncing) mode.
+        Any value >= 0 switches back to determinate mode.
         """
         if text:
             self._label.setText(text)
-        self._bar.setValue(value)
+        if value < 0:
+            if self._bar.maximum() != 0:
+                self._bar.setRange(0, 0)  # indeterminate
+        else:
+            if self._bar.maximum() == 0:
+                self._bar.setRange(0, 100)  # back to determinate
+            self._bar.setValue(value)
         if not self._canvas_frozen:
-            self.repaint()
+            QApplication.processEvents()
 
     def freeze_canvas(self):
         """Suppress processEvents during layer mutations to prevent vispy
@@ -355,7 +360,7 @@ class BatchProgressDialog(QDialog):
             self._batch_label.setText(text)
         self._batch_bar.setValue(value)
         if not self._canvas_frozen:
-            self.repaint()
+            QApplication.processEvents()
 
     def update_item_progress(self, value: int, text: str = None):
         """Updates the current item's pipeline progress bar."""
@@ -363,7 +368,7 @@ class BatchProgressDialog(QDialog):
             self._item_label.setText(text)
         self._item_bar.setValue(value)
         if not self._canvas_frozen:
-            self.repaint()
+            QApplication.processEvents()
 
     def freeze_canvas(self):
         self._canvas_frozen = True

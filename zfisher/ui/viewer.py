@@ -6,7 +6,7 @@ from functools import partial
 
 from qtpy.QtWidgets import QApplication, QToolBox, QToolButton, QPushButton, QWidget, QLabel, QVBoxLayout, QDockWidget
 from qtpy.QtGui import QColor, QIcon, QPainter, QPalette, QPixmap
-from qtpy.QtCore import Qt, QPoint, QTimer, QEvent
+from qtpy.QtCore import Qt, QPoint, QTimer, QEvent, QObject
 from magicgui import widgets
 from ..core import session
 
@@ -33,6 +33,22 @@ from . import events, style
 
 # Module-level flag to suppress custom layer control callbacks during batch loading
 _suppress_custom_controls = False
+
+
+class _PopupSuppressor(QObject):
+    """Global event filter that blocks popup windows during layer operations."""
+
+    def eventFilter(self, obj, event):
+        try:
+            if event.type() == QEvent.Show and hasattr(obj, 'isWindow') and obj.isWindow():
+                cls_name = type(obj).__name__
+                # Always print to stdout for debugging
+                if cls_name not in ('QMainWindow', 'NapariSceneCanvas', 'CanvasBackendDesktop'):
+                    print(f"[SHOW] {cls_name} parent={type(obj.parent()).__name__ if obj.parent() else 'None'} flags=0x{int(obj.windowFlags()):x} suppress={_suppress_custom_controls}", flush=True)
+        except (RuntimeError, TypeError):
+            pass
+        return False
+
 
 # --- Helper Classes ---
 
@@ -241,6 +257,11 @@ def launch_zfisher():
     # FIX: Ensure QApplication is initialized properly
     app = QApplication.instance() or QApplication([])
 
+    # Install global event filter to suppress napari Qt.Popup windows
+    # (color swatches, contrast limit popups) during layer operations
+    _popup_suppressor = _PopupSuppressor(app)
+    app.installEventFilter(_popup_suppressor)
+
     # --- 1. Amethyst & Mint Theme (RE-ENABLED) ---
     theme_name = style.register_napari_theme()
 
@@ -267,6 +288,14 @@ def launch_zfisher():
 
     # --- 2. Create Viewer ---
     viewer = napari.Viewer(title="zFISHer - 3D Colocalization of Sequential Multiplexed FISH in Cell Monolayer", ndisplay=2)
+
+    # Permanently disable napari's notification toast system —
+    # zFISHer uses its own status bar and popup system instead.
+    try:
+        from napari.utils.notifications import notification_manager
+        notification_manager.enabled = False
+    except Exception:
+        pass
 
     # Apply icon — deferred so it runs after napari finishes its own window setup
     def _apply_icon():
@@ -540,6 +569,7 @@ def launch_zfisher():
 
         # Remove previous custom widgets
         for w in _ids_custom_widgets:
+            w.hide()
             w.setParent(None)
             w.deleteLater()
         _ids_custom_widgets.clear()
@@ -646,6 +676,7 @@ def launch_zfisher():
 
         # Remove previous custom widgets
         for w in _centroids_custom_widgets:
+            w.hide()
             w.setParent(None)
             w.deleteLater()
         _centroids_custom_widgets.clear()
@@ -749,6 +780,7 @@ def launch_zfisher():
 
         # Remove previous custom widgets
         for w in _puncta_custom_widgets:
+            w.hide()
             w.setParent(None)
             w.deleteLater()
         _puncta_custom_widgets.clear()
@@ -899,6 +931,39 @@ def launch_zfisher():
     viewer.layers.selection.events.changed.connect(_add_ids_custom_controls)
     viewer.layers.selection.events.changed.connect(_add_centroids_custom_controls)
     viewer.layers.selection.events.changed.connect(_add_puncta_custom_controls)
+
+    # Suppress custom controls during layer removal and close any
+    # stray popup windows that napari creates during control rebuilds.
+    _known_windows = set()
+
+    def _snapshot_windows():
+        _known_windows.clear()
+        for w in QApplication.topLevelWidgets():
+            _known_windows.add(id(w))
+
+    def _suppress_on_removing(event=None):
+        global _suppress_custom_controls
+        _suppress_custom_controls = True
+        try:
+            viewer.window._qt_viewer.controls.setVisible(False)
+        except Exception:
+            pass
+
+    def _unsuppress_on_removed(event=None):
+        global _suppress_custom_controls
+        from qtpy.QtCore import QTimer
+        QTimer.singleShot(100, _unsuppress_after_remove)
+
+    def _unsuppress_after_remove():
+        global _suppress_custom_controls
+        _suppress_custom_controls = False
+        try:
+            viewer.window._qt_viewer.controls.setVisible(True)
+        except Exception:
+            pass
+
+    viewer.layers.events.removing.connect(_suppress_on_removing)
+    viewer.layers.events.removed.connect(_unsuppress_on_removed)
 
     # Disable renaming layers (double-click) and right-click context menu
     from qtpy.QtWidgets import QAbstractItemView

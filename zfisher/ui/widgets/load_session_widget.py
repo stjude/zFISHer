@@ -84,20 +84,24 @@ class LoadSessionWidget(Container):
 
         with popups.ProgressDialog(self._viewer.window._qt_window, "Loading Session...") as dialog:
             session.set_loading(True)
+            from .. import viewer as viewer_module
+            viewer_module._suppress_custom_controls = True
             try:
                 self._viewer.layers.clear()
-                
+
                 dialog.update_progress(10, "Loading session file...")
                 session.load_session_file(session_file)
-                
+
                 processed_files = session.get_data("processed_files", default={})
-                
+
                 # FIX: Check if we already have aligned/warped data to prevent Z-padding bloat
                 has_aligned_data = any("Aligned" in key or "Warped" in key for key in processed_files.keys())
 
                 r1_path = session.get_data("r1_path")
                 r2_path = session.get_data("r2_path")
                 output_dir = session.get_data("output_dir")
+
+                dialog.freeze_canvas()
 
                 # STEP 1: Load Raw Data ONLY if no aligned data exists
                 if r1_path and r2_path and not has_aligned_data:
@@ -129,18 +133,13 @@ class LoadSessionWidget(Container):
                     def processed_progress(p, text):
                         dialog.update_progress(60 + int(p * 0.35), f"Restoring: {text}")
                     
-                    from .. import viewer as viewer_module
-                    viewer_module._suppress_custom_controls = True
-                    try:
-                        viewer_helpers.restore_processed_layers(
-                            self._viewer,
-                            processed_files,
-                            sanitized_scale,
-                            canvas_offset_pixels,
-                            progress_callback=processed_progress
-                        )
-                    finally:
-                        viewer_module._suppress_custom_controls = False
+                    viewer_helpers.restore_processed_layers(
+                        self._viewer,
+                        processed_files,
+                        sanitized_scale,
+                        canvas_offset_pixels,
+                        progress_callback=processed_progress
+                    )
                 
                 dialog.update_progress(95, "Finalizing UI...")
                 refresh_rules_display()
@@ -152,3 +151,7 @@ class LoadSessionWidget(Container):
                 dialog.update_progress(100, "Done.")
             finally:
                 session.set_loading(False)
+        # Reset suppression AFTER the dialog closes — the dialog's __exit__
+        # calls processEvents() which would trigger custom control popups
+        # if suppression were already cleared.
+        viewer_module._suppress_custom_controls = False

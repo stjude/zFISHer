@@ -225,36 +225,50 @@ def on_layer_removed(event, widgets):
     is set, since programmatic helpers remove-then-recreate layers and
     don't want the partner destroyed.
     """
-    layer = event.value
-    viewer = napari.current_viewer()
+    # Suppress custom controls during cascade deletion to prevent popup flashing
+    from .viewer import _suppress_custom_controls
+    import zfisher.ui.viewer as _viewer_mod
+    was_suppressed = _viewer_mod._suppress_custom_controls
+    _viewer_mod._suppress_custom_controls = True
 
-    if isinstance(layer, napari.layers.Labels):
-        # Cascade: also remove orphan _IDs and _centroids layers
-        if not _programmatic_removal:
-            for suffix in ("_IDs", "_centroids"):
-                child_name = f"{layer.name}{suffix}"
-                if viewer and child_name in viewer.layers:
-                    child_layer = viewer.layers[child_name]
-                    child_layer._locked = False
-                    viewer.layers.remove(child_layer)
-        _remove_layer_and_file(layer.name)
-        _remove_layer_and_file(f"{layer.name}_IDs")
-        _remove_layer_and_file(f"{layer.name}_centroids")
+    try:
+        layer = event.value
+        viewer = napari.current_viewer()
 
-    elif isinstance(layer, napari.layers.Points):
-        _remove_layer_and_file(layer.name)
-        detach_puncta_listener(layer)
-        # Cascade: also remove the parent mask
-        if not _programmatic_removal and layer.name.endswith("_IDs"):
-            mask_name = layer.name[:-4]  # strip "_IDs"
-            if viewer and mask_name in viewer.layers:
-                mask_layer = viewer.layers[mask_name]
-                mask_layer._locked = False
-                viewer.layers.remove(mask_layer)
+        if isinstance(layer, napari.layers.Labels):
+            # Cascade: also remove orphan _IDs and _centroids layers
+            if not _programmatic_removal:
+                for suffix in ("_IDs", "_centroids"):
+                    child_name = f"{layer.name}{suffix}"
+                    if viewer and child_name in viewer.layers:
+                        child_layer = viewer.layers[child_name]
+                        child_layer._locked = False
+                        viewer.layers.remove(child_layer)
+            _remove_layer_and_file(layer.name)
+            _remove_layer_and_file(f"{layer.name}_IDs")
+            _remove_layer_and_file(f"{layer.name}_centroids")
+
+        elif isinstance(layer, napari.layers.Points):
+            _remove_layer_and_file(layer.name)
+            detach_puncta_listener(layer)
+            # Cascade: also remove the parent mask
+            if not _programmatic_removal and layer.name.endswith("_IDs"):
+                mask_name = layer.name[:-4]  # strip "_IDs"
+                if viewer and mask_name in viewer.layers:
+                    mask_layer = viewer.layers[mask_name]
+                    mask_layer._locked = False
+                    viewer.layers.remove(mask_layer)
+    finally:
+        pass  # Don't restore yet — let QTimer do it
 
     def update_choices():
         for w in widgets.values():
             if hasattr(w, "reset_choices"):
-                w.reset_choices()
+                try:
+                    w.reset_choices()
+                except Exception:
+                    pass
+        # Restore suppression state after all updates
+        _viewer_mod._suppress_custom_controls = was_suppressed
 
-    QTimer.singleShot(10, update_choices)
+    QTimer.singleShot(100, update_choices)

@@ -245,7 +245,7 @@ def process_puncta_detection(image_data, mask_data=None, voxels=None, params=Non
         params['z_scale'] = voxels[0] / voxels[2]
 
     method = params.get('method', 'Local Maxima')
-    if progress_callback: progress_callback(5, f"Detecting spots ({method})...")
+    if progress_callback: progress_callback(-1, f"Detecting spots ({method})...")
     coords = detect_spots_3d(image_data, progress_callback=progress_callback, **params)
     if progress_callback: progress_callback(45, f"Detection complete. Found {len(coords)} candidates.")
     if len(coords) == 0:

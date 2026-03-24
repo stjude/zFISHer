@@ -3,6 +3,7 @@ import napari
 from pathlib import Path
 from magicgui import magicgui, widgets
 from ...core import session, puncta
+from qtpy.QtWidgets import QApplication
 from .. import popups, viewer_helpers
 from ..decorators import require_active_session, error_handler
 from ... import constants
@@ -52,6 +53,17 @@ def _puncta_widget(
                 image_layer.name, nuclei_layer.name if nuclei_layer else None,
                 nuclei_only, method, threshold, min_distance, sigma, z_scale, use_tophat, tophat_radius)
 
+    # Check if puncta layer already exists — ask before running detection
+    _puncta_layer_name = f"{image_layer.name}{constants.PUNCTA_SUFFIX}"
+    _existing_action = None
+    if _puncta_layer_name in viewer.layers:
+        _existing_action = viewer_helpers.ask_replace_or_merge(
+            viewer.window._qt_window, _puncta_layer_name,
+            len(viewer.layers[_puncta_layer_name].data)
+        )
+        if _existing_action == 'cancel' or _existing_action is None:
+            return
+
     with popups.ProgressDialog(viewer.window._qt_window, f"Processing {image_layer.name}...") as dialog:
         # Package parameters for the core orchestrator
         params = {
@@ -68,15 +80,50 @@ def _puncta_widget(
         out_dir = session.get_data("output_dir")
         csv_path = Path(out_dir) / constants.REPORTS_DIR / f"{image_layer.name}_puncta.csv" if out_dir else None
 
-        # Pass voxel scale for automated z_scale fallback
-        results = puncta.process_puncta_detection(
-            image_layer.data,
-            mask_data=nuclei_layer.data if nuclei_layer else None,
-            voxels=getattr(image_layer, 'scale', (1,1,1)),
-            params=params,
-            output_path=csv_path,
-            progress_callback=lambda p, t: dialog.update_progress(p, t)
-        )
+        # Run detection in a background thread so the indeterminate progress
+        # bar can animate during the blocking computation.
+        # Progress callbacks from the thread are queued and applied on the
+        # main thread to avoid Qt cross-thread crashes.
+        import threading
+        from collections import deque
+
+        _result_holder = [None]
+        _error_holder = [None]
+        _progress_queue = deque()
+
+        def _thread_progress(p, t):
+            _progress_queue.append((p, t))
+
+        def _run_detection():
+            try:
+                _result_holder[0] = puncta.process_puncta_detection(
+                    image_layer.data,
+                    mask_data=nuclei_layer.data if nuclei_layer else None,
+                    voxels=getattr(image_layer, 'scale', (1,1,1)),
+                    params=params,
+                    output_path=csv_path,
+                    progress_callback=_thread_progress
+                )
+            except Exception as e:
+                _error_holder[0] = e
+
+        thread = threading.Thread(target=_run_detection, daemon=True)
+        dialog.update_progress(-1, f"Detecting spots ({method})...")
+        thread.start()
+        while thread.is_alive():
+            thread.join(timeout=0.05)
+            # Drain progress updates from background thread on main thread
+            while _progress_queue:
+                p, t = _progress_queue.popleft()
+                dialog.update_progress(p, t)
+            QApplication.processEvents()
+        # Drain any remaining progress updates
+        while _progress_queue:
+            p, t = _progress_queue.popleft()
+            dialog.update_progress(p, t)
+        if _error_holder[0]:
+            raise _error_holder[0]
+        results = _result_holder[0]
 
         # Freeze canvas before adding/updating the points layer to prevent
         # vispy from drawing stale GL buffers during processEvents()
@@ -84,7 +131,8 @@ def _puncta_widget(
         from .. import viewer as _viewer_mod
         _viewer_mod._suppress_custom_controls = True
         try:
-            viewer_helpers.add_or_update_puncta_layer(viewer, image_layer, results)
+            viewer_helpers.add_or_update_puncta_layer(viewer, image_layer, results,
+                                                       existing_action=_existing_action)
         finally:
             _viewer_mod._suppress_custom_controls = False
             # Re-trigger custom controls now that suppression is lifted —
