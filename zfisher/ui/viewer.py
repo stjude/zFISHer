@@ -996,6 +996,10 @@ def launch_zfisher():
     for child_toolbox in toolbox.findChildren(QToolBox):
         child_toolbox.currentChanged.connect(_reset_to_pan_zoom)
 
+    # Connect puncta editor layer sync (layer list ↔ dropdown)
+    from .widgets.puncta_editor_widget import connect_puncta_editor_layer_sync
+    connect_puncta_editor_layer_sync(viewer)
+
     # Auto-open Mask Editor when paint/erase mode is activated on a _masks layer
     _mask_mode_connections = {}
 

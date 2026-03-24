@@ -37,9 +37,21 @@ class _PunctaUndoStack:
 
 _puncta_undo = _PunctaUndoStack()
 
+def _get_puncta_layers(gui):
+    """Return only puncta Points layers (exclude _IDs and _centroids)."""
+    viewer = napari.current_viewer()
+    if not viewer:
+        return []
+    return [
+        l for l in viewer.layers
+        if isinstance(l, napari.layers.Points)
+        and not l.name.endswith("_IDs")
+        and not l.name.endswith("_centroids")
+    ]
+
 @magicgui(
     call_button="Delete Selected Points",
-    points_layer={"label": "Layer to Edit", "tooltip": "The puncta points layer to edit."},
+    points_layer={"label": "Layer to Edit", "choices": _get_puncta_layers, "tooltip": "The puncta points layer to edit."},
     fishing_hook={"label": "Enable Fishing Hook", "value": False, "tooltip": "Click to place puncta. Automatically snaps to the nearest intensity peak."},
     volume_optimization={"label": "Volume Optimization", "value": True, "tooltip": "Refine each placed punctum position to the local intensity maximum."},
     opt_radius={"label": "Opt. Radius (um)", "value": "0.1", "tooltip": "Search radius in microns for volume optimization refinement."}
@@ -163,7 +175,56 @@ def _on_layer_change(new_layer):
         new_layer.events.data.connect(_on_points_data_changed)
         _prev_data_connection[0] = (new_layer, _on_points_data_changed)
 
-# --- 1. Algorithmic Math (Operates strictly on Pixel Arrays) ---
+        # Sync: select the layer in the viewer layer list and make it visible
+        viewer = napari.current_viewer()
+        if viewer and new_layer in viewer.layers:
+            if not _syncing_puncta_selection:
+                new_layer.visible = True
+                viewer.layers.selection.active = new_layer
+
+
+# --- Bidirectional sync: layer list ↔ dropdown ---
+_syncing_puncta_selection = False
+
+def _on_viewer_layer_selection_for_puncta(event=None):
+    """When a puncta layer is selected in the layer list, update the dropdown."""
+    global _syncing_puncta_selection
+    if _syncing_puncta_selection:
+        return
+    from .. import viewer as _viewer_mod
+    if getattr(_viewer_mod, '_suppress_custom_controls', False):
+        return
+    try:
+        viewer = napari.current_viewer()
+        if not viewer:
+            return
+        active = viewer.layers.selection.active
+        if active is None:
+            return
+        if not active.name.endswith("_puncta"):
+            return
+        if not isinstance(active, napari.layers.Points):
+            return
+        # Check if it's a valid choice in the dropdown
+        current = _puncta_editor_widget.points_layer.value
+        if current is active:
+            return
+        _syncing_puncta_selection = True
+        try:
+            _puncta_editor_widget.reset_choices()
+            _puncta_editor_widget.points_layer.value = active
+        except (ValueError, AttributeError):
+            pass
+        finally:
+            _syncing_puncta_selection = False
+    except Exception:
+        pass
+
+def connect_puncta_editor_layer_sync(viewer):
+    """Call once from viewer.py to wire up the selection sync."""
+    viewer.layers.selection.events.changed.connect(_on_viewer_layer_selection_for_puncta)
+
+
 # --- 1. Algorithmic Math (Operates strictly on Pixel Arrays) ---
 def calculate_fishing_hook(img_layer, data_pos, viewer, use_optimization=True, radius_um=0.1):
     """Calculates peak intensity using a data coordinate, not a world coordinate."""
@@ -414,6 +475,16 @@ _inner.insertWidget(5, _fishing_hook_header)
 _inner.insertWidget(6, _fishing_hook_desc)
 # fishing_hook(7), volume_opt(8), opt_radius(9), call_button(10)
 
+# Set fishing hook icon on the checkbox
+from pathlib import Path as _Path
+from qtpy.QtGui import QIcon as _QIcon
+_hook_icon_path = _Path(__file__).resolve().parent.parent.parent / "resources" / "icons" / "fishing_hook.svg"
+if _hook_icon_path.exists():
+    _fishing_hook_cb = _puncta_editor_widget.fishing_hook.native
+    _fishing_hook_cb.setIcon(_QIcon(str(_hook_icon_path)))
+    from qtpy.QtCore import QSize as _QSize
+    _fishing_hook_cb.setIconSize(_QSize(18, 18))
+
 # --- "Erase" section: call_button stays at the end ---
 # Remove call_button from its position and re-add after the erase section
 _erase_header = _make_section_header("Erase")
@@ -437,6 +508,37 @@ _layout.addWidget(header.native)
 _layout.addWidget(info.native)
 _layout.addWidget(_make_divider())
 _layout.addWidget(_puncta_editor_widget.native)
+
+# Clear All Points button
+_clear_all_btn = widgets.PushButton(text="Clear All Points", tooltip="Remove all points from the current layer.")
+
+def _on_clear_all(_=False):
+    layer = _puncta_editor_widget.points_layer.value
+    viewer = napari.current_viewer()
+    if not layer or not viewer:
+        return
+    from ..popups import show_yes_no_popup
+    if not show_yes_no_popup(
+        viewer.window._qt_window,
+        "Clear All Points",
+        f"Remove all {len(layer.data)} points from '{layer.name}'?\n\nThis cannot be undone.",
+    ):
+        return
+    _puncta_undo.push(layer)
+    global _skip_data_sync
+    _skip_data_sync = True
+    try:
+        layer.data = np.empty((0, layer.ndim))
+        layer.features = pd.DataFrame(columns=layer.features.columns)
+        _prev_point_count[0] = 0
+        layer.refresh()
+    finally:
+        _skip_data_sync = False
+    logger.info("PUNCTA EDIT: Cleared all points on layer '%s'", layer.name)
+    viewer.status = f"Cleared all points from {layer.name}."
+
+_clear_all_btn.changed.connect(_on_clear_all)
+_layout.addWidget(_clear_all_btn.native)
 
 # Undo in its own section
 _layout.addWidget(_make_spacer())

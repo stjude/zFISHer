@@ -399,8 +399,17 @@ def _add_or_replace_ids_layer(viewer, name, coords, labels, scale, translate=Non
         parent_visible = viewer.layers[parent_mask_name].visible
 
     if name in viewer.layers:
-        # UPDATE IN-PLACE — avoids destroying GL buffers which causes vispy crashes
+        # UPDATE IN-PLACE — avoids destroying GL buffers which causes vispy crashes.
+        # Napari's _indices_view cache is only rebuilt during draw cycles, not
+        # during data assignment.  When point count changes, the stale cache
+        # causes IndexError in text rendering.  Fix: force-clear the private
+        # cache before updating data so any text refresh during property
+        # assignment sees an empty (safe) indices array.
         layer = viewer.layers[name]
+        was_visible = layer.visible
+        layer.visible = False
+        # Force-clear stale _indices_view to prevent IndexError during refresh
+        layer._Points__indices_view = np.empty(0, int)
         layer.data = coords
         layer.properties = {'label': labels}
         layer.text = {'string': '{label}', 'size': 12, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])}
@@ -417,6 +426,11 @@ def _add_or_replace_ids_layer(viewer, name, coords, labels, scale, translate=Non
             layer.text.blending = 'translucent_no_depth'
         except Exception:
             pass
+        # Do NOT call processEvents() here — it triggers a full vispy draw
+        # cycle on ALL layers, which can corrupt the GL context if any layer
+        # state is inconsistent.  The VBO will upload naturally on the next
+        # organic Qt draw cycle when the event loop runs.
+        layer.visible = was_visible
     else:
         # CREATE NEW — only when the layer doesn't exist yet
         target_idx = None

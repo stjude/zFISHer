@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Line/rod -->
+  <line x1="12" y1="2" x2="12" y2="10"/>
+  <!-- Hook curve -->
+  <path d="M12 10 C12 10, 12 18, 8 18 C4 18, 4 14, 8 12"/>
+  <!-- Barb -->
+  <line x1="7" y1="13" x2="5.5" y2="11.5"/>
+</svg>

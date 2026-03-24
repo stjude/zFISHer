@@ -87,6 +87,9 @@ def _puncta_widget(
             viewer_helpers.add_or_update_puncta_layer(viewer, image_layer, results)
         finally:
             _viewer_mod._suppress_custom_controls = False
+            # Re-trigger custom controls now that suppression is lifted —
+            # the callbacks were skipped when the layer was added.
+            viewer.layers.selection.events.changed(added=set(), removed=set())
 
         # Persist the detection parameters for this channel in the session
         puncta_params_all = session.get_data("puncta_params", default={})
