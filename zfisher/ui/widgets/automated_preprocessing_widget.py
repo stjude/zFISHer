@@ -188,6 +188,11 @@ def _automated_preprocessing_magic_widget(
                 viewer_helpers.add_consensus_nuclei_to_viewer(viewer, ref, merged_mask, pts1)
 
         # === STEP 5: TRANSFORM EXISTING PUNCTA LAYERS ===
+        # Lock all puncta layers before transform to prevent deletion mid-process
+        from .. import events as _events
+        for l in viewer.layers:
+            if isinstance(l, napari.layers.Points) and constants.PUNCTA_SUFFIX in l.name:
+                _events.lock_layer(l)
         # Find any raw puncta Points layers in the viewer and transform them
         # into aligned/warped space, renaming them accordingly.
         puncta_layers = [
@@ -256,9 +261,15 @@ def _automated_preprocessing_magic_widget(
 
                 # Remove the original raw puncta layer now that it's been transformed
                 try:
+                    pts_layer._locked = False  # Unlock so it can be removed
                     viewer.layers.remove(pts_layer)
                 except ValueError:
                     pass
+
+        # Lock all remaining puncta layers after warping — no further deletion
+        for layer in viewer.layers:
+            if isinstance(layer, napari.layers.Points) and constants.PUNCTA_SUFFIX in layer.name:
+                _events.lock_layer(layer)
 
         if hide_raw:
             nuc_ch = session.get_nuclear_channel()

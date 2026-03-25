@@ -143,6 +143,19 @@ class LoadSessionWidget(Container):
                 
                 dialog.update_progress(95, "Finalizing UI...")
                 refresh_rules_display()
+
+                # Lock puncta layers if session has proceeded past warping
+                from .. import events as _events
+                from ... import constants as _constants
+                has_warped = any(
+                    _constants.ALIGNED_PREFIX in name or _constants.WARPED_PREFIX in name
+                    for name in processed_files.keys()
+                )
+                if has_warped:
+                    for layer in self._viewer.layers:
+                        if isinstance(layer, napari.layers.Points) and _constants.PUNCTA_SUFFIX in layer.name:
+                            _events.lock_layer(layer)
+
                 self._viewer.status = "Session Restored."
 
                 if hasattr(self._viewer.window, 'custom_scale_bar'):
@@ -155,3 +168,8 @@ class LoadSessionWidget(Container):
         # calls processEvents() which would trigger custom control popups
         # if suppression were already cleared.
         viewer_module._suppress_custom_controls = False
+        # Trigger custom layer controls for the currently selected layer
+        try:
+            self._viewer.layers.selection.events.changed(added=set(), removed=set())
+        except Exception:
+            pass

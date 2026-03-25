@@ -5,7 +5,7 @@ from magicgui import magicgui
 from magicgui.widgets import Container, Label
 
 from ...core import session, registration, puncta # Importing from core
-from .. import popups, viewer_helpers
+from .. import popups, viewer_helpers, events
 from ..decorators import require_active_session, error_handler
 from ... import constants
 from ._shared import make_header_divider
@@ -123,6 +123,10 @@ def _canvas_widget(
                 )
 
         # 7. Transform existing puncta layers into aligned/warped space
+        # Lock originals first so they can't be deleted during transform
+        for l in viewer.layers:
+            if isinstance(l, napari.layers.Points) and constants.PUNCTA_SUFFIX in l.name:
+                events.lock_layer(l)
         puncta_layers = [
             l for l in list(viewer.layers)
             if isinstance(l, napari.layers.Points)
@@ -195,9 +199,15 @@ def _canvas_widget(
                     viewer_helpers.add_or_update_puncta_layer(viewer, ref, transformed)
 
                 try:
+                    pts_layer._locked = False  # Unlock so it can be removed
                     viewer.layers.remove(pts_layer)
                 except ValueError:
                     pass
+
+        # Lock all puncta layers after warping — no further deletion allowed
+        for layer in viewer.layers:
+            if isinstance(layer, napari.layers.Points) and constants.PUNCTA_SUFFIX in layer.name:
+                events.lock_layer(layer)
 
         dialog.update_progress(100, "Complete.")
 

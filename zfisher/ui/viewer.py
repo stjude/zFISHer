@@ -39,14 +39,6 @@ class _PopupSuppressor(QObject):
     """Global event filter that blocks popup windows during layer operations."""
 
     def eventFilter(self, obj, event):
-        try:
-            if event.type() == QEvent.Show and hasattr(obj, 'isWindow') and obj.isWindow():
-                cls_name = type(obj).__name__
-                # Always print to stdout for debugging
-                if cls_name not in ('QMainWindow', 'NapariSceneCanvas', 'CanvasBackendDesktop'):
-                    print(f"[SHOW] {cls_name} parent={type(obj.parent()).__name__ if obj.parent() else 'None'} flags=0x{int(obj.windowFlags()):x} suppress={_suppress_custom_controls}", flush=True)
-        except (RuntimeError, TypeError):
-            pass
         return False
 
 
@@ -476,20 +468,28 @@ def launch_zfisher():
 
             is_mask_layer = selected is not None and selected.name.endswith("_masks")
 
-            # Hide transform button (all layers)
-            for child in page.findChildren(QWidget):
-                tip = child.toolTip()
-                if tip and "transform" in tip.lower():
-                    child.setVisible(False)
+            # Hide transform/translate button (all layers) — retain space
+            from qtpy.QtWidgets import QAbstractButton, QSizePolicy as _QSP
+            for btn in page.findChildren(QAbstractButton):
+                tip = (btn.toolTip() or '').lower()
+                if any(kw in tip for kw in ('transform', 'translate', 'move layer')):
+                    btn.setVisible(False)
+                    sp = btn.sizePolicy()
+                    sp.setRetainSizeWhenHidden(True)
+                    btn.setSizePolicy(sp)
 
             # Hide unwanted controls on mask layers
             if is_mask_layer:
-                from qtpy.QtWidgets import QRadioButton, QFormLayout
-                # Hide fill and polygon mode buttons
+                from qtpy.QtWidgets import QRadioButton, QFormLayout, QSizePolicy
+                # Hide fill and polygon mode buttons (keep space to maintain alignment)
                 for btn in page.findChildren(QRadioButton):
                     tip = (btn.toolTip() or '').lower()
                     if 'fill' in tip or 'polygon' in tip:
                         btn.setVisible(False)
+                        # Keep the space so remaining buttons stay right-aligned
+                        sp = btn.sizePolicy()
+                        sp.setRetainSizeWhenHidden(True)
+                        btn.setSizePolicy(sp)
 
                 # Hide form rows: contiguous, preserve labels, color mode,
                 # rendering, and display-selected-label
