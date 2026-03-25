@@ -23,6 +23,7 @@ from ._shared import make_header_divider
         "orientation": "horizontal", # Places buttons side-by-side
         "tooltip": "Intersection: Keep only overlapping pixels. Union: Keep all pixels from both rounds."
     },
+    match_threshold={"label": "Match Threshold (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum centroid distance to match nuclei between rounds. 0 = auto-detect."},
     remove_outliers={"label": "Remove Extranuclear Puncta", "tooltip": "Remove puncta that fall outside the consensus mask boundaries."},
 )
 @require_active_session("Please start or load a session before matching nuclei.")
@@ -30,7 +31,8 @@ from ._shared import make_header_divider
 def _nuclei_matching_widget(
     r1_mask_layer: "napari.layers.Labels",
     r2_mask_layer: "napari.layers.Labels",
-    method: str = "Intersection", # Intersection is now the default
+    method: str = "Intersection",
+    match_threshold: int = 0,
     remove_outliers: bool = True,
 ):
     """
@@ -59,7 +61,7 @@ def _nuclei_matching_widget(
             mask1=r1_mask_layer.data,
             mask2=r2_mask_layer.data,
             output_dir=output_dir,
-            threshold=0,  # Auto-determine from distance distribution
+            threshold=match_threshold if match_threshold > 0 else 0,
             method=method,
             progress_callback=lambda p, m: dialog.update_progress(p, m)
         )

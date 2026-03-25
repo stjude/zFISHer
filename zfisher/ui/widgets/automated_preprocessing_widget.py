@@ -25,7 +25,14 @@ def _get_qt_parent(viewer):
     call_button="Run Automated Registration && Warping",
     r1_dapi_layer={"label": "Round 1 Nuclei Layer", "tooltip": "Select the Round 1 nuclear stain layer for registration."},
     r2_dapi_layer={"label": "Round 2 Nuclei Layer", "tooltip": "Select the Round 2 nuclear stain layer for registration."},
+    max_distance={"label": "Max RANSAC Distance (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum distance in pixels for RANSAC inlier matching. 0 = auto-detect from data."},
+    apply_warp={"label": "Apply B-spline Warp", "value": True, "tooltip": "Enable deformable B-spline registration. Disable for rigid-only alignment."},
     match_nuclei={"label": "Create Consensus Nuclei Mask", "tooltip": "Generate consensus nuclei by matching R1 and R2 masks after alignment."},
+    overlap_method={"label": "Overlap Method", "widget_type": "RadioButtons", "choices": ["Intersection", "Union"], "orientation": "horizontal", "tooltip": "Intersection: Keep only overlapping pixels. Union: Keep all pixels from both rounds."},
+    match_threshold={"label": "Match Threshold (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum centroid distance to match nuclei between rounds. 0 = auto-detect."},
+    remove_outliers={"label": "Remove Extranuclear Puncta", "value": True, "tooltip": "Remove puncta that fall outside the consensus mask boundaries after matching."},
+    show_checkerboard={"label": "Show Checkerboard", "value": True, "tooltip": "Generate a warped checkerboard overlay for visual quality check."},
+    show_deformation={"label": "Show Deformation Field", "value": True, "tooltip": "Generate a deformation field vector layer."},
     hide_raw={"label": "Hide Raw Layers After?", "tooltip": "Hide raw input layers after processing, showing only aligned results."}
 )
 @require_active_session("Please start or load a session first.")
@@ -33,8 +40,15 @@ def _get_qt_parent(viewer):
 def _automated_preprocessing_magic_widget(
     r1_dapi_layer: "napari.layers.Image",
     r2_dapi_layer: "napari.layers.Image",
+    max_distance: int = 0,
+    apply_warp: bool = True,
     match_nuclei: bool = True,
-    hide_raw: bool = True
+    overlap_method: str = "Intersection",
+    match_threshold: int = 0,
+    remove_outliers: bool = True,
+    show_checkerboard: bool = True,
+    show_deformation: bool = True,
+    hide_raw: bool = False
 ):
     viewer = napari.current_viewer()
     if not r1_dapi_layer or not r2_dapi_layer:
@@ -74,6 +88,7 @@ def _automated_preprocessing_magic_widget(
         shift, _ = registration.calculate_session_registration(
             r1_centroids, r2_centroids,
             voxels=voxels,
+            max_distance=max_distance,
             progress_callback=lambda p, t: dialog.update_progress(5 + int(p * 0.20), t)
         )
         if shift is None:
@@ -108,7 +123,7 @@ def _automated_preprocessing_magic_widget(
 
         results, bspline_transform, canvas_offset = generate_global_canvas(
             r1_layers_data, r2_layers_data, shift, aligned_dir,
-            apply_warp=True,
+            apply_warp=apply_warp,
             progress_callback=lambda p, t: dialog.update_progress(35 + int(p * 0.30), t)
         )
         session.update_data("canvas_scale", voxels)
@@ -129,6 +144,13 @@ def _automated_preprocessing_magic_widget(
 
             layer_type = layer_info['type']
             meta = layer_info['meta']
+
+            # Skip checkerboard/deformation if user disabled them
+            if not show_checkerboard and constants.WARPED_CHECKERBOARD_NAME in layer_info['name']:
+                continue
+            if not show_deformation and constants.DEFORMATION_FIELD_NAME in layer_info['name']:
+                continue
+
             # Skip adding aligned/warped mask labels to the viewer — they are
             # only needed on disk for the consensus step, which reads them
             # directly.  Adding them here triggers duplicate _IDs layers.
@@ -174,8 +196,8 @@ def _automated_preprocessing_magic_widget(
                     mask1=tifffile.imread(r1_mask_path),
                     mask2=tifffile.imread(r2_mask_path),
                     output_dir=output_dir,
-                    threshold=0,  # Auto-determine from distance distribution
-                    method="Intersection",
+                    threshold=match_threshold if match_threshold > 0 else 0,
+                    method=overlap_method,
                     progress_callback=lambda p, t: dialog.update_progress(70 + int(p * 0.25), t)
                 )
 
@@ -271,6 +293,67 @@ def _automated_preprocessing_magic_widget(
             if isinstance(layer, napari.layers.Points) and constants.PUNCTA_SUFFIX in layer.name:
                 _events.lock_layer(layer)
 
+        # === STEP 6: REASSIGN NUCLEUS IDs & REMOVE OUTLIERS ===
+        if match_nuclei and merged_mask is not None:
+            import pandas as pd
+            consensus_layer = next(
+                (l for l in viewer.layers
+                 if isinstance(l, napari.layers.Labels)
+                 and constants.CONSENSUS_MASKS_NAME in l.name),
+                None
+            )
+            consensus_scale = np.array(consensus_layer.scale) if consensus_layer else np.ones(3)
+            consensus_translate = np.array(consensus_layer.translate) if consensus_layer else np.zeros(3)
+
+            aligned_puncta = [
+                l for l in list(viewer.layers)
+                if isinstance(l, napari.layers.Points)
+                and constants.PUNCTA_SUFFIX in l.name
+            ]
+            removed_total = 0
+            for pts_layer in aligned_puncta:
+                dialog.update_progress(97, f"Reassigning nuclei: {pts_layer.name}...")
+                coords = np.array(pts_layer.data)
+                if len(coords) == 0:
+                    continue
+                pts_scale = np.array(pts_layer.scale)
+                pts_translate = np.array(pts_layer.translate)
+                world_coords = coords * pts_scale + pts_translate
+                voxel_coords = np.round((world_coords - consensus_translate) / consensus_scale).astype(int)
+                mask_shape = np.array(merged_mask.shape)
+                in_bounds = np.all((voxel_coords >= 0) & (voxel_coords < mask_shape), axis=1)
+                clipped = np.clip(voxel_coords, 0, mask_shape - 1)
+                new_ids = merged_mask[clipped[:, 0], clipped[:, 1], clipped[:, 2]]
+                new_ids[~in_bounds] = 0
+
+                features = pts_layer.features.copy() if hasattr(pts_layer, 'features') and not pts_layer.features.empty else pd.DataFrame()
+                if not features.empty and 'Nucleus_ID' in features.columns:
+                    features['Nucleus_ID'] = new_ids
+
+                if remove_outliers:
+                    inside_mask = new_ids > 0
+                    n_removed = int((~inside_mask).sum())
+                    removed_total += n_removed
+                    coords = coords[inside_mask]
+                    if not features.empty:
+                        features = features[inside_mask].reset_index(drop=True)
+
+                pts_layer._locked = False
+                pts_layer.data = coords
+                if not features.empty:
+                    pts_layer.features = features
+                pts_layer._locked = True
+
+                # Re-save
+                out_dir = session.get_data("output_dir")
+                if out_dir:
+                    reports_dir = Path(out_dir) / constants.REPORTS_DIR
+                    reports_dir.mkdir(exist_ok=True, parents=True)
+                    csv_path = reports_dir / f"{pts_layer.name}.csv"
+                    coords_df = pd.DataFrame(coords, columns=['Z', 'Y', 'X'])
+                    full_df = pd.concat([features.reset_index(drop=True), coords_df], axis=1)
+                    full_df.to_csv(csv_path, index=False)
+
         if hide_raw:
             nuc_ch = session.get_nuclear_channel()
             r1_nuc = f"{constants.ALIGNED_PREFIX} R1 - {nuc_ch}"
@@ -332,6 +415,12 @@ _inner.insertWidget(7, _options_desc)
 _inner.insertWidget(_inner.count() - 1, _make_spacer())
 _inner.setSpacing(2)
 _inner.setContentsMargins(0, 0, 0, 0)
+_automated_preprocessing_magic_widget.native.setMinimumWidth(0)
+for child in _automated_preprocessing_magic_widget.native.findChildren(QLabel):
+    child.setMinimumWidth(0)
+from qtpy.QtWidgets import QAbstractSpinBox, QComboBox
+for child in _automated_preprocessing_magic_widget.native.findChildren((QAbstractSpinBox, QComboBox)):
+    child.setMinimumWidth(0)
 
 
 class _AutomatedPreprocessingContainer(Container):
@@ -341,7 +430,7 @@ class _AutomatedPreprocessingContainer(Container):
 
 automated_preprocessing_widget = _AutomatedPreprocessingContainer(labels=False)
 automated_preprocessing_widget._automated_preprocessing_magic_widget = _automated_preprocessing_magic_widget
-header = Label(value="Automated Registration && Warping")
+header = Label(value="Automated Registration & Warping")
 header.native.setObjectName("widgetHeader")
 info = Label(value="<i>Registration, warping, and consensus nuclei.</i>")
 info.native.setObjectName("widgetInfo")

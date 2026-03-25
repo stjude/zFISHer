@@ -37,7 +37,7 @@ from .. import constants
 
 logger = logging.getLogger(__name__)
 
-def calculate_session_registration(r1_centroids, r2_centroids, voxels=None, progress_callback=None):
+def calculate_session_registration(r1_centroids, r2_centroids, voxels=None, max_distance=None, progress_callback=None):
     """
     Headless Orchestrator for Step 3.
     Calculates the shift and updates the global session data.
@@ -52,6 +52,7 @@ def calculate_session_registration(r1_centroids, r2_centroids, voxels=None, prog
     shift, rmsd = align_centroids_ransac(
         r1_centroids,
         r2_centroids,
+        max_distance=max_distance if max_distance and max_distance > 0 else None,
         voxels=voxels,
         progress_callback=progress_callback
     )

@@ -9,13 +9,15 @@ from ._shared import make_header_divider
 @magicgui(
     call_button="Calculate Shift (RANSAC)",
     r1_points={"label": "R1 Centroids", "tooltip": "Centroid points layer from Round 1 nuclei segmentation."},
-    r2_points={"label": "R2 Centroids", "tooltip": "Centroid points layer from Round 2 nuclei segmentation."}
+    r2_points={"label": "R2 Centroids", "tooltip": "Centroid points layer from Round 2 nuclei segmentation."},
+    max_distance={"label": "Max Distance (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum distance in pixels for RANSAC inlier matching. 0 = auto-detect from data."},
 )
 @require_active_session("Please start or load a session before running registration.")
 @error_handler("Registration Failed")
 def _registration_widget(
     r1_points: "napari.layers.Points",
-    r2_points: "napari.layers.Points"
+    r2_points: "napari.layers.Points",
+    max_distance: int = 0,
 ):
     """Calculates the XYZ shift between two point clouds via the core orchestrator."""
     viewer = napari.current_viewer()
@@ -30,8 +32,9 @@ def _registration_widget(
         # Call the Refactored Core Orchestrator
         # We pass .data (NumPy) so the core remains headless-compatible
         shift, rmsd = registration.calculate_session_registration(
-            r1_points.data, 
-            r2_points.data, 
+            r1_points.data,
+            r2_points.data,
+            max_distance=max_distance,
             progress_callback=dialog.update_progress
         )
         
@@ -102,6 +105,12 @@ _centroid_header = _make_section_header("Centroid Layers")
 _centroid_desc = _make_section_desc("Select the R1 and R2 centroid point layers for shift calculation.")
 _inner.insertWidget(0, _centroid_header)
 _inner.insertWidget(1, _centroid_desc)
+_inner.insertWidget(_inner.count() - 1, _make_spacer())
+_inner.insertWidget(_inner.count() - 1, _make_divider())
+_params_header = _make_section_header("Parameters")
+_params_desc = _make_section_desc("Adjust registration parameters. Use 0 for auto-detection.")
+_inner.insertWidget(_inner.count() - 1, _params_header)
+_inner.insertWidget(_inner.count() - 1, _params_desc)
 _inner.insertWidget(_inner.count() - 1, _make_spacer())
 _inner.setSpacing(2)
 _inner.setContentsMargins(0, 0, 0, 0)

@@ -14,13 +14,17 @@ from ._shared import make_header_divider
     call_button="Generate Global Canvas",
     layout="vertical",
     apply_warp={"label": "Apply Deformable Warping?", "tooltip": "Apply deformable B-spline warping to correct tissue deformation between rounds."},
+    show_checkerboard={"label": "Show Checkerboard", "value": True, "tooltip": "Generate a warped checkerboard overlay for visual quality check."},
+    show_deformation={"label": "Show Deformation Field", "value": True, "tooltip": "Generate a deformation field vector layer."},
     hide_raw={"label": "Hide Raw Layers?", "tooltip": "Hide raw input layers after processing, showing only aligned results."}
 )
 @require_active_session("Please start or load a session before generating the canvas.")
 @error_handler("Canvas Generation Failed")
 def _canvas_widget(
     apply_warp: bool = True,
-    hide_raw: bool = True
+    show_checkerboard: bool = True,
+    show_deformation: bool = True,
+    hide_raw: bool = False
 ):
     """
     Applies the calculated shift to all layers and creates a global canvas.
@@ -86,6 +90,12 @@ def _canvas_widget(
         for i, layer_info in enumerate(results):
             pct = 70 + int(((i + 1) / n_results) * 10)
             dialog.update_progress(pct, f"Loading layer: {layer_info['name']}...")
+
+            # Skip checkerboard/deformation if user disabled them
+            if not show_checkerboard and constants.WARPED_CHECKERBOARD_NAME in layer_info['name']:
+                continue
+            if not show_deformation and constants.DEFORMATION_FIELD_NAME in layer_info['name']:
+                continue
 
             layer_type = layer_info['type']
             meta = layer_info['meta']
