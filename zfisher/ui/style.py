@@ -1,5 +1,8 @@
+import logging
 from napari.utils.theme import get_theme, register_theme
 from qtpy.QtGui import QColor, QFont
+
+logger = logging.getLogger(__name__)
 
 # zFISHer color palette
 COLORS = {
@@ -30,7 +33,7 @@ def register_napari_theme():
         register_theme('zfisher_theme', custom_theme, 'dark')
         return 'zfisher_theme'
     except Exception as e:
-        print(f"Theme registration failed: {e}")
+        logger.warning("Theme registration failed: %s", e)
         return 'dark' # fallback theme
 
 # PyQt Stylesheets

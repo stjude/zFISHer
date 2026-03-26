@@ -202,7 +202,7 @@ zFISHer requires a Conda environment with Python 3.10.
 
 1. **Clone the repository:**
     ```bash
-    git clone <repository-url>
+    git clone https://github.com/stjude/zFISHer.git
     cd zFISHer
     ```
 
@@ -318,4 +318,4 @@ This project was developed by Seth Staller. At this time, it is not actively see
 
 ## License
 
-All rights reserved. Contact St. Jude Children's Research Hospital for licensing details.
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.

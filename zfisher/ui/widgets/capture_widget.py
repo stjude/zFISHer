@@ -441,7 +441,7 @@ def _capture_view(viewer: napari.Viewer, output_filename: str):
     """Core logic to capture the view."""
     
     if not viewer:
-        print("Error: No napari viewer found.")
+        logger.error("No napari viewer found.")
         return
 
     try:
@@ -475,7 +475,7 @@ def _capture_view(viewer: napari.Viewer, output_filename: str):
         _capture_widget.output_filename.value = _get_next_filename()
         
     except Exception as e:
-        print(f"Capture failed: {e}")
+        logger.error("Capture failed: %s", e)
         viewer.status = "Capture failed (check console)."
         popups.show_error_popup(
             viewer.window._qt_window,
@@ -732,7 +732,7 @@ def _on_arrow_draw_toggled(state: bool):
     overlay = getattr(viewer.window, 'arrow_overlay', None)
     if overlay is None:
         arrow_chk.value = False
-        print("Arrow overlay not initialised — cannot draw arrows.")
+        logger.warning("Arrow overlay not initialised — cannot draw arrows.")
         return
 
     if arrow_drawer is None:

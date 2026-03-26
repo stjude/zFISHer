@@ -42,7 +42,7 @@ def load_raw_data_into_viewer(viewer, round1_path, round2_path, output_dir=None,
         base_progress = i * steps_per_file
 
         if not path.exists():
-            print(f"Error: {path} not found.")
+            logger.error("File not found: %s", path)
             if progress_callback:
                 progress_callback(int(((base_progress + steps_per_file) / total_steps) * 100), f"Not found: {path.name}")
             continue

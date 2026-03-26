@@ -1,8 +1,11 @@
+import logging
 import napari
 import math
 import warnings
 from pathlib import Path
 from functools import partial
+
+logger = logging.getLogger(__name__)
 
 from qtpy.QtWidgets import QApplication, QToolBox, QToolButton, QPushButton, QWidget, QLabel, QVBoxLayout, QDockWidget
 from qtpy.QtGui import QColor, QIcon, QPainter, QPalette, QPixmap
@@ -343,7 +346,7 @@ def launch_zfisher():
         # Apply the registered theme
         viewer.theme = theme_name
     except Exception as e:
-        print(f"Could not apply theme: {e}")
+        logger.warning("Could not apply theme: %s", e)
 
     viewer.scale_bar.visible = False
 

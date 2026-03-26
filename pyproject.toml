@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "zfisher"
+version = "0.1.0"
+description = "3D colocalization analysis for multiplexed sequential FISH, built on napari"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.10,<3.11"
+authors = [
+    {name = "Seth Staller", email = "Seth.Staller@STJUDE.ORG"},
+]
+keywords = ["FISH", "colocalization", "napari", "microscopy", "3D", "segmentation", "registration"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+dependencies = [
+    "napari[all]",
+    "PyQt5",
+    "numpy",
+    "scipy",
+    "scikit-image",
+    "pandas",
+    "tifffile",
+    "magicgui",
+    "SimpleITK",
+    "cellpose",
+    "nd2",
+    "openpyxl",
+    "markdown",
+    "packaging",
+    "qtpy",
+]
+
+[project.urls]
+Homepage = "https://github.com/stjude/zFISHer"
+Repository = "https://github.com/stjude/zFISHer"
+Issues = "https://github.com/stjude/zFISHer/issues"
+
+[project.scripts]
+zfisher = "main:main"
+
+[tool.setuptools.packages.find]
+include = ["zfisher*"]
