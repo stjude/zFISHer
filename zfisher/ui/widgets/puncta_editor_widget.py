@@ -100,6 +100,25 @@ class _PunctaUndoStack:
 
 _puncta_undo = _PunctaUndoStack()
 
+
+def reset_puncta_editor_state():
+    """Clear all module-level state. Called on session reset."""
+    global _skip_data_sync, _f_key_held, _f_key_bound
+    _puncta_undo.clear()
+    _previous_editor_layer[0] = None
+    if _prev_data_connection[0] is not None:
+        try:
+            old_layer, old_cb = _prev_data_connection[0]
+            old_layer.events.data.disconnect(old_cb)
+        except Exception:
+            pass
+    _prev_data_connection[0] = None
+    _prev_snapshot[0] = None
+    _skip_data_sync = False
+    _f_key_held = False
+    _f_key_bound = False
+
+
 def _get_puncta_layers(gui):
     """Return only puncta Points layers (exclude _IDs and _centroids)."""
     viewer = napari.current_viewer()

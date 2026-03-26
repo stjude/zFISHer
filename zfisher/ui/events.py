@@ -63,6 +63,12 @@ def install_layer_lock(viewer):
 # Maps layer id -> {'layer': layer_ref, 'sync_data': callback, 'sync_color': callback}
 _attached_listeners = {}
 
+
+def reset_events_state():
+    """Clear all module-level state. Called on session reset."""
+    _attached_listeners.clear()
+
+
 def attach_puncta_listener(layer, name):
     """Attaches listeners to a points layer for auto-saving and color syncing."""
     if id(layer) in _attached_listeners:

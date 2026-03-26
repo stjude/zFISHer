@@ -42,6 +42,11 @@ class _RefilterUndoStack:
 _refilter_undo = _RefilterUndoStack()
 
 
+def reset_refilter_state():
+    """Clear all module-level state. Called on session reset."""
+    _refilter_undo.clear()
+
+
 def _make_divider():
     line = QFrame()
     line.setFixedHeight(2)

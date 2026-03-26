@@ -747,6 +747,19 @@ def _on_arrow_show_toggled(state: bool):
     if viewer and hasattr(viewer.window, 'arrow_overlay'):
         viewer.window.arrow_overlay.setVisible(state)
 
+def reset_capture_state():
+    """Clear all module-level state. Called on session reset."""
+    global capture_count, arrow_drawer, _region_overlay
+    capture_count = 1
+    if arrow_drawer is not None:
+        arrow_drawer.set_active(False)
+    arrow_drawer = None
+    _region_overlay = None
+    _capture_widget.output_filename.value = "capture1.png"
+    arrow_chk.value = False
+    arrow_count_label.value = "Arrows: 0"
+
+
 # --- UI Wrapper ---
 from qtpy.QtWidgets import QFrame, QLabel, QSizePolicy
 from ..style import COLORS

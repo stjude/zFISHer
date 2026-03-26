@@ -122,7 +122,7 @@ class HomeWidget(Container):
             _show_readme_dialog(self._viewer, readme_path)
 
     def _on_repo(self):
-        webbrowser.open("https://github.com/sethstaller/zFISHer")
+        webbrowser.open("https://github.com/stjude/zFISHer")
 
     def _on_reset(self):
         from ..popups import show_yes_no_popup
@@ -134,6 +134,39 @@ class HomeWidget(Container):
             return
         import logging
         logging.getLogger(__name__).info("ACTION: Session reset (all layers cleared)")
+
+        # Reset all widget module-level state before clearing layers
+        try:
+            from .mask_editor_widget import reset_mask_editor_state
+            reset_mask_editor_state()
+        except Exception:
+            pass
+        try:
+            from .puncta_editor_widget import reset_puncta_editor_state
+            reset_puncta_editor_state()
+        except Exception:
+            pass
+        try:
+            from .capture_widget import reset_capture_state
+            reset_capture_state()
+        except Exception:
+            pass
+        try:
+            from .refilter_puncta_widget import reset_refilter_state
+            reset_refilter_state()
+        except Exception:
+            pass
+        try:
+            from ..events import reset_events_state
+            reset_events_state()
+        except Exception:
+            pass
+        try:
+            from .. import viewer as _viewer_mod
+            _viewer_mod._suppress_custom_controls = False
+        except Exception:
+            pass
+
         self._viewer.layers.clear()
         session.clear_session()
         if hasattr(self._viewer.window, 'custom_scale_bar'):

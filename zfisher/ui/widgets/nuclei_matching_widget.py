@@ -23,7 +23,7 @@ from ._shared import make_header_divider
         "orientation": "horizontal", # Places buttons side-by-side
         "tooltip": "Intersection: Keep only overlapping pixels. Union: Keep all pixels from both rounds."
     },
-    match_threshold={"label": "Match Threshold (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum centroid distance to match nuclei between rounds. 0 = auto-detect."},
+    match_threshold={"label": "Match Threshold, px (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum centroid distance in pixels to match nuclei between rounds. 0 = auto-detect."},
     remove_outliers={"label": "Remove Extranuclear Puncta", "tooltip": "Remove puncta located outside the merged nuclei mask."},
 )
 @require_active_session("Please start or load a session before matching nuclei.")

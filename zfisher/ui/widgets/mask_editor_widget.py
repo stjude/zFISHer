@@ -1308,6 +1308,24 @@ def deactivate_hover_edit():
     if hover_chk.value:
         hover_chk.value = False
 
+
+def reset_mask_editor_state():
+    """Clear all module-level state. Called on session reset."""
+    global _syncing_brush, _syncing_layer_selection, _highlighter
+    global _save_pending_layer
+    _mask_undo.clear()
+    if _save_timer.isActive():
+        _save_timer.stop()
+    _save_pending_layer = None
+    _syncing_brush = False
+    _syncing_layer_selection = False
+    if _highlighter is not None:
+        _highlighter.disable()
+        _highlighter = None
+    hover_chk.value = False
+    _paint_toggle_btn.setChecked(False)
+    _erase_toggle_btn.setChecked(False)
+
 # Connect after a short delay so the viewer is fully initialized
 def _connect_layer_selection_sync():
     viewer = napari.current_viewer()

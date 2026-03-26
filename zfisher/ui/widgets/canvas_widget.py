@@ -85,7 +85,17 @@ def _canvas_widget(
             progress_callback=lambda p, m: dialog.update_progress(int(p * 0.70), m)
         )
 
-        # 6. Add resulting layers back to napari
+        # 6. Remove existing aligned/warped layers to prevent duplicates on rerun
+        existing_names = {layer_info['name'] for layer_info in results}
+        for old_layer in list(viewer.layers):
+            if old_layer.name in existing_names:
+                old_layer._locked = False
+                try:
+                    viewer.layers.remove(old_layer)
+                except ValueError:
+                    pass
+
+        # Add resulting layers back to napari
         n_results = max(len(results), 1)
         for i, layer_info in enumerate(results):
             pct = 70 + int(((i + 1) / n_results) * 10)

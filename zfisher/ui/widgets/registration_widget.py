@@ -10,7 +10,7 @@ from ._shared import make_header_divider
     call_button="Calculate Alignment",
     r1_points={"label": "R1 Centroids", "tooltip": "Centroid points layer from Round 1 nuclei segmentation."},
     r2_points={"label": "R2 Centroids", "tooltip": "Centroid points layer from Round 2 nuclei segmentation."},
-    max_distance={"label": "Max Pair Distance (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum distance (in pixels) for matching centroid pairs between rounds. 0 = auto-detect."},
+    max_distance={"label": "Max Pair Distance, px (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum distance in pixels for matching centroid pairs between rounds. 0 = auto-detect."},
 )
 @require_active_session("Please start or load a session before running registration.")
 @error_handler("Registration Failed")
@@ -25,6 +25,19 @@ def _registration_widget(
     if r1_points is None or r2_points is None:
         viewer.status = "Please select both centroid layers."
         return
+
+    # Warn if shift already exists
+    existing_shift = session.get_data("shift")
+    if existing_shift is not None:
+        if not popups.show_yes_no_popup(
+            viewer.window._qt_window,
+            "Recalculate Alignment?",
+            "An alignment has already been calculated.\n\n"
+            "Recalculating will overwrite the existing shift. "
+            "Any downstream results (canvas, warping, consensus) will need to be regenerated.\n\n"
+            "Continue?",
+        ):
+            return
 
     # Use a progress dialog to wrap the core call
     with popups.ProgressDialog(viewer.window._qt_window, title="Calculating Registration (RANSAC)...") as dialog:

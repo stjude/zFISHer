@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
     },
     threshold={"label": "Sensitivity (0-1)", "min": 0.01, "max": 1.0, "step": 0.01, "value": constants.PUNCTA_THRESHOLD_REL, "tooltip": "Intensity threshold as a fraction (0-1) of the maximum. Lower values detect dimmer puncta but may increase false positives."},
     min_distance={"label": "Min Distance (px)", "min": 1, "max": 20, "value": constants.PUNCTA_MIN_DISTANCE, "tooltip": "Minimum separation between detected puncta in pixels. Prevents double-counting nearby puncta."},
-    sigma={"label": "Spot Radius (Sigma)", "min": 0.0, "max": 5.0, "step": 0.1, "value": constants.PUNCTA_SIGMA, "tooltip": "Gaussian sigma for detection. Match to the approximate radius of your puncta in pixels. 0 = no smoothing."},
+    sigma={"label": "Spot Radius, px (Sigma)", "min": 0.0, "max": 5.0, "step": 0.1, "value": constants.PUNCTA_SIGMA, "tooltip": "Gaussian sigma for detection in pixels. Match to the approximate radius of your puncta. 0 = no smoothing."},
     z_scale={"label": "Z/XY Scale Ratio", "min": 0.01, "max": 20.0, "step": 0.01, "value": 1.0, "tooltip": "Ratio of Z-step to XY pixel size. Corrects for non-cubic voxels. Auto-computed from image metadata when available."},
     use_tophat={"label": "Subtract Background (Top-hat)", "tooltip": "Apply white top-hat filter to subtract uneven background before detection."},
     tophat_radius={"label": "Top-hat Radius (px)", "min": 1, "max": 50, "value": constants.PUNCTA_TOPHAT_RADIUS, "tooltip": "Radius of the top-hat structuring element in pixels. Should be larger than puncta diameter."}

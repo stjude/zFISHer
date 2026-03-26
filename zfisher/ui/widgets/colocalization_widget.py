@@ -73,6 +73,15 @@ def _rule_builder(
     }
 
     rules = session.get_data("colocalization_rules", default=[])
+
+    # Check for duplicate rule
+    for existing in rules:
+        if (existing['source'] == rule['source'] and
+            existing['target'] == rule['target'] and
+            existing['threshold'] == rule['threshold']):
+            viewer.status = f"Rule already exists: {rule['source']} -> {rule['target']} (<= {rule['threshold']} um)"
+            return
+
     rules.append(rule)
     session.update_data("colocalization_rules", rules)
 
@@ -139,6 +148,16 @@ def _tri_rule_builder(
     }
 
     tri_rules = session.get_data("tri_colocalization_rules", default=[])
+
+    # Check for duplicate rule
+    for existing in tri_rules:
+        if (existing['anchor'] == rule['anchor'] and
+            existing['channel_a'] == rule['channel_a'] and
+            existing['channel_b'] == rule['channel_b'] and
+            existing['threshold'] == rule['threshold']):
+            viewer.status = f"Tri-coloc rule already exists: {rule['anchor']} + {rule['channel_a']} + {rule['channel_b']}"
+            return
+
     tri_rules.append(rule)
     session.update_data("tri_colocalization_rules", tri_rules)
 

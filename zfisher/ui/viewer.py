@@ -477,20 +477,15 @@ def launch_zfisher():
 
             # Hide unwanted controls on mask layers
             if is_mask_layer:
-                from qtpy.QtWidgets import QRadioButton, QFormLayout, QSpacerItem, QSizePolicy as _SP
-                # Hide fill and polygon mode buttons
+                from qtpy.QtWidgets import QRadioButton, QFormLayout, QSizePolicy as _QSP
+                # Hide fill and polygon mode buttons but retain their space
                 for btn in page.findChildren(QRadioButton):
                     tip = (btn.toolTip() or '').lower()
                     if 'fill' in tip or 'polygon' in tip:
+                        sp = btn.sizePolicy()
+                        sp.setRetainSizeWhenHidden(True)
+                        btn.setSizePolicy(sp)
                         btn.setVisible(False)
-                        # Insert a stretch spacer at the start of the button row
-                        # to push remaining buttons right (only do once)
-                        btn_parent = btn.parent()
-                        if btn_parent and not getattr(btn_parent, '_spacer_added', False):
-                            btn_layout = btn_parent.layout()
-                            if btn_layout:
-                                btn_layout.insertStretch(0, 1)
-                                btn_parent._spacer_added = True
 
                 # Hide form rows: contiguous, preserve labels, color mode,
                 # rendering, and display-selected-label
@@ -499,9 +494,12 @@ def launch_zfisher():
 
                 _hide_labels = {'contiguous', 'preserve', 'color mode', 'rendering', 'display', 'n edit', 'contour', 'gradient', 'label'}
                 layout = page.layout()
-                if isinstance(layout, QFormLayout):
+                if hasattr(layout, 'rowCount'):
                     for row in range(layout.rowCount()):
-                        lbl_item = layout.itemAt(row, QFormLayout.LabelRole)
+                        try:
+                            lbl_item = layout.itemAt(row, QFormLayout.LabelRole)
+                        except Exception:
+                            continue
                         if not lbl_item:
                             continue
                         lbl_w = lbl_item.widget()
@@ -511,10 +509,13 @@ def launch_zfisher():
                         if any(k in txt for k in _hide_labels):
                             lbl_w.setVisible(False)
                             lbl_w.setMaximumHeight(0)
-                            field_item = layout.itemAt(row, QFormLayout.FieldRole)
-                            if field_item and field_item.widget():
-                                field_item.widget().setVisible(False)
-                                field_item.widget().setMaximumHeight(0)
+                            try:
+                                field_item = layout.itemAt(row, QFormLayout.FieldRole)
+                                if field_item and field_item.widget():
+                                    field_item.widget().setVisible(False)
+                                    field_item.widget().setMaximumHeight(0)
+                            except Exception:
+                                pass
 
             # Hide unwanted controls on puncta layers
             is_puncta_layer = selected is not None and selected.name.endswith("_puncta")

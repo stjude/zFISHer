@@ -25,11 +25,11 @@ def _get_qt_parent(viewer):
     call_button="Run Automated Registration && Warping",
     r1_dapi_layer={"label": "Round 1 Nuclei Layer", "tooltip": "Select the Round 1 nuclear stain layer for registration."},
     r2_dapi_layer={"label": "Round 2 Nuclei Layer", "tooltip": "Select the Round 2 nuclear stain layer for registration."},
-    max_distance={"label": "Max RANSAC Distance (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum distance (in pixels) for matching centroid pairs between rounds. 0 = auto-detect."},
+    max_distance={"label": "Max RANSAC Distance, px (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum distance in pixels for matching centroid pairs between rounds. 0 = auto-detect."},
     apply_warp={"label": "Apply B-spline Warp", "value": True, "tooltip": "Apply elastic warping for better alignment (recommended). Disable for rigid rotation/translation only."},
     match_nuclei={"label": "Create Consensus Nuclei Mask", "tooltip": "Create a merged nuclei mask by matching R1 and R2 nuclei after alignment."},
     overlap_method={"label": "Overlap Method", "widget_type": "RadioButtons", "choices": ["Intersection", "Union"], "orientation": "horizontal", "tooltip": "Intersection: Keep only overlapping pixels. Union: Keep all pixels from both rounds."},
-    match_threshold={"label": "Match Threshold (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum centroid distance to match nuclei between rounds. 0 = auto-detect."},
+    match_threshold={"label": "Match Threshold, px (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum centroid distance in pixels to match nuclei between rounds. 0 = auto-detect."},
     remove_outliers={"label": "Remove Extranuclear Puncta", "value": True, "tooltip": "Remove puncta located outside the merged nuclei mask after matching."},
     show_checkerboard={"label": "Show Checkerboard", "value": True, "tooltip": "Show a checkerboard pattern to visually assess alignment quality."},
     show_deformation={"label": "Show Deformation Field", "value": True, "tooltip": "Show a vector field visualizing how the tissue was warped."},
@@ -136,6 +136,16 @@ def _automated_preprocessing_magic_widget(
         # Calculate world-space translate from canvas offset for aligned layers
         canvas_translate = np.array(canvas_offset) * np.array(voxels) if canvas_offset is not None else None
         translate_arg = tuple(canvas_translate) if canvas_translate is not None else None
+
+        # Remove existing aligned/warped layers to prevent duplicates on rerun
+        existing_names = {layer_info['name'] for layer_info in results}
+        for old_layer in list(viewer.layers):
+            if old_layer.name in existing_names:
+                old_layer._locked = False
+                try:
+                    viewer.layers.remove(old_layer)
+                except ValueError:
+                    pass
 
         n_results = max(len(results), 1)
         for i, layer_info in enumerate(results):
