@@ -15,6 +15,9 @@ def run_full_zfisher_pipeline(
     seg_method="Classical", merge_splits=True,
     r1_nuclear_channel=None, r2_nuclear_channel=None,
     puncta_config=None, pairwise_rules=None, tri_rules=None,
+    apply_warp=True, max_ransac_distance=0,
+    overlap_method="Intersection", match_threshold=0,
+    remove_extranuclear_puncta=True,
     progress_callback=None,
 ):
     """
@@ -214,6 +217,7 @@ def run_full_zfisher_pipeline(
     shift, _ = registration.calculate_session_registration(
         seg_results['R1'][1], seg_results['R2'][1],
         voxels=r1_sess.voxels,
+        max_distance=max_ransac_distance,
         progress_callback=lambda p, t: _update(35 + int(p * 0.1), t)
     )
     if shift is None:
@@ -251,7 +255,7 @@ def run_full_zfisher_pipeline(
     aligned_dir = output_dir / constants.ALIGNED_DIR
     _, bspline_transform, canvas_offset = registration.generate_global_canvas(
         r1_layers_data=r1_layers, r2_layers_data=r2_layers,
-        shift=shift, output_dir=aligned_dir, apply_warp=True,
+        shift=shift, output_dir=aligned_dir, apply_warp=apply_warp,
         progress_callback=lambda p, t: _update(45 + int(p * 0.15), t)
     )
     session.update_data("canvas_scale", r1_sess.voxels)
@@ -271,7 +275,9 @@ def run_full_zfisher_pipeline(
     merged_mask, _ = segmentation.process_consensus_nuclei(
         mask1=tifffile.imread(r1_aligned_mask),
         mask2=tifffile.imread(r2_warped_mask),
-        output_dir=output_dir, threshold=0, method="Intersection",
+        output_dir=output_dir,
+        threshold=match_threshold if match_threshold > 0 else 0,
+        method=overlap_method,
         progress_callback=lambda p, t: _update(60 + int(p * 0.1), t)
     )
 
@@ -298,6 +304,7 @@ def run_full_zfisher_pipeline(
             canvas_offset=canvas_offset,
             bspline_transform=bspline_transform if rnd == "R2" else None,
             consensus_mask=merged_mask,
+            remove_extranuclear=remove_extranuclear_puncta,
             output_path=csv_out,
             layer_name=puncta_layer_name,
             progress_callback=lambda p, t, _b=job_base, _s=job_span: _update(

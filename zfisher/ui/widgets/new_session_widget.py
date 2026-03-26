@@ -24,7 +24,7 @@ class NewSessionWidget(Container):
         """Initializes all UI widgets for the new session functionality."""
         self._header = Label(value="New Session")
         self._header.native.setObjectName("widgetHeader")
-        self._info = Label(value="<i>Start a new zFISHer session from raw data.</i>")
+        self._info = Label(value="<i>Create a new session by loading Round 1 and Round 2 image files.</i>")
         self._info.native.setObjectName("widgetInfo")
         self._round1_path = FileEdit(label="R1:", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path(r"..."), tooltip="Path to Round 1 .nd2 or OME-TIFF image file.")
         self._round2_path = FileEdit(label="R2:", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path(r"..."), tooltip="Path to Round 2 .nd2 or OME-TIFF image file.")

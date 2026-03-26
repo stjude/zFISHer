@@ -113,11 +113,11 @@ def _get_puncta_layers(gui):
     ]
 
 @magicgui(
-    call_button="Delete Selected Points",
-    points_layer={"label": "Layer to Edit", "choices": _get_puncta_layers, "tooltip": "The puncta points layer to edit."},
-    fishing_hook={"label": "Enable Fishing Hook", "value": False, "tooltip": "Click to place puncta. Automatically snaps to the nearest intensity peak."},
-    volume_optimization={"label": "Volume Optimization", "value": True, "tooltip": "Refine each placed punctum position to the local intensity maximum."},
-    opt_radius={"label": "Opt. Radius (um)", "value": "0.1", "tooltip": "Search radius in microns for volume optimization refinement."}
+    call_button="Delete Selected Puncta",
+    points_layer={"label": "Layer to Edit", "choices": _get_puncta_layers, "tooltip": "The puncta layer to edit."},
+    fishing_hook={"label": "Enable Fishing Hook", "value": False, "tooltip": "Enable to place puncta with automatic snapping to intensity peaks. Hold F + Click to place. When disabled, use standard add mode."},
+    volume_optimization={"label": "Volume Optimization", "value": True, "tooltip": "Refine punctum position to the local intensity maximum within the specified search radius."},
+    opt_radius={"label": "Opt. Radius (um)", "value": "0.1", "tooltip": "Search radius (in microns) to find the nearest intensity peak when volume optimization is enabled."}
 )
 @require_active_session()
 def _puncta_editor_widget(
@@ -535,7 +535,7 @@ puncta_editor_widget = _PunctaEditorWidgetContainer(labels=False)
 puncta_editor_widget._puncta_editor_widget = _puncta_editor_widget
 header = widgets.Label(value="Puncta Editor")
 header.native.setObjectName("widgetHeader")
-info = widgets.Label(value="<i>Advanced editing of puncta.</i>")
+info = widgets.Label(value="<i>Manually add, delete, and edit puncta positions.</i>")
 info.native.setObjectName("widgetInfo")
 
 # Insert section headers/dividers into the magicgui form's internal layout

@@ -7,10 +7,10 @@ from ..decorators import require_active_session, error_handler
 from ._shared import make_header_divider
 
 @magicgui(
-    call_button="Calculate Shift (RANSAC)",
+    call_button="Calculate Alignment",
     r1_points={"label": "R1 Centroids", "tooltip": "Centroid points layer from Round 1 nuclei segmentation."},
     r2_points={"label": "R2 Centroids", "tooltip": "Centroid points layer from Round 2 nuclei segmentation."},
-    max_distance={"label": "Max Distance (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum distance in pixels for RANSAC inlier matching. 0 = auto-detect from data."},
+    max_distance={"label": "Max Pair Distance (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum distance (in pixels) for matching centroid pairs between rounds. 0 = auto-detect."},
 )
 @require_active_session("Please start or load a session before running registration.")
 @error_handler("Registration Failed")
@@ -88,7 +88,7 @@ registration_widget = _RegistrationContainer(labels=False)
 registration_widget._registration_widget = _registration_widget
 header = widgets.Label(value="Registration")
 header.native.setObjectName("widgetHeader")
-info = widgets.Label(value="<i>Calculates shift between rounds.</i>")
+info = widgets.Label(value="<i>Calculates spatial alignment between Round 1 and Round 2.</i>")
 info.native.setObjectName("widgetInfo")
 info.native.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
@@ -101,8 +101,8 @@ _layout.addWidget(_make_divider())
 
 # Insert section headers into inner form
 _inner = _registration_widget.native.layout()
-_centroid_header = _make_section_header("Centroid Layers")
-_centroid_desc = _make_section_desc("Select the R1 and R2 centroid point layers for shift calculation.")
+_centroid_header = _make_section_header("Nuclei Centers")
+_centroid_desc = _make_section_desc("Select the R1 and R2 centroid point layers for alignment calculation.")
 _inner.insertWidget(0, _centroid_header)
 _inner.insertWidget(1, _centroid_desc)
 _inner.insertWidget(_inner.count() - 1, _make_spacer())
@@ -114,6 +114,11 @@ _inner.insertWidget(_inner.count() - 1, _params_desc)
 _inner.insertWidget(_inner.count() - 1, _make_spacer())
 _inner.setSpacing(2)
 _inner.setContentsMargins(0, 0, 0, 0)
+
+_registration_widget.native.setMinimumWidth(0)
+from qtpy.QtWidgets import QAbstractSpinBox, QComboBox
+for child in _registration_widget.native.findChildren((QAbstractSpinBox, QComboBox)):
+    child.setMinimumWidth(0)
 
 _layout.addWidget(_registration_widget.native)
 _layout.addStretch(1)

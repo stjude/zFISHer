@@ -25,14 +25,14 @@ def _get_qt_parent(viewer):
     call_button="Run Automated Registration && Warping",
     r1_dapi_layer={"label": "Round 1 Nuclei Layer", "tooltip": "Select the Round 1 nuclear stain layer for registration."},
     r2_dapi_layer={"label": "Round 2 Nuclei Layer", "tooltip": "Select the Round 2 nuclear stain layer for registration."},
-    max_distance={"label": "Max RANSAC Distance (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum distance in pixels for RANSAC inlier matching. 0 = auto-detect from data."},
-    apply_warp={"label": "Apply B-spline Warp", "value": True, "tooltip": "Enable deformable B-spline registration. Disable for rigid-only alignment."},
-    match_nuclei={"label": "Create Consensus Nuclei Mask", "tooltip": "Generate consensus nuclei by matching R1 and R2 masks after alignment."},
+    max_distance={"label": "Max RANSAC Distance (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum distance (in pixels) for matching centroid pairs between rounds. 0 = auto-detect."},
+    apply_warp={"label": "Apply B-spline Warp", "value": True, "tooltip": "Apply elastic warping for better alignment (recommended). Disable for rigid rotation/translation only."},
+    match_nuclei={"label": "Create Consensus Nuclei Mask", "tooltip": "Create a merged nuclei mask by matching R1 and R2 nuclei after alignment."},
     overlap_method={"label": "Overlap Method", "widget_type": "RadioButtons", "choices": ["Intersection", "Union"], "orientation": "horizontal", "tooltip": "Intersection: Keep only overlapping pixels. Union: Keep all pixels from both rounds."},
     match_threshold={"label": "Match Threshold (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum centroid distance to match nuclei between rounds. 0 = auto-detect."},
-    remove_outliers={"label": "Remove Extranuclear Puncta", "value": True, "tooltip": "Remove puncta that fall outside the consensus mask boundaries after matching."},
-    show_checkerboard={"label": "Show Checkerboard", "value": True, "tooltip": "Generate a warped checkerboard overlay for visual quality check."},
-    show_deformation={"label": "Show Deformation Field", "value": True, "tooltip": "Generate a deformation field vector layer."},
+    remove_outliers={"label": "Remove Extranuclear Puncta", "value": True, "tooltip": "Remove puncta located outside the merged nuclei mask after matching."},
+    show_checkerboard={"label": "Show Checkerboard", "value": True, "tooltip": "Show a checkerboard pattern to visually assess alignment quality."},
+    show_deformation={"label": "Show Deformation Field", "value": True, "tooltip": "Show a vector field visualizing how the tissue was warped."},
     hide_raw={"label": "Hide Raw Layers After?", "tooltip": "Hide raw input layers after processing, showing only aligned results."}
 )
 @require_active_session("Please start or load a session first.")

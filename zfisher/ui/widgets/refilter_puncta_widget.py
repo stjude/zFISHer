@@ -105,9 +105,9 @@ def _resolve_puncta_layers(viewer, channel_choice):
 
 
 @magicgui(
-    call_button="Re-filter Puncta to Mask",
+    call_button="Filter Puncta by Mask",
     mask_layer={"label": "Filter Mask", "tooltip": "Mask layer to filter against. Puncta outside this mask are removed."},
-    channels={"label": "Channels", "choices": ["All (R1 + R2)"], "tooltip": "Which puncta layers to re-filter. Select individual channels or all at once."},
+    channels={"label": "Channels", "choices": ["All (R1 + R2)"], "tooltip": "Select which puncta layers to re-filter against the mask. 'All (R1 + R2)' applies to all aligned/warped puncta."},
     auto_call=False,
 )
 @require_active_session()
@@ -193,7 +193,7 @@ refilter_puncta_widget._refilter_widget = _refilter_widget
 
 header = widgets.Label(value="Puncta Cleanup")
 header.native.setObjectName("widgetHeader")
-info = widgets.Label(value="<i>Remove puncta outside a mask after editing.</i>")
+info = widgets.Label(value="<i>Remove puncta that fall outside a nuclei mask.</i>")
 info.native.setObjectName("widgetInfo")
 from qtpy.QtWidgets import QSizePolicy as _QSP
 info.native.setSizePolicy(_QSP.Expanding, _QSP.Preferred)
@@ -232,3 +232,9 @@ _refilter_undo_btn.clicked.connect(_on_refilter_undo)
 _layout.addWidget(_refilter_undo_btn)
 
 _layout.addStretch(1)
+
+# Ensure widgets shrink with panel
+from qtpy.QtWidgets import QAbstractSpinBox, QComboBox
+_refilter_widget.native.setMinimumWidth(0)
+for child in _refilter_widget.native.findChildren((QAbstractSpinBox, QComboBox)):
+    child.setMinimumWidth(0)

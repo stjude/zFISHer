@@ -62,18 +62,18 @@ class HomeWidget(Container):
           <tr><td colspan='2'><b style='color: {mint};'>1. Session &amp; I/O</b></td></tr>
           <tr><td width='20'></td><td>Load .nd2 or .tif image stacks</td></tr>
           <tr><td colspan='2'><b style='color: {mint};'>2. Nuclei Segmentation</b></td></tr>
-          <tr><td></td><td>Segment nuclei channels &#8594; per-round masks</td></tr>
+          <tr><td></td><td>Segment nuclei in each round separately</td></tr>
           <tr><td></td><td>Edit masks (merge, paint, erase)</td></tr>
-          <tr><td colspan='2'><b style='color: {mint};'>3. Puncta Picking</b></td></tr>
-          <tr><td></td><td>Detect puncta on raw channels</td></tr>
-          <tr><td></td><td>Manually add, remove, or edit spots</td></tr>
+          <tr><td colspan='2'><b style='color: {mint};'>3. Puncta Detection</b></td></tr>
+          <tr><td></td><td>Detect puncta on fluorescent channels</td></tr>
+          <tr><td></td><td>Manually add, remove, or edit puncta</td></tr>
           <tr><td colspan='2'><b style='color: {mint};'>4. Alignment &amp; Consensus</b></td></tr>
-          <tr><td></td><td>Register rounds &#8594; Warp to common space</td></tr>
+          <tr><td></td><td>Align rounds &#8594; Elastic warping to common space</td></tr>
           <tr><td></td><td>Transform puncta into aligned coordinates</td></tr>
-          <tr><td></td><td>Match nuclei &#8594; Consensus mask</td></tr>
-          <tr><td></td><td>Remove extranuclear puncta</td></tr>
+          <tr><td></td><td>Match nuclei &#8594; Merged nuclei mask</td></tr>
+          <tr><td></td><td>Remove puncta outside nuclei</td></tr>
           <tr><td colspan='2'><b style='color: {mint};'>5. Export &amp; Visualization</b></td></tr>
-          <tr><td></td><td>Colocalization analysis &amp; statistics</td></tr>
+          <tr><td></td><td>Colocalization analysis &amp; generate reports</td></tr>
           <tr><td></td><td>Capture &amp; annotate images</td></tr>
         </table>
         """

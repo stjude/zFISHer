@@ -224,7 +224,7 @@ class MaskHighlighter:
 _highlighter = None
 
 @magicgui(
-    call_button="Merge IDs",
+    call_button="Merge Nuclei",
     mask_layer={"label": "Layer to Edit", "tooltip": "The nuclei mask layer to edit."},
     source_id={"label": "Source ID", "tooltip": "ID of the nucleus to act on (merge source or delete target)."},
     target_id={"label": "Target ID", "tooltip": "ID of the nucleus to merge into. Source will be absorbed into Target."}
@@ -405,9 +405,9 @@ paint_chk = widgets.CheckBox(text="Paint (New ID)", tooltip="Enable paint mode t
 from qtpy.QtWidgets import QHBoxLayout as _QHBoxLayout, QWidget as _QWidget
 
 # Extrude ID — label + spinbox + button in one row
-_extrude_spinbox = widgets.SpinBox(label="", min=1, max=99999, value=1, tooltip="Enter the nucleus label ID to extrude through all Z slices.")
+_extrude_spinbox = widgets.SpinBox(label="", min=1, max=99999, value=1, tooltip="Nucleus ID to fill through all Z slices using its largest XY cross-section.")
 _extrude_btn = QPushButton("Extrude (Fill Z)")
-_extrude_btn.setToolTip("Extend the specified nucleus label through all Z slices.")
+_extrude_btn.setToolTip("Fill the specified nucleus through all Z slices using its largest XY cross-section.")
 _extrude_row = _QWidget()
 _extrude_row_layout = _QHBoxLayout(_extrude_row)
 _extrude_row_layout.setContentsMargins(0, 2, 0, 2)
@@ -422,9 +422,9 @@ erase_chk = widgets.CheckBox(text="Erase", tooltip="Enable eraser to remove mask
 brush_size_slider = widgets.Slider(label="", min=1, max=40, value=10, tooltip="Brush size for paint and erase tools. Syncs with layer controls.")
 
 # Delete by ID — label + spinbox + button in one row
-_delete_id_spinbox = widgets.SpinBox(label="", min=1, max=99999, value=1, tooltip="Enter the nucleus label ID to delete.")
+_delete_id_spinbox = widgets.SpinBox(label="", min=1, max=99999, value=1, tooltip="Nucleus ID to remove completely from the mask and ID layers.")
 _delete_id_btn = QPushButton("Delete ID")
-_delete_id_btn.setToolTip("Delete the specified nucleus ID from the mask and ID layers.")
+_delete_id_btn.setToolTip("Remove this nucleus from the mask and ID layers. All voxels with this label will be erased.")
 _delete_id_row = _QWidget()
 _delete_id_row_layout = _QHBoxLayout(_delete_id_row)
 _delete_id_row_layout.setContentsMargins(0, 2, 0, 2)
@@ -433,7 +433,7 @@ _delete_id_row_layout.addWidget(_QLabel("Nucleus ID:"))
 _delete_id_row_layout.addWidget(_delete_id_spinbox.native, 1)
 _delete_id_row_layout.addWidget(_delete_id_btn)
 
-hover_chk = widgets.CheckBox(text="Hover Edit Mode (Red + 'C' to Del)", tooltip="Highlight nuclei under the cursor in red. Press C to delete the highlighted nucleus.")
+hover_chk = widgets.CheckBox(text="Hover Edit Mode (Red + 'C' to Del)", tooltip="Highlight nuclei under the cursor in red. Press the 'C' key to delete the highlighted nucleus.")
 
 # --- Utilities ---
 undo_btn = widgets.PushButton(text="Undo", tooltip="Revert the last mask edit operation.")
@@ -664,7 +664,7 @@ _paint_new_btn.clicked.connect(_on_paint_new)
 _layout.addWidget(_paint_new_btn)
 
 # Paint brush size row — independent from erase brush size
-_paint_brush_slider = widgets.Slider(label="", min=1, max=40, value=10, tooltip="Brush size for painting.")
+_paint_brush_slider = widgets.Slider(label="", min=1, max=40, value=10, tooltip="Brush size for painting (1-40 pixels). Syncs with layer brush size controls.")
 _paint_brush_slider.label = "Brush Size:"
 _paint_brush_form = widgets.Container(labels=True)
 _paint_brush_form.extend([_paint_brush_slider])

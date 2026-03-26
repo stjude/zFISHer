@@ -14,8 +14,8 @@ from ._shared import make_header_divider
 @magicgui(
     call_button="Match & Merge Nuclei",
     layout="vertical",
-    r1_mask_layer={"label": "R1 Mask (Aligned)", "tooltip": "The segmented nuclei mask from Round 1."},
-    r2_mask_layer={"label": "R2 Mask (Warped)", "tooltip": "The segmented nuclei mask from Round 2 (aligned or warped)."},
+    r1_mask_layer={"label": "R1 Mask (Aligned)", "tooltip": "The aligned nuclei mask from Round 1."},
+    r2_mask_layer={"label": "R2 Mask (Warped)", "tooltip": "The nuclei mask from Round 2 after registration."},
     method={
         "label": "Overlap Method",
         "widget_type": "RadioButtons", # Changes dropdown to toggle/radio buttons
@@ -24,7 +24,7 @@ from ._shared import make_header_divider
         "tooltip": "Intersection: Keep only overlapping pixels. Union: Keep all pixels from both rounds."
     },
     match_threshold={"label": "Match Threshold (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum centroid distance to match nuclei between rounds. 0 = auto-detect."},
-    remove_outliers={"label": "Remove Extranuclear Puncta", "tooltip": "Remove puncta that fall outside the consensus mask boundaries."},
+    remove_outliers={"label": "Remove Extranuclear Puncta", "tooltip": "Remove puncta located outside the merged nuclei mask."},
 )
 @require_active_session("Please start or load a session before matching nuclei.")
 @error_handler("Nuclei Matching Failed")
@@ -208,6 +208,11 @@ _inner.insertWidget(7, _method_desc)
 _inner.insertWidget(_inner.count() - 1, _make_spacer())
 _inner.setSpacing(2)
 _inner.setContentsMargins(0, 0, 0, 0)
+
+_nuclei_matching_widget.native.setMinimumWidth(0)
+from qtpy.QtWidgets import QWidget as _QW
+for child in _nuclei_matching_widget.native.findChildren(_QW):
+    child.setMinimumWidth(0)
 
 _layout.addWidget(_nuclei_matching_widget.native)
 _layout.addStretch(1)

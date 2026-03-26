@@ -34,7 +34,7 @@ class BatchProcessWidget(Container):
         self._header = Label(value="Batch Process")
         self._header.native.setObjectName("widgetHeader")
         self._info = Label(
-            value="<i>Run a complete zFISHer analysis on one or more datasets from a configuration template.</i>"
+            value="<i>Run the complete pipeline on multiple datasets using a batch Excel file.</i>"
         )
         self._info.native.setObjectName("widgetInfo")
         self._info.native.setWordWrap(True)
@@ -52,7 +52,7 @@ class BatchProcessWidget(Container):
             tooltip="Base output directory. Each dataset gets its own subfolder."
         )
         self._generate_template_btn = PushButton(text="Generate Template")
-        self._generate_template_btn.tooltip = "Save a pre-formatted Excel template with Datasets, Puncta, and Colocalization sheets."
+        self._generate_template_btn.tooltip = "Create a template Excel file to configure batch processing with dataset paths and analysis parameters."
         self._generate_template_btn.native.setMinimumWidth(0)
         self._batch_run_btn = PushButton(text="Run Batch Processing")
         self._batch_run_btn.tooltip = "Validate the batch file and run the full pipeline on all datasets."
@@ -122,10 +122,92 @@ class BatchProcessWidget(Container):
                 df.to_excel(writer, sheet_name=name, index=False)
             add_dropdown_validations(writer.book)
 
-            # Auto-size the Instructions columns for readability
+            # --- Visual formatting ---
+            from openpyxl.utils import get_column_letter
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+            # Color palette
+            header_fill = PatternFill(start_color="2D2B3D", end_color="2D2B3D", fill_type="solid")  # Dark purple
+            header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+            example_fill = PatternFill(start_color="3A3650", end_color="3A3650", fill_type="solid")  # Muted purple
+            example_font = Font(name="Calibri", size=10, color="9999AA", italic=True)
+            data_font = Font(name="Calibri", size=10, color="333333")
+            section_fill = PatternFill(start_color="E8E0F0", end_color="E8E0F0", fill_type="solid")  # Light lavender
+            section_font = Font(name="Calibri", size=11, bold=True, color="4A3A6A")
+            desc_font = Font(name="Calibri", size=10, color="555555")
+            thin_border = Border(
+                bottom=Side(style="thin", color="CCCCCC"),
+            )
+
+            # --- Instructions sheet ---
             ws = writer.book["Instructions"]
-            ws.column_dimensions['A'].width = 22
-            ws.column_dimensions['B'].width = 110
+            ws.column_dimensions['A'].width = 30
+            ws.column_dimensions['B'].width = 120
+            ws.sheet_properties.tabColor = "7A6B8A"
+
+            for row in ws.iter_rows(min_row=1, max_row=ws.max_row):
+                a_val = str(row[0].value or "")
+                if a_val.isupper() and a_val.strip():
+                    # Section headers (OVERVIEW, DATASETS SHEET, etc.)
+                    for cell in row:
+                        cell.fill = section_fill
+                        cell.font = section_font
+                elif a_val.startswith("---"):
+                    # Sub-section separators
+                    for cell in row:
+                        cell.font = Font(name="Calibri", size=10, bold=True, color="7A6B8A")
+                elif a_val.startswith("("):
+                    # Subtitle rows like (required), (optional)
+                    for cell in row:
+                        cell.font = Font(name="Calibri", size=10, italic=True, color="7A6B8A")
+                elif a_val.strip():
+                    # Column name rows
+                    row[0].font = Font(name="Calibri", size=10, bold=True, color="333333")
+                    if len(row) > 1:
+                        row[1].font = desc_font
+                        row[1].alignment = Alignment(wrap_text=True, vertical="top")
+                else:
+                    # Description continuation rows
+                    if len(row) > 1 and row[1].value:
+                        row[1].font = desc_font
+                        row[1].alignment = Alignment(wrap_text=True, vertical="top")
+
+            # --- Data sheets (Datasets, Puncta, Colocalization) ---
+            for sheet_name in ["Datasets", "Puncta", "Colocalization"]:
+                ws = writer.book[sheet_name]
+                ws.sheet_properties.tabColor = "7A6B8A"
+
+                # Header row styling
+                for cell in ws[1]:
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                ws.row_dimensions[1].height = 28
+
+                # Freeze top row
+                ws.freeze_panes = "A2"
+
+                # Example row styling
+                for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+                    first_val = str(row[0].value or "")
+                    if first_val.startswith("[EXAMPLE]"):
+                        for cell in row:
+                            cell.fill = example_fill
+                            cell.font = example_font
+                    else:
+                        for cell in row:
+                            cell.font = data_font
+                            cell.border = thin_border
+
+                # Auto-size columns based on header + a few data rows
+                for col_idx in range(1, ws.max_column + 1):
+                    max_len = 0
+                    for row_idx in range(1, min(6, ws.max_row + 1)):
+                        cell = ws.cell(row=row_idx, column=col_idx)
+                        if cell.value:
+                            max_len = max(max_len, len(str(cell.value)))
+                    col_letter = get_column_letter(col_idx)
+                    ws.column_dimensions[col_letter].width = max(14, min(40, max_len + 4))
 
         logger.info("Batch template saved to %s", save_path)
         popups.show_info_popup(
@@ -168,13 +250,17 @@ class BatchProcessWidget(Container):
             )
             return
 
+        # Collect all warnings: parse warnings + channel validation warnings
+        all_warnings = config.pop("_warnings", [])
+
         # Deep validation: check file channels match config
         channel_warnings = validate_channels(config)
+        all_warnings.extend(channel_warnings)
 
-        if channel_warnings:
+        if all_warnings:
             msg = (
                 "The following issues were found during validation:\n\n"
-                + "\n".join(f"  - {w}" for w in channel_warnings)
+                + "\n".join(f"  - {w}" for w in all_warnings)
                 + "\n\nDo you want to continue anyway?"
             )
             if not popups.show_yes_no_popup(
@@ -230,6 +316,11 @@ class BatchProcessWidget(Container):
                         puncta_config=puncta_config,
                         pairwise_rules=pairwise_rules,
                         tri_rules=tri_rules,
+                        apply_warp=ds.get("apply_warp", True),
+                        max_ransac_distance=ds.get("max_ransac_distance", 0),
+                        overlap_method=ds.get("overlap_method", "Intersection"),
+                        match_threshold=ds.get("match_threshold", 0),
+                        remove_extranuclear_puncta=ds.get("remove_extranuclear_puncta", True),
                         progress_callback=dialog.update_item_progress,
                     )
                     results.append((name, "Success"))

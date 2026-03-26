@@ -14,18 +14,18 @@ logger = logging.getLogger(__name__)
 @magicgui(
     call_button="Detect Puncta",
     layout="vertical",
-    image_layer={"label": "Target Channel", "tooltip": "The fluorescent channel image to detect puncta in."},
+    image_layer={"label": "Target Channel", "tooltip": "The image channel to scan for puncta."},
     nuclei_layer={"label": "Nuclei Masks", "tooltip": "Nuclei mask used to filter puncta. Only puncta inside nuclei are kept."},
-    nuclei_only={"label": "Nuclei Only (discard extranuclear puncta)", "value": True, "tooltip": "If checked, discard puncta that fall outside the nuclei mask."},
+    nuclei_only={"label": "Nuclei Only (discard outside nuclei)", "value": True, "tooltip": "Keep only puncta inside the nuclei mask. Uncheck to detect puncta everywhere."},
     method={
         "label": "Algorithm",
         "choices": ["Local Maxima", "Laplacian of Gaussian", "Difference of Gaussian", "Radial Symmetry"],
-        "tooltip": "Detection algorithm. Local Maxima is fastest. LoG and DoG detect blob-like structures. Radial Symmetry finds symmetric bright spots."
+        "tooltip": "Detection algorithm: Local Maxima (fastest, well-separated puncta), Laplacian of Gaussian (blob-aware, crowded fields), Difference of Gaussian (fast blob approximation), Radial Symmetry (high-density fields)."
     },
-    threshold={"label": "Sensitivity (0-1)", "min": 0.01, "max": 1.0, "step": 0.01, "value": constants.PUNCTA_THRESHOLD_REL, "tooltip": "Relative intensity threshold (0-1). Lower values detect dimmer spots but may increase false positives."},
-    min_distance={"label": "Min Distance (px)", "min": 1, "max": 20, "value": constants.PUNCTA_MIN_DISTANCE, "tooltip": "Minimum separation between detected puncta in pixels. Prevents double-counting nearby spots."},
-    sigma={"label": "Spot Radius (Sigma)", "min": 0.0, "max": 5.0, "step": 0.1, "value": constants.PUNCTA_SIGMA, "tooltip": "Gaussian sigma for spot detection. Match to the approximate radius of your puncta in pixels."},
-    z_scale={"label": "Z-Anisotropy Scale", "min": 0.01, "max": 20.0, "step": 0.01, "value": 1.0, "tooltip": "Z-anisotropy correction factor. Adjusts for the difference between Z-step and XY pixel size."},
+    threshold={"label": "Sensitivity (0-1)", "min": 0.01, "max": 1.0, "step": 0.01, "value": constants.PUNCTA_THRESHOLD_REL, "tooltip": "Intensity threshold as a fraction (0-1) of the maximum. Lower values detect dimmer puncta but may increase false positives."},
+    min_distance={"label": "Min Distance (px)", "min": 1, "max": 20, "value": constants.PUNCTA_MIN_DISTANCE, "tooltip": "Minimum separation between detected puncta in pixels. Prevents double-counting nearby puncta."},
+    sigma={"label": "Spot Radius (Sigma)", "min": 0.0, "max": 5.0, "step": 0.1, "value": constants.PUNCTA_SIGMA, "tooltip": "Gaussian sigma for detection. Match to the approximate radius of your puncta in pixels. 0 = no smoothing."},
+    z_scale={"label": "Z/XY Scale Ratio", "min": 0.01, "max": 20.0, "step": 0.01, "value": 1.0, "tooltip": "Ratio of Z-step to XY pixel size. Corrects for non-cubic voxels. Auto-computed from image metadata when available."},
     use_tophat={"label": "Subtract Background (Top-hat)", "tooltip": "Apply white top-hat filter to subtract uneven background before detection."},
     tophat_radius={"label": "Top-hat Radius (px)", "min": 1, "max": 50, "value": constants.PUNCTA_TOPHAT_RADIUS, "tooltip": "Radius of the top-hat structuring element in pixels. Should be larger than puncta diameter."}
 )
@@ -308,7 +308,7 @@ puncta_widget = _PunctaWidgetContainer(labels=False)
 puncta_widget._puncta_widget = _puncta_widget
 header = widgets.Label(value="Puncta Detection")
 header.native.setObjectName("widgetHeader")
-info = widgets.Label(value="<i>Algorithmic detection of puncta.</i>")
+info = widgets.Label(value="<i>Automated puncta detection using intensity-based algorithms.</i>")
 info.native.setObjectName("widgetInfo")
 
 # Insert section headers into the magicgui form's internal layout
@@ -324,15 +324,15 @@ _nuclei_only_native.setParent(None)  # detach from layout
 # Now: image_layer(0), nuclei_layer(1), method(2), threshold(3), ...
 
 # --- "Target" section: image_layer(0), nuclei_layer(1) ---
-_target_header = _make_section_header("Target")
-_target_desc = _make_section_desc("Select the fluorescent channel and nuclei mask for puncta detection.")
+_target_header = _make_section_header("Input Layers")
+_target_desc = _make_section_desc("Select the image channel to scan and the nuclei mask to filter against.")
 _inner.insertWidget(0, _target_header)
 _inner.insertWidget(1, _target_desc)
 # image_layer(2), nuclei_layer(3)
 
 # --- "Algorithm" section: method(4) ---
 _algo_header = _make_section_header("Algorithm")
-_algo_desc = _make_section_desc("Choose the detection algorithm. Parameters adjust automatically per method.")
+_algo_desc = _make_section_desc("Choose the detection algorithm. Available parameters change based on your selection.")
 _inner.insertWidget(4, _make_spacer())
 _inner.insertWidget(5, _make_divider())
 _inner.insertWidget(6, _algo_header)

@@ -59,7 +59,7 @@ class DapiSegmentationWidget(Container):
     def _init_widgets(self):
         self._header = Label(value="Nuclei Mapping")
         self._header.native.setObjectName("widgetHeader")
-        self._info = Label(value="<i>Segments nuclei in the nuclear stain channel.</i>")
+        self._info = Label(value="<i>Automatically segments nuclei from the nuclear stain channel in each round.</i>")
         self._info.native.setObjectName("widgetInfo")
 
         self.r1_layer = create_widget(

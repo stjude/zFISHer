@@ -124,6 +124,7 @@ def detect_spots_3d(image_data, method="Local Maxima", progress_callback=None, *
 
 def transform_puncta_to_aligned_space(raw_puncta, round_id, shift, canvas_offset,
                                        bspline_transform=None, consensus_mask=None,
+                                       remove_extranuclear=True,
                                        output_path=None, layer_name=None,
                                        progress_callback=None):
     """
@@ -204,11 +205,12 @@ def transform_puncta_to_aligned_space(raw_puncta, round_id, shift, canvas_offset
         nucleus_ids = consensus_mask[indices]
         nucleus_ids[~in_bounds] = 0
 
-        # Filter to nuclear puncta only
-        keep = nucleus_ids > 0
-        aligned_coords = aligned_coords[keep]
-        nucleus_ids = nucleus_ids[keep]
-        quality = quality[keep]
+        # Filter to nuclear puncta only (if enabled)
+        if remove_extranuclear:
+            keep = nucleus_ids > 0
+            aligned_coords = aligned_coords[keep]
+            nucleus_ids = nucleus_ids[keep]
+            quality = quality[keep]
 
         if len(aligned_coords) == 0:
             if progress_callback:

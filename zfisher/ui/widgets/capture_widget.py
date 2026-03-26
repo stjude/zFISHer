@@ -758,16 +758,15 @@ def _make_divider():
     return line
 
 def _make_section_header(text):
-    lbl = QLabel(text)
-    lbl.setStyleSheet(f"color: {COLORS['separator_color']}; font-weight: bold; font-size: 13px; margin: 0px; padding: 0px;")
+    lbl = QLabel(f"<b style='color: #7a6b8a;'>{text}</b>")
     lbl.setContentsMargins(0, 0, 0, 0)
+    lbl.setStyleSheet("margin: 0px 2px; padding: 0px;")
     return lbl
 
 def _make_section_desc(text):
     lbl = QLabel(text)
     lbl.setWordWrap(True)
-    lbl.setStyleSheet("color: white; font-size: 11px; margin: 0px; padding: 0px;")
-    lbl.setContentsMargins(0, 0, 0, 10)
+    lbl.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
     return lbl
 
 def _make_spacer(height=20):
@@ -810,3 +809,6 @@ _layout.addWidget(_make_section_header("Scale Bar"))
 _layout.addWidget(_make_section_desc("Control the on-canvas scale bar visibility and position."))
 _layout.addWidget(sb_container.native)
 _layout.addStretch(1)
+
+# Ensure widgets shrink with panel
+_capture_widget.native.setMinimumWidth(0)

@@ -468,28 +468,29 @@ def launch_zfisher():
 
             is_mask_layer = selected is not None and selected.name.endswith("_masks")
 
-            # Hide transform/translate button (all layers) — retain space
-            from qtpy.QtWidgets import QAbstractButton, QSizePolicy as _QSP
+            # Hide transform/translate button (all layers)
+            from qtpy.QtWidgets import QAbstractButton
             for btn in page.findChildren(QAbstractButton):
                 tip = (btn.toolTip() or '').lower()
                 if any(kw in tip for kw in ('transform', 'translate', 'move layer')):
                     btn.setVisible(False)
-                    sp = btn.sizePolicy()
-                    sp.setRetainSizeWhenHidden(True)
-                    btn.setSizePolicy(sp)
 
             # Hide unwanted controls on mask layers
             if is_mask_layer:
-                from qtpy.QtWidgets import QRadioButton, QFormLayout, QSizePolicy
-                # Hide fill and polygon mode buttons (keep space to maintain alignment)
+                from qtpy.QtWidgets import QRadioButton, QFormLayout, QSpacerItem, QSizePolicy as _SP
+                # Hide fill and polygon mode buttons
                 for btn in page.findChildren(QRadioButton):
                     tip = (btn.toolTip() or '').lower()
                     if 'fill' in tip or 'polygon' in tip:
                         btn.setVisible(False)
-                        # Keep the space so remaining buttons stay right-aligned
-                        sp = btn.sizePolicy()
-                        sp.setRetainSizeWhenHidden(True)
-                        btn.setSizePolicy(sp)
+                        # Insert a stretch spacer at the start of the button row
+                        # to push remaining buttons right (only do once)
+                        btn_parent = btn.parent()
+                        if btn_parent and not getattr(btn_parent, '_spacer_added', False):
+                            btn_layout = btn_parent.layout()
+                            if btn_layout:
+                                btn_layout.insertStretch(0, 1)
+                                btn_parent._spacer_added = True
 
                 # Hide form rows: contiguous, preserve labels, color mode,
                 # rendering, and display-selected-label
@@ -562,7 +563,7 @@ def launch_zfisher():
             return
         from qtpy.QtWidgets import (
             QWidget, QLabel, QSlider, QHBoxLayout, QColorDialog, QPushButton,
-            QFormLayout,
+            QFormLayout, QVBoxLayout,
         )
         from qtpy.QtCore import Qt
         controls = viewer.window._qt_viewer.controls
@@ -584,7 +585,10 @@ def launch_zfisher():
             return
         page_layout = current_page.layout()
         if not page_layout:
-            return
+            # _strip_to_opacity may have removed all rows leaving no layout.
+            # Create a fresh VBoxLayout on the page.
+            page_layout = QVBoxLayout(current_page)
+            page_layout.setContentsMargins(4, 4, 4, 4)
 
         # napari uses QtWrappedLabel (right-aligned, word-wrapped QLabel)
         # for its form row labels. Replicate that for our custom rows.
@@ -659,6 +663,10 @@ def launch_zfisher():
         # Add as proper QFormLayout rows — same as napari does internally
         page_layout.addRow(size_label, size_field)
         page_layout.addRow(color_label, color_btn)
+        # Force visibility — _strip_to_opacity may have hidden ancestors
+        for w in (size_label, size_field, color_label, color_btn):
+            w.setVisible(True)
+            w.setMaximumHeight(16777215)  # Reset max height (Qt default)
         _ids_custom_widgets.extend([size_label, size_field, color_label, color_btn])
 
     # Custom controls for _centroids layers: point size slider + face color picker
@@ -763,6 +771,9 @@ def launch_zfisher():
         # Add as proper QFormLayout rows
         page_layout.addRow(size_label, size_field)
         page_layout.addRow(color_label, color_btn)
+        for w in (size_label, size_field, color_label, color_btn):
+            w.setVisible(True)
+            w.setMaximumHeight(16777215)
         _centroids_custom_widgets.extend([size_label, size_field, color_label, color_btn])
 
     # Custom controls for _puncta layers: point size, symbol color, text size, text color
@@ -921,11 +932,15 @@ def launch_zfisher():
         page_layout.addRow(txt_size_lbl, txt_size_field)
         page_layout.addRow(txt_color_lbl, txt_color_btn)
         page_layout.addRow(top_label, top_chk)
-        _puncta_custom_widgets.extend([
+        all_custom = [
             pt_lbl, pt_field, sym_color_lbl, sym_color_btn,
             txt_size_lbl, txt_size_field, txt_color_lbl, txt_color_btn,
             top_label, top_chk,
-        ])
+        ]
+        for w in all_custom:
+            w.setVisible(True)
+            w.setMaximumHeight(16777215)
+        _puncta_custom_widgets.extend(all_custom)
 
     viewer.layers.selection.events.changed.connect(_hide_unwanted_controls)
     viewer.layers.selection.events.changed.connect(_add_ids_custom_controls)

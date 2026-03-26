@@ -38,84 +38,223 @@ _VALID_COLOC_TYPES = {"pairwise", "tri"}
 def _build_instructions_rows():
     """Return a list of (Section, Description) rows for the Instructions sheet."""
     return [
+        # ── Overview ──────────────────────────────────────────────────
         ("OVERVIEW", ""),
-        ("",
-         "This workbook defines a batch processing run for zFISHer. "
-         "Fill out the Datasets, Puncta, and Colocalization sheets, then load this file in the Batch Process tab."),
-        ("",
-         "Rows whose Name/Dataset column starts with '[EXAMPLE]' are ignored during processing — "
-         "they are provided as reference only. You can leave them or delete them."),
         ("", ""),
-        ("DATASETS SHEET (required)", ""),
+        ("What is this file?",
+         "This Excel workbook defines a batch processing run for zFISHer. "
+         "Each dataset (pair of Round 1 and Round 2 images) is processed through the full zFISHer pipeline: "
+         "nuclei segmentation, puncta detection, image registration, consensus nuclei matching, and colocalization analysis."),
+        ("", ""),
+        ("How to use it",
+         "1. Fill out the 'Datasets' sheet with your image file paths and settings. "
+         "2. Optionally configure per-channel puncta detection in the 'Puncta' sheet. "
+         "3. Optionally define colocalization rules in the 'Colocalization' sheet. "
+         "4. Save this file, then load it in zFISHer's Batch Process tab and click 'Run Batch Processing'."),
+        ("", ""),
+        ("Example rows",
+         "Rows whose Name or Dataset column starts with '[EXAMPLE]' are provided as reference only. "
+         "They are completely ignored during processing. You can leave them in the file or delete them."),
+        ("", ""),
+        ("Defaults",
+         "Most columns have sensible defaults pre-filled. You only need to fill in Name, R1, and R2 paths. "
+         "All other columns can be left at their defaults unless you need to customize behavior."),
+        ("", ""),
+        ("Column dropdowns",
+         "Many columns have dropdown menus for convenience. For channel names, the dropdown lists common names "
+         "but you can type any custom name — just make sure it exactly matches a channel in your input files."),
+        ("", ""),
+        ("", ""),
+
+        # ── Datasets Sheet ────────────────────────────────────────────
+        ("DATASETS SHEET", ""),
+        ("(required)", "This is the main sheet. Each row defines one dataset to process."),
+        ("", ""),
+
+        ("--- Input Files ---", ""),
         ("Name",
-         "A unique label for each dataset (e.g. 'FOV1', 'Sample_A'). Must be unique across all rows."),
+         "A short, unique label for this dataset (e.g. 'FOV1', 'Sample_A', 'Exp3_Slide2'). "
+         "This name is used to create output subfolders and label results. Must be unique across all rows."),
         ("R1",
-         "Full file path to the Round 1 image (.nd2, .tif, or .tiff). Example: C:\\Data\\FOV1_R1.nd2"),
+         "Full file path to the Round 1 microscopy image. Supported formats: .nd2, .tif, .tiff. "
+         "Example: C:\\Data\\Experiment1\\FOV1_R1.nd2"),
         ("R2",
-         "Full file path to the Round 2 image (.nd2, .tif, or .tiff). Example: C:\\Data\\FOV1_R2.nd2"),
+         "Full file path to the Round 2 microscopy image. Must be from the same field of view as R1. "
+         "Supported formats: .nd2, .tif, .tiff. Example: C:\\Data\\Experiment1\\FOV1_R2.nd2"),
         ("Output_Dir",
-         "Optional. Per-dataset output directory override. If blank, "
-         "a subfolder named after the dataset is created under the base output directory."),
+         "Optional. Override the output directory for this specific dataset. "
+         "If left blank, a subfolder named after the dataset (the Name column) will be created "
+         "under the base output directory you select in the Batch Process tab. "
+         "Example: D:\\Results\\FOV1"),
+        ("", ""),
+
+        ("--- Nuclear Channels ---", ""),
         ("R1_Nuclear_Channel",
-         "The name of the nuclear stain channel in the R1 image (e.g. DAPI, HOECHST). "
-         "Dropdown provides common stains. Must exactly match a channel name in your R1 file. Defaults to DAPI."),
+         "The name of the nuclear stain channel in the Round 1 image (e.g. DAPI, Hoechst, HOECHST). "
+         "This channel is used for nuclei segmentation. The name must exactly match a channel name in your R1 file. "
+         "A dropdown provides common nuclear stain names, but you can type any custom name. Defaults to 'DAPI'."),
         ("R2_Nuclear_Channel",
-         "The name of the nuclear stain channel in the R2 image (e.g. DAPI, HOECHST). "
-         "Dropdown provides common stains. Must exactly match a channel name in your R2 file. Defaults to DAPI."),
+         "The name of the nuclear stain channel in the Round 2 image. "
+         "Same rules as R1_Nuclear_Channel. Can be different from R1 if your rounds use different stains. "
+         "Defaults to 'DAPI'."),
+        ("", ""),
+
+        ("--- Segmentation ---", ""),
         ("Seg_Method",
-         "Nuclei segmentation algorithm: 'Classical' (fast, watershed-based) or 'Cellpose' (deep learning). "
-         "Defaults to Classical if left blank."),
+         "The algorithm used to segment nuclei from the nuclear stain channel. "
+         "Options: 'Classical' (fast, watershed-based — good for most data) or 'Cellpose' (deep learning — "
+         "better for difficult samples but slower, requires cellpose to be installed). "
+         "Defaults to 'Classical' if left blank."),
         ("Merge_Splits",
-         "TRUE or FALSE. Whether to merge over-segmented (split) nuclei after segmentation. Defaults to TRUE."),
+         "TRUE or FALSE. When TRUE, the pipeline automatically merges nuclei that were over-segmented "
+         "(split into multiple fragments by the segmentation algorithm). Recommended for most datasets. "
+         "Set to FALSE only if you observe that merging is incorrectly combining separate nuclei. "
+         "Defaults to TRUE."),
         ("", ""),
-        ("PUNCTA SHEET (optional)", ""),
+
+        ("--- Registration ---", ""),
+        ("Apply_Warp",
+         "TRUE or FALSE. When TRUE, a deformable B-spline warp is applied after rigid alignment to correct "
+         "for tissue deformation between imaging rounds. This produces more accurate alignment but takes longer. "
+         "Set to FALSE for rigid-only alignment (faster, sufficient when tissue deformation is minimal). "
+         "Defaults to TRUE."),
+        ("Max_RANSAC_Distance",
+         "Maximum distance in pixels for RANSAC inlier matching during the registration step. "
+         "This controls how strict the centroid matching is: a smaller value requires closer matches, "
+         "a larger value is more permissive. Set to 0 for automatic detection (recommended for most data). "
+         "Only increase this if registration is failing due to large tissue shifts. "
+         "Defaults to 0 (auto-detect)."),
+        ("", ""),
+
+        ("--- Consensus Nuclei ---", ""),
+        ("Overlap_Method",
+         "How to combine the aligned R1 and R2 nuclei masks into a single consensus mask. "
+         "Options: 'Intersection' keeps only voxels where BOTH rounds agree a nucleus exists "
+         "(conservative — fewer, higher-confidence nuclei). 'Union' keeps voxels from EITHER round "
+         "(permissive — more nuclei, but may include artifacts). "
+         "Defaults to 'Intersection'."),
+        ("Match_Threshold",
+         "Maximum centroid distance in pixels to consider two nuclei (one from R1, one from R2) as the same cell. "
+         "Set to 0 for automatic detection based on the data distribution (recommended). "
+         "Increase if nuclei are being incorrectly split across rounds; decrease if different nuclei are being merged. "
+         "Defaults to 0 (auto-detect)."),
+        ("Remove_Extranuclear_Puncta",
+         "TRUE or FALSE. When TRUE, puncta that fall outside the consensus nuclei mask are removed from the final results. "
+         "This ensures only intranuclear puncta are analyzed. Set to FALSE to keep all detected puncta regardless of "
+         "nuclear location (useful if you need to analyze cytoplasmic or extracellular puncta). "
+         "Defaults to TRUE."),
+        ("", ""),
+        ("", ""),
+
+        # ── Puncta Sheet ──────────────────────────────────────────────
+        ("PUNCTA SHEET", ""),
+        ("(optional)", "Defines puncta detection parameters per fluorescent channel."),
+        ("", ""),
         ("",
-         "Defines puncta detection parameters per channel. If this sheet is empty, "
-         "all non-nuclear channels are detected with default parameters."),
+         "If this sheet is left empty (no data rows), zFISHer will automatically detect puncta "
+         "on ALL non-nuclear channels using default parameters. Use this sheet to customize "
+         "detection sensitivity, algorithm, or to limit detection to specific channels."),
+        ("", ""),
+        ("",
+         "HOW OVERRIDES WORK: Rows with Dataset='ALL' set the default parameters for every dataset. "
+         "Rows with a specific dataset Name override the 'ALL' defaults for that dataset only. "
+         "This lets you tune parameters per-FOV when needed while keeping a single set of defaults."),
+        ("", ""),
+
+        ("--- Columns ---", ""),
         ("Dataset",
-         "'ALL' applies the row as a default for every dataset. "
-         "Use a specific dataset Name to override defaults for that dataset only. "
-         "Must match a Name from the Datasets sheet."),
+         "Which dataset(s) this row applies to. Use 'ALL' to set defaults for every dataset. "
+         "Use a specific Name from the Datasets sheet to override defaults for just that dataset. "
+         "The Name must exactly match a value in the Datasets sheet's Name column."),
         ("Channel",
-         "The fluorescent channel to detect puncta in (e.g. Cy5, GFP, AF647). "
+         "The fluorescent channel to detect puncta in (e.g. Cy5, GFP, AF647, FITC). "
          "Must exactly match a channel name in your input files. "
-         "Dropdown provides common names but you can type any name."),
+         "The dropdown provides common channel names, but you can type any name. "
+         "Leave blank to skip a row."),
         ("Algorithm",
-         "Detection algorithm: 'Local Maxima', 'Laplacian of Gaussian', "
-         "'Difference of Gaussian', or 'Radial Symmetry'. Defaults to Local Maxima."),
+         "The spot detection algorithm. Options:\n"
+         "  - 'Local Maxima': Fastest. Finds intensity peaks separated by Min_Distance. Best for well-separated, bright spots.\n"
+         "  - 'Laplacian of Gaussian': Blob-aware. Better for crowded fields where spots overlap. Uses Sigma for scale.\n"
+         "  - 'Difference of Gaussian': Similar to LoG but faster. Good for spots of known size.\n"
+         "  - 'Radial Symmetry': Best for high-density fields with minimal filtering needed.\n"
+         "Defaults to 'Local Maxima'."),
         ("Sensitivity",
-         f"Relative intensity threshold (0-1). Lower = more sensitive. Default: {constants.PUNCTA_THRESHOLD_REL}"),
+         f"Relative intensity threshold between 0 and 1. Controls how dim a spot can be and still be detected. "
+         f"Lower values detect dimmer spots but may increase false positives. Higher values are more stringent. "
+         f"Start with the default ({constants.PUNCTA_THRESHOLD_REL}) and adjust based on your results."),
         ("Min_Distance",
-         f"Minimum distance (pixels) between detected puncta. Default: {constants.PUNCTA_MIN_DISTANCE}"),
+         f"Minimum distance in pixels between detected puncta. Prevents double-counting nearby spots. "
+         f"Increase if you see clusters of detections on single spots. Decrease if closely spaced spots are being merged. "
+         f"Default: {constants.PUNCTA_MIN_DISTANCE} pixels."),
         ("Sigma",
-         f"Gaussian smoothing sigma applied before detection. 0 = no smoothing. Default: {constants.PUNCTA_SIGMA}"),
+         f"Gaussian smoothing sigma (in pixels) applied before detection. "
+         f"Match this to the approximate radius of your puncta. "
+         f"Set to 0 for no pre-smoothing (use with Local Maxima on clean data). "
+         f"For LoG/DoG, this defines the expected spot size. Default: {constants.PUNCTA_SIGMA}."),
         ("Nuclei_Only",
-         "TRUE or FALSE. If TRUE, only puncta inside nuclei masks are kept. Default: TRUE."),
+         "TRUE or FALSE. When TRUE, only puncta located inside nuclei masks are kept (extranuclear spots are discarded). "
+         "Set to FALSE to detect puncta everywhere in the image, including cytoplasm and extracellular space. "
+         "Defaults to TRUE."),
         ("Tophat",
-         "TRUE or FALSE. Apply top-hat background subtraction before detection. Default: FALSE."),
+         "TRUE or FALSE. Apply a top-hat background subtraction filter before running detection. "
+         "Useful for images with uneven illumination or high autofluorescence. "
+         "The filter removes large-scale intensity variations while preserving small bright spots. "
+         "Defaults to FALSE."),
         ("Tophat_Radius",
-         f"Radius for top-hat filter (pixels). Only used if Tophat=TRUE. Default: {constants.PUNCTA_TOPHAT_RADIUS}"),
+         f"Radius in pixels for the top-hat filter. Only used when Tophat=TRUE. "
+         f"Should be larger than your puncta but smaller than background intensity gradients. "
+         f"Default: {constants.PUNCTA_TOPHAT_RADIUS} pixels."),
         ("", ""),
-        ("COLOCALIZATION SHEET (optional)", ""),
+        ("", ""),
+
+        # ── Colocalization Sheet ──────────────────────────────────────
+        ("COLOCALIZATION SHEET", ""),
+        ("(optional)", "Defines which channel pairs or triples to analyze for spatial colocalization."),
+        ("", ""),
         ("",
-         "Defines which channel pairs (or triples) to analyze for colocalization. "
-         "If this sheet is empty, no colocalization analysis is performed."),
+         "If this sheet is left empty, no colocalization analysis is performed and the final report "
+         "will contain only per-channel puncta counts and nucleus assignments."),
+        ("", ""),
+        ("",
+         "PAIRWISE colocalization asks: 'For each punctum in the Source channel, is there a punctum in the "
+         "Target channel within the cutoff distance?' This produces counts of colocalized vs. non-colocalized spots."),
+        ("", ""),
+        ("",
+         "TRI-COLOCALIZATION asks: 'For each punctum in the Source (anchor) channel, is there a punctum in "
+         "BOTH Target (Channel A) AND Channel B within the cutoff distance?' "
+         "This identifies triple-positive spots where all three channels converge."),
+        ("", ""),
+        ("",
+         "HOW OVERRIDES WORK: Same as the Puncta sheet. 'ALL' rows set defaults; per-dataset rows "
+         "REPLACE all 'ALL' rules for that specific dataset. This lets you run different colocalization "
+         "comparisons on different FOVs if needed."),
+        ("", ""),
+
+        ("--- Columns ---", ""),
         ("Dataset",
-         "'ALL' applies the rule to every dataset. Use a specific Name to override. "
-         "Per-dataset rows REPLACE all 'ALL' rules for that dataset."),
+         "Which dataset(s) this rule applies to. Use 'ALL' for every dataset, "
+         "or a specific Name from the Datasets sheet to apply only to that dataset. "
+         "Per-dataset rows completely replace any 'ALL' rules for that dataset."),
         ("Type",
-         "'pairwise' for two-channel colocalization, or 'tri' for three-channel tri-colocalization."),
+         "'pairwise' for standard two-channel colocalization, or 'tri' for three-channel tri-colocalization. "
+         "Case-insensitive."),
         ("Source",
-         "The anchor/reference channel name (e.g. Cy5). For pairwise: the first channel. "
-         "For tri: the anchor channel."),
+         "The anchor/reference channel name (e.g. Cy5). "
+         "For pairwise: distances are measured FROM each Source punctum TO the nearest Target punctum. "
+         "For tri: this is the anchor — it must be near both Target and Channel_B."),
         ("Target",
-         "The second channel name (e.g. GFP). For pairwise: the target channel. "
-         "For tri: the first comparison channel (Channel A)."),
+         "The second channel name (e.g. GFP). "
+         "For pairwise: the channel to search for nearby puncta. "
+         "For tri: the first comparison channel (must colocalize with Source)."),
         ("Channel_B",
-         "Only for tri-colocalization. The third channel name (e.g. AF555). "
+         "Only used for tri-colocalization. The third channel name (e.g. AF555). "
+         "The anchor (Source) must be near both Target AND Channel_B to count as tri-colocalized. "
          "Leave blank for pairwise rules."),
         ("Cutoff_um",
-         "Maximum distance in microns to consider two puncta as colocalized. Default: 1.0"),
+         "Maximum distance in microns to consider two puncta as colocalized. "
+         "A Source punctum is 'colocalized' with a Target punctum if the nearest Target is within this distance. "
+         "Typical values: 0.5-2.0 um depending on your imaging resolution and expected spot proximity. "
+         "Default: 1.0 um."),
     ]
 
 
@@ -162,6 +301,22 @@ def add_dropdown_validations(workbook):
             dv.promptTitle = title
         return dv
 
+    def _numeric_range(min_val, max_val, allow_decimal=True, prompt="", title=""):
+        """Numeric validation that constrains to a range."""
+        dv = DataValidation(
+            type="decimal" if allow_decimal else "whole",
+            operator="between",
+            formula1=str(min_val),
+            formula2=str(max_val),
+            allow_blank=True,
+        )
+        dv.error = f"Value must be between {min_val} and {max_val}."
+        dv.errorTitle = title or "Invalid Value"
+        if prompt:
+            dv.prompt = prompt
+            dv.promptTitle = title
+        return dv
+
     # --- Datasets sheet ---
     ws = workbook["Datasets"]
 
@@ -181,6 +336,31 @@ def add_dropdown_validations(workbook):
     ws.add_data_validation(dv)
     dv.add(f"H2:H{MAX_ROW}")
 
+    # Apply_Warp (col I)
+    dv = _strict_list(["TRUE", "FALSE"])
+    ws.add_data_validation(dv)
+    dv.add(f"I2:I{MAX_ROW}")
+
+    # Overlap_Method (col K)
+    dv = _strict_list(["Intersection", "Union"], "Choose overlap method.", "Overlap_Method")
+    ws.add_data_validation(dv)
+    dv.add(f"K2:K{MAX_ROW}")
+
+    # Max_RANSAC_Distance (col J) — integer 0-100
+    dv = _numeric_range(0, 100, allow_decimal=False, prompt="0 = auto-detect. Range: 0-100.", title="Max RANSAC Distance")
+    ws.add_data_validation(dv)
+    dv.add(f"J2:J{MAX_ROW}")
+
+    # Match_Threshold (col L) — integer 0-100
+    dv = _numeric_range(0, 100, allow_decimal=False, prompt="0 = auto-detect. Range: 0-100.", title="Match Threshold")
+    ws.add_data_validation(dv)
+    dv.add(f"L2:L{MAX_ROW}")
+
+    # Remove_Extranuclear_Puncta (col M)
+    dv = _strict_list(["TRUE", "FALSE"])
+    ws.add_data_validation(dv)
+    dv.add(f"M2:M{MAX_ROW}")
+
     # --- Puncta sheet ---
     ws = workbook["Puncta"]
 
@@ -192,13 +372,35 @@ def add_dropdown_validations(workbook):
     ws.add_data_validation(dv)
     dv.add(f"C2:C{MAX_ROW}")
 
+    # Sensitivity (col D) — decimal 0-1
+    dv = _numeric_range(0.0, 1.0, allow_decimal=True, prompt="Relative threshold 0-1. Lower = more sensitive.", title="Sensitivity")
+    ws.add_data_validation(dv)
+    dv.add(f"D2:D{MAX_ROW}")
+
+    # Min_Distance (col E) — integer 1-20
+    dv = _numeric_range(1, 20, allow_decimal=False, prompt="Min separation in pixels. Range: 1-20.", title="Min Distance")
+    ws.add_data_validation(dv)
+    dv.add(f"E2:E{MAX_ROW}")
+
+    # Sigma (col F) — decimal 0-5
+    dv = _numeric_range(0.0, 5.0, allow_decimal=True, prompt="Gaussian sigma in pixels. 0 = no smoothing. Range: 0-5.", title="Sigma")
+    ws.add_data_validation(dv)
+    dv.add(f"F2:F{MAX_ROW}")
+
+    # Nuclei_Only (col G)
     dv = _strict_list(["TRUE", "FALSE"])
     ws.add_data_validation(dv)
     dv.add(f"G2:G{MAX_ROW}")
 
+    # Tophat (col H)
     dv = _strict_list(["TRUE", "FALSE"])
     ws.add_data_validation(dv)
     dv.add(f"H2:H{MAX_ROW}")
+
+    # Tophat_Radius (col I) — integer 1-50
+    dv = _numeric_range(1, 50, allow_decimal=False, prompt="Top-hat filter radius in pixels. Range: 1-50.", title="Tophat Radius")
+    ws.add_data_validation(dv)
+    dv.add(f"I2:I{MAX_ROW}")
 
     # --- Colocalization sheet ---
     ws = workbook["Colocalization"]
@@ -218,6 +420,11 @@ def add_dropdown_validations(workbook):
     dv = _soft_list(channel_names, "Select or type the channel name.", "Channel_B")
     ws.add_data_validation(dv)
     dv.add(f"E2:E{MAX_ROW}")
+
+    # Cutoff_um (col F) — decimal 0.1-10
+    dv = _numeric_range(0.1, 10.0, allow_decimal=True, prompt="Distance in microns. Typical: 0.5-2.0. Range: 0.1-10.", title="Cutoff (um)")
+    ws.add_data_validation(dv)
+    dv.add(f"F2:F{MAX_ROW}")
 
 
 def build_template_sheets():
@@ -243,6 +450,11 @@ def build_template_sheets():
         "R2_Nuclear_Channel": "DAPI",
         "Seg_Method": "Classical",
         "Merge_Splits": True,
+        "Apply_Warp": True,
+        "Max_RANSAC_Distance": 0,
+        "Overlap_Method": "Intersection",
+        "Match_Threshold": 0,
+        "Remove_Extranuclear_Puncta": True,
     }
     ds_default = {
         "Name": "",
@@ -253,6 +465,11 @@ def build_template_sheets():
         "R2_Nuclear_Channel": "DAPI",
         "Seg_Method": "Classical",
         "Merge_Splits": True,
+        "Apply_Warp": True,
+        "Max_RANSAC_Distance": 0,
+        "Overlap_Method": "Intersection",
+        "Match_Threshold": 0,
+        "Remove_Extranuclear_Puncta": True,
     }
     datasets = pd.DataFrame([ds_example] + [dict(ds_default) for _ in range(N)])
 
@@ -378,6 +595,7 @@ def parse_batch_config(excel_path):
         return None, "Datasets sheet has no data rows (only example/empty rows found)."
 
     errors = []
+    warnings = []
     datasets = []
     dataset_names = set()
     for idx, row in ds_df.iterrows():
@@ -423,6 +641,47 @@ def parse_batch_config(excel_path):
         out_dir_raw = str(row.get("Output_Dir", "")).strip()
         out_dir = Path(out_dir_raw) if out_dir_raw and out_dir_raw != "nan" else None
 
+        apply_warp = row.get("Apply_Warp", True)
+        if pd.isna(apply_warp):
+            apply_warp = True
+        else:
+            apply_warp = bool(apply_warp)
+
+        max_ransac = row.get("Max_RANSAC_Distance", 0)
+        if pd.isna(max_ransac):
+            max_ransac = 0
+        else:
+            try:
+                max_ransac = max(0, min(100, int(float(max_ransac))))
+            except (ValueError, TypeError):
+                warnings.append(f"Datasets row {row_num} ({name}): Invalid Max_RANSAC_Distance. Using 0 (auto).")
+                max_ransac = 0
+
+        overlap_method = str(row.get("Overlap_Method", "Intersection")).strip()
+        if not overlap_method or overlap_method == "nan":
+            overlap_method = "Intersection"
+        if overlap_method not in ("Intersection", "Union"):
+            errors.append(
+                f"Datasets row {row_num} ({name}): Invalid Overlap_Method '{overlap_method}'. "
+                f"Use: Intersection or Union"
+            )
+
+        match_threshold = row.get("Match_Threshold", 0)
+        if pd.isna(match_threshold):
+            match_threshold = 0
+        else:
+            try:
+                match_threshold = max(0, min(100, int(float(match_threshold))))
+            except (ValueError, TypeError):
+                warnings.append(f"Datasets row {row_num} ({name}): Invalid Match_Threshold. Using 0 (auto).")
+                match_threshold = 0
+
+        remove_extra = row.get("Remove_Extranuclear_Puncta", True)
+        if pd.isna(remove_extra):
+            remove_extra = True
+        else:
+            remove_extra = bool(remove_extra)
+
         datasets.append({
             "name": name,
             "r1": Path(str(row["R1"]).strip()),
@@ -432,6 +691,11 @@ def parse_batch_config(excel_path):
             "r2_nuclear_channel": r2_nuc,
             "seg_method": seg if (seg and seg != "nan") else "Classical",
             "merge_splits": merge,
+            "apply_warp": apply_warp,
+            "max_ransac_distance": max_ransac,
+            "overlap_method": overlap_method,
+            "match_threshold": match_threshold,
+            "remove_extranuclear_puncta": remove_extra,
         })
 
     # --- Puncta sheet (optional) ---
@@ -459,29 +723,64 @@ def parse_batch_config(excel_path):
                     f"Use: {', '.join(sorted(_VALID_PUNCTA_ALGORITHMS))}"
                 )
 
-            def _float(col, default):
+            def _float(col, default, min_val=None, max_val=None):
                 v = row.get(col, default)
-                return default if pd.isna(v) else float(v)
+                if pd.isna(v):
+                    return default
+                try:
+                    val = float(v)
+                except (ValueError, TypeError):
+                    warnings.append(f"Puncta row {row_num}: '{col}' has invalid value '{v}'. Using default ({default}).")
+                    return default
+                if min_val is not None and val < min_val:
+                    warnings.append(f"Puncta row {row_num}: '{col}' value {val} below minimum {min_val}. Clamped.")
+                    val = min_val
+                if max_val is not None and val > max_val:
+                    warnings.append(f"Puncta row {row_num}: '{col}' value {val} above maximum {max_val}. Clamped.")
+                    val = max_val
+                return val
 
-            def _int(col, default):
+            def _int(col, default, min_val=None, max_val=None):
                 v = row.get(col, default)
-                return default if pd.isna(v) else int(v)
+                if pd.isna(v):
+                    return default
+                try:
+                    val = int(float(v))
+                except (ValueError, TypeError):
+                    warnings.append(f"Puncta row {row_num}: '{col}' has invalid value '{v}'. Using default ({default}).")
+                    return default
+                if min_val is not None and val < min_val:
+                    warnings.append(f"Puncta row {row_num}: '{col}' value {val} below minimum {min_val}. Clamped.")
+                    val = min_val
+                if max_val is not None and val > max_val:
+                    warnings.append(f"Puncta row {row_num}: '{col}' value {val} above maximum {max_val}. Clamped.")
+                    val = max_val
+                return val
 
             def _bool(col, default):
                 v = row.get(col, default)
-                return default if pd.isna(v) else bool(v)
+                if pd.isna(v):
+                    return default
+                if isinstance(v, bool):
+                    return v
+                s = str(v).strip().upper()
+                if s in ("TRUE", "1", "YES"):
+                    return True
+                if s in ("FALSE", "0", "NO"):
+                    return False
+                return default
 
             puncta_rules.append({
                 "dataset": ds,
                 "channel": ch,
                 "params": {
                     "method": algo if (algo and algo != "nan") else "Local Maxima",
-                    "threshold_rel": _float("Sensitivity", constants.PUNCTA_THRESHOLD_REL),
-                    "min_distance": _int("Min_Distance", constants.PUNCTA_MIN_DISTANCE),
-                    "sigma": _float("Sigma", constants.PUNCTA_SIGMA),
+                    "threshold_rel": _float("Sensitivity", constants.PUNCTA_THRESHOLD_REL, min_val=0.0, max_val=1.0),
+                    "min_distance": _int("Min_Distance", constants.PUNCTA_MIN_DISTANCE, min_val=1, max_val=20),
+                    "sigma": _float("Sigma", constants.PUNCTA_SIGMA, min_val=0.0, max_val=5.0),
                     "nuclei_only": _bool("Nuclei_Only", True),
                     "use_tophat": _bool("Tophat", False),
-                    "tophat_radius": _int("Tophat_Radius", constants.PUNCTA_TOPHAT_RADIUS),
+                    "tophat_radius": _int("Tophat_Radius", constants.PUNCTA_TOPHAT_RADIUS, min_val=1, max_val=50),
                 },
             })
 
@@ -514,6 +813,15 @@ def parse_batch_config(excel_path):
             cutoff = row.get("Cutoff_um", 1.0)
             if pd.isna(cutoff):
                 cutoff = 1.0
+            else:
+                try:
+                    cutoff = float(cutoff)
+                    if cutoff < 0.1 or cutoff > 10.0:
+                        warnings.append(f"Colocalization row {row_num}: Cutoff_um {cutoff} outside range 0.1-10. Clamped.")
+                        cutoff = max(0.1, min(10.0, cutoff))
+                except (ValueError, TypeError):
+                    warnings.append(f"Colocalization row {row_num}: Invalid Cutoff_um. Using 1.0.")
+                    cutoff = 1.0
 
             if not source or source == "nan":
                 errors.append(f"Colocalization row {row_num}: Source is empty.")
@@ -540,11 +848,15 @@ def parse_batch_config(excel_path):
     if errors:
         return None, "\n".join(errors)
 
-    return {
+    config = {
         "datasets": datasets,
         "puncta_rules": puncta_rules,
         "coloc_rules": coloc_rules,
-    }, None
+    }
+    # Attach warnings to config so the caller can display them
+    if warnings:
+        config["_warnings"] = warnings
+    return config, None
 
 
 # ------------------------------------------------------------------

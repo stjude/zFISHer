@@ -13,9 +13,9 @@ from ._shared import make_header_divider
 @magicgui(
     call_button="Generate Global Canvas",
     layout="vertical",
-    apply_warp={"label": "Apply Deformable Warping?", "tooltip": "Apply deformable B-spline warping to correct tissue deformation between rounds."},
-    show_checkerboard={"label": "Show Checkerboard", "value": True, "tooltip": "Generate a warped checkerboard overlay for visual quality check."},
-    show_deformation={"label": "Show Deformation Field", "value": True, "tooltip": "Generate a deformation field vector layer."},
+    apply_warp={"label": "Apply Deformable Warping?", "tooltip": "Apply elastic warping to correct tissue shape differences between rounds. Disable for rigid-only alignment."},
+    show_checkerboard={"label": "Show Checkerboard", "value": True, "tooltip": "Show a checkerboard pattern to visually assess alignment quality."},
+    show_deformation={"label": "Show Deformation Field", "value": True, "tooltip": "Show a vector field visualizing how the tissue was warped."},
     hide_raw={"label": "Hide Raw Layers?", "tooltip": "Hide raw input layers after processing, showing only aligned results."}
 )
 @require_active_session("Please start or load a session before generating the canvas.")
@@ -291,6 +291,11 @@ _inner.insertWidget(1, _options_desc)
 _inner.insertWidget(_inner.count() - 1, _make_spacer())
 _inner.setSpacing(2)
 _inner.setContentsMargins(0, 0, 0, 0)
+
+_canvas_widget.native.setMinimumWidth(0)
+from qtpy.QtWidgets import QAbstractSpinBox, QComboBox
+for child in _canvas_widget.native.findChildren((QAbstractSpinBox, QComboBox)):
+    child.setMinimumWidth(0)
 
 _layout.addWidget(_canvas_widget.native)
 _layout.addStretch(1)

@@ -50,9 +50,9 @@ def _make_spacer():
 @magicgui(
     call_button="Add Colocalization Rule",
     layout="vertical",
-    source_layer={"label": "Source Channel (e.g. FITC)", "tooltip": "The reference/anchor puncta channel for pairwise colocalization."},
-    target_layer={"label": "Target Channel (e.g. Cy5)", "tooltip": "The target puncta channel to check for proximity to the source."},
-    cutoff={"label": "Cutoff (um)", "min": 0.1, "step": 0.1, "value": 1.0, "tooltip": "Maximum distance in microns between two puncta to count as colocalized."}
+    source_layer={"label": "Source Channel (e.g. FITC)", "tooltip": "The first puncta channel to analyze (the reference channel)."},
+    target_layer={"label": "Target Channel (e.g. Cy5)", "tooltip": "The second puncta channel to measure distance from the source."},
+    cutoff={"label": "Cutoff (um)", "min": 0.1, "step": 0.1, "value": 1.0, "tooltip": "Maximum distance (in microns) for two puncta to count as colocalized (close together)."}
 )
 @require_active_session("Please start or load a session before adding rules.")
 def _rule_builder(
@@ -113,7 +113,7 @@ _clear_btn.clicked.connect(_on_clear_rules)
 @magicgui(
     call_button="Add Tri-Colocalization Rule",
     layout="vertical",
-    anchor_layer={"label": "Anchor Channel", "tooltip": "The anchor puncta channel for tri-colocalization."},
+    anchor_layer={"label": "Anchor Channel", "tooltip": "The reference channel for three-channel colocalization (must be near both Channel A and Channel B)."},
     channel_a_layer={"label": "Channel A", "tooltip": "First comparison channel (must colocalize with anchor)."},
     channel_b_layer={"label": "Channel B", "tooltip": "Second comparison channel (must colocalize with anchor)."},
     cutoff={"label": "Cutoff (um)", "min": 0.1, "step": 0.1, "value": 1.0, "tooltip": "Maximum distance in microns for tri-colocalization."}
@@ -283,7 +283,7 @@ colocalization_widget = _ColocalizationContainer(labels=False)
 colocalization_widget._rule_builder = _rule_builder
 header = Label(value="Colocalization Analysis")
 header.native.setObjectName("widgetHeader")
-info = Label(value="<i>Define distance rules between puncta channels, then export a report.</i>")
+info = Label(value="<i>Define which puncta channels to check for proximity, then generate a report.</i>")
 info.native.setObjectName("widgetInfo")
 from qtpy.QtWidgets import QSizePolicy as _QSP
 info.native.setSizePolicy(_QSP.Expanding, _QSP.Preferred)
@@ -324,3 +324,10 @@ _layout.addWidget(_filename.native)
 _layout.addWidget(_make_spacer())
 _layout.addWidget(_export_btn.native)
 _layout.addStretch(1)
+
+# Ensure widgets shrink with panel
+from qtpy.QtWidgets import QAbstractSpinBox, QComboBox
+for w in [_rule_builder.native, _tri_rule_builder.native]:
+    w.setMinimumWidth(0)
+    for child in w.findChildren((QAbstractSpinBox, QComboBox)):
+        child.setMinimumWidth(0)
