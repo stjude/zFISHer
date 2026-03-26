@@ -6,9 +6,6 @@ import tifffile
 import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
-import re
-from collections import defaultdict
-import os
 from .. import constants
 
 logger = logging.getLogger(__name__)
@@ -49,7 +46,8 @@ class TiffSession:
         """
         self.voxels = (1.0, 1.0, 1.0)
         
-        # Check for ImageJ metadata fallback (Fix for cropper script)
+        # ImageJ metadata fallback: Some TIFF files store channel names
+        # in ImageJ 'Labels' metadata instead of OME-XML.
         try:
             with tifffile.TiffFile(self.path) as tif:
                 ij_meta = tif.imagej_metadata
@@ -102,6 +100,11 @@ class TiffSession:
             data = tif.asarray()
             self.ome_metadata = tif.ome_metadata
 
+        # Normalize to (Z, C, Y, X) format:
+        # - 2D (Y, X) → (1, 1, Y, X): single slice, single channel
+        # - 3D (Z, Y, X) → (Z, 1, Y, X): Z-stack, single channel
+        # - 4D: if shape[0] < shape[1], assume (C, Z, Y, X) → swap to (Z, C, Y, X)
+        #   (C dimension is typically smallest; Z-stacks have ~50 slices, channels ~3-5)
         if data.ndim == 2:   # (Y, X) -> (1, 1, Y, X)
             return data[np.newaxis, np.newaxis, :, :]
         elif data.ndim == 3: # (Z, Y, X) -> (Z, 1, Y, X)
@@ -343,42 +346,3 @@ def convert_nd2_to_ome(
     except Exception as e:
         logger.error("Failed to convert ND2 to OME-TIFF: %s", e)
 
-def discover_nd2_pairs(input_dir: Path):
-    """
-    Discovers pairs of R1 and R2 .nd2 files in a directory.
-    Assumes a naming convention where files are differentiated by 'R1' and 'R2'.
-    Example: 'FOV1_R1.nd2' and 'FOV1_R2.nd2'.
-    """
-    files = list(input_dir.glob('*.nd2'))
-    groups = defaultdict(dict)
-
-    # Try to group by replacing R1/R2 identifiers
-    for f in files:
-        # Create a base name by removing r1/r2 and common separators
-        base_name = re.sub(r'[._-]?r[12][._-]?', '', f.name, flags=re.IGNORECASE)
-        if 'r1' in f.name.lower():
-            groups[base_name]['r1'] = f
-        elif 'r2' in f.name.lower():
-            groups[base_name]['r2'] = f
-
-    paired_list = []
-    for base, paths in groups.items():
-        if 'r1' in paths and 'r2' in paths:
-            # Create a clean FOV name from the R1 file
-            fov_name = re.sub(r'[._-]?r1[._-]?', '', paths['r1'].stem, flags=re.IGNORECASE)
-            paired_list.append({'name': fov_name, 'r1': paths['r1'], 'r2': paths['r2']})
-
-    # Fallback for non-standard names: pair by sorted order
-    if not paired_list and len(files) >= 2:
-        logger.warning("No R1/R2 pairs found by name. Assuming sorted file order represents pairs.")
-        sorted_files = sorted(files)
-        # If odd number of files, the last one is ignored
-        for i in range(0, (len(sorted_files) // 2) * 2, 2):
-            r1_path = sorted_files[i]
-            r2_path = sorted_files[i+1]
-            common_prefix = os.path.commonprefix([r1_path.stem, r2_path.stem]).strip('-_')
-            fov_name = common_prefix if common_prefix else r1_path.stem
-            paired_list.append({'name': fov_name, 'r1': r1_path, 'r2': r2_path})
-
-    logger.info("Discovered %d file pairs for batch processing.", len(paired_list))
-    return paired_list

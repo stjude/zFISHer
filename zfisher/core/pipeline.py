@@ -196,6 +196,10 @@ def run_full_zfisher_pipeline(
             )
             raw_puncta_results[(rnd, ch)] = result
 
+            # Persist detection parameters per layer for the final report.
+            # Format: {layer_key: {algorithm, sensitivity, min_distance, ...}}
+            # These sanitized versions are separate from the raw params
+            # and used for reproducibility documentation.
             # Persist detection parameters for this channel
             layer_key = f"{rnd} - {ch}"
             puncta_params_all = session.get_data("puncta_params", default={})

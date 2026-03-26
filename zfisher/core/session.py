@@ -224,9 +224,9 @@ def load_session_file(path):
     """
     Loads session data from a JSON file into memory.
 
-    Creates a new session file (``zfisher_session_2.json``, ``_3``, etc.)
-    so the original is never overwritten. All subsequent saves go to the
-    new file.
+    When loading an existing session, creates a new numbered session file
+    (e.g., ``session_2.json``) to avoid overwriting the original. This only
+    applies when loading -- new sessions always start as ``session_1.json``.
 
     Parameters
     ----------
@@ -242,6 +242,9 @@ def load_session_file(path):
     with open(path, 'r') as f:
         data = json.load(f)
 
+    # When loading an existing session, create a new session JSON file (session_2, _3, etc.)
+    # instead of overwriting the original. This preserves audit history and prevents
+    # accidental loss of a saved state.
     # Find the next available session filename in the output directory
     # Use output_dir from the loaded data (not path.parent) since that's
     # where _save_session_unlocked will actually write the file.

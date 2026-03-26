@@ -255,6 +255,12 @@ def calculate_tri_colocalization(points_layers_data, tri_rules):
             if dist <= thresh:
                 anchor_to_ch_b[anchor_id].append((ch_b_id, dist))
 
+        # Greedy triplet selection:
+        # 1. For each anchor, find all ChA and ChB puncta within the distance threshold
+        # 2. Build candidate triplets (anchor, chA, chB) sorted by total distance
+        # 3. Iteratively pick the best (lowest sum distance), mark ChA and ChB as consumed
+        # This ensures no punctum participates in more than one triplet, preventing over-counting.
+        # Trade-off: May miss globally-optimal matching in favor of greedy speed.
         # Build all candidate triplets from anchors that have both
         used_ch_a = set()
         used_ch_b = set()

@@ -44,7 +44,7 @@ class _PopupSuppressor(QObject):
 
 # --- Helper Classes ---
 
-from qtpy.QtCore import Qt, QPoint, QTimer, QEvent, QEvent
+from qtpy.QtCore import Qt, QPoint, QTimer, QEvent
 
 # ... (keep existing imports) ...
 
@@ -106,12 +106,14 @@ class DraggableScaleBar(QWidget):
         if zoom == 0: return
         target_px = 150
         
-        # This part has a bug if no layers are present. Let's get scale from layer if possible.
+        # Get pixel size from the active layer's scale metadata.
+        # Fallback to 1.0 when no layer is selected (scale bar is inaccurate
+        # but remains visible until a layer provides real pixel spacing).
         active_layer = self.viewer.layers.selection.active
         if active_layer:
              pixel_size_x = active_layer.scale[-1]
         else:
-             pixel_size_x = 1.0 # fallback
+             pixel_size_x = 1.0
 
         um_per_canvas_px = pixel_size_x / zoom if pixel_size_x > 0 else 1.0 / zoom
 

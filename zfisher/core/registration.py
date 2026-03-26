@@ -85,6 +85,10 @@ def _find_rough_shift_vector_voting(fixed_points, moving_points, n_limit=constan
     np.ndarray
         A (3,) array representing the coarse shift vector (Z, Y, X).
     """
+    # Vector voting finds the most common pairwise shift via histogram binning.
+    # Robust to unequal point counts and outliers. Note: input is subsampled
+    # to n_limit points for speed, which may reduce accuracy on very large sets.
+    # Result is the center of the most-voted bin, used as coarse initialization for RANSAC.
     if len(fixed_points) < 1 or len(moving_points) < 1:
         return np.array([0.0, 0.0, 0.0])
 
@@ -268,6 +272,8 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, voxel
     rmsd = _calculate_rmsd(src, dst, model, inliers)
     refined_shift = model.translation
     
+    # Safety: RANSAC can produce NaN shifts if the point set is degenerate
+    # (e.g., all points colinear). Revert to rough shift rather than propagating NaN.
     # Robustness: Check for NaN values which indicate a failed matrix inversion in RANSAC
     if np.any(np.isnan(refined_shift)):
         logger.warning("Refined shift contains NaN. Reverting to rough shift.")
@@ -305,13 +311,19 @@ def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
 
     Returns
     -------
-    tuple[np.ndarray, np.ndarray]
-        A tuple containing (padded_fixed, padded_moving), both of the same shape.
+    tuple[np.ndarray, np.ndarray, np.ndarray]
+        A tuple containing (padded_fixed, padded_moving, canvas_offset_pixels).
+        padded_fixed and padded_moving share the same shape.
+        canvas_offset_pixels is a (3,) array of the (Z, Y, X) offset from the
+        original fixed-image origin to the new canvas origin.
     """
     logger.debug("align_and_pad: received shift_vector: %s", shift_vector)
     # Round shift to nearest integer for lossless padding
     shift = np.round(shift_vector).astype(int)
     dz, dy, dx = shift
+    # Separate integer and fractional shift components:
+    # Integer part is used for array indexing/padding.
+    # Fractional part is applied via scipy.ndimage.shift for sub-pixel accuracy.
     # 1. Separate Integer and Fractional Shift
     # We round to the nearest integer for the grid placement
     shift_int = np.round(shift_vector).astype(int)
@@ -344,6 +356,11 @@ def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
     # Paste Moving Image (Offset by shift - min_bound)
     # Apply Sub-pixel Shift to Moving Image
     # We use linear interpolation (order=1) to avoid ringing artifacts on puncta.
+    # Sub-pixel shift handling:
+    # For intensity images, linear interpolation is safe.
+    # For label/mask images, interpolation creates intermediate values (corrupt IDs).
+    # Solution: Apply sub-pixel shift with interpolation, then ROUND to nearest integer
+    # before casting back to original dtype. This restores valid label IDs.
     if np.any(np.abs(shift_frac) > 0.01):
         logger.debug("Applying sub-pixel shift: %s", shift_frac)
         order = 0 if is_label else 1
@@ -594,6 +611,10 @@ def transform_points_inverse_bspline(points_zyx, bspline_transform, max_iter=20,
     np.ndarray
         (N, 3) array of transformed points in ZYX order (warped/fixed space).
     """
+    # Fixed-point iteration to invert the B-spline transform:
+    # The B-spline T maps fixed->moving. To transform a moving-space point q to fixed space,
+    # we iteratively refine p such that T(p) ≈ q, using the residual error as the step direction.
+    # Converges when ||q - T(p)|| < tolerance (typically 0.5 pixels).
     results = np.empty_like(points_zyx, dtype=float)
     for i, pt_zyx in enumerate(points_zyx):
         # SimpleITK uses XYZ order

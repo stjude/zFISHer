@@ -115,6 +115,11 @@ def _load_points_layer(viewer, name, path, scale, file_info, translate):
             data = np.load(path, allow_pickle=True)
             
             if subtype == 'structured_ids':
+                # structured_ids: Consensus nucleus centroids stored as numpy structured array.
+                # dtype=[('coord', 'f4', 3), ('label', 'i4')]. Coordinates are 3D (Z,Y,X);
+                # labels are nucleus IDs displayed as text. Points have transparent faces
+                # (label text is the primary visual) and use translucent_no_depth blending
+                # so text always renders on top of mask surfaces.
                 coords = np.vstack(data['coord'])
                 properties = {p_name: data[p_name] for p_name in data.dtype.names if p_name != 'coord'}
                 text_params = {

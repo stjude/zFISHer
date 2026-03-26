@@ -4,7 +4,6 @@ from pathlib import Path
 from skimage.feature import peak_local_max, blob_log, blob_dog
 from skimage.filters import gaussian
 from skimage.morphology import white_tophat, disk
-from skimage import restoration
 from .. import constants
 
 logger = logging.getLogger(__name__)
@@ -45,12 +44,6 @@ def calculate_spot_quality(image_data, coords, radius=2, progress_callback=None,
                 progress_callback(pct, f"Quality metrics: {i + 1}/{n_coords} spots...")
 
     return np.array(stats)
-
-def apply_deconvolution(image_data, iterations=10):
-    """Sharpens crowded fields using Richardson-Lucy deconvolution."""
-    psf = np.ones((3, 3, 3)) / 27 
-    img_float = image_data.astype(np.float32)
-    return restoration.richardson_lucy(img_float, psf, num_iter=iterations)
 
 def preprocess_white_tophat(image_data, radius=constants.PUNCTA_TOPHAT_RADIUS,
                             progress_callback=None, progress_range=(25, 40)):
@@ -102,7 +95,7 @@ def _detect_spots_dog(image_data, threshold_rel, sigma, z_scale=1.0):
     return blobs[:, :3].astype(int) if len(blobs) > 0 else np.empty((0, 3))
 
 def detect_spots_3d(image_data, method="Local Maxima", progress_callback=None, **kwargs):
-    """Main entry point for Step 6 math."""
+    """Main entry point for puncta detection on a single image volume."""
     logger.info("Puncta detection: method=%s, shape=%s, params=%s", method, image_data.shape, kwargs)
     if kwargs.get('use_tophat', False):
         if progress_callback: progress_callback(25, "Subtracting background (top-hat)...")
@@ -174,6 +167,12 @@ def transform_puncta_to_aligned_space(raw_puncta, round_id, shift, canvas_offset
     shift = np.asarray(shift, dtype=float)
     canvas_offset = np.asarray(canvas_offset, dtype=float)
 
+    # Coordinate space transformations:
+    # 1. Raw puncta coords are in raw image voxel space
+    # 2. For R1: subtract canvas_offset to move into padded canvas coordinates
+    # 3. For R2: add shift (rigid alignment), subtract canvas_offset, then
+    #    optionally apply inverse B-spline warp (moving->fixed space)
+    # After transform, coords are in the consensus mask's coordinate system.
     if round_id == "R1":
         aligned_coords = coords - canvas_offset
     else:  # R2
@@ -284,6 +283,9 @@ def process_puncta_detection(image_data, mask_data=None, voxels=None, params=Non
 
     if output_path:
         if progress_callback: progress_callback(90, "Saving results...")
+        # Save detected puncta as CSV: Z, Y, X, Nucleus_ID, Intensity, SNR.
+        # This format matches the expected input for transform_puncta_to_aligned_space
+        # and is human-readable for manual review.
         header = "Z,Y,X,Nucleus_ID,Intensity,SNR"
         np.savetxt(output_path, final_data, delimiter=",", header=header, comments='')
 

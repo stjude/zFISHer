@@ -32,6 +32,10 @@ def process_consensus_nuclei(mask1, mask2, output_dir, threshold=20.0, method="U
     new_mask2, _, _ = match_nuclei_labels(mask1, mask2, threshold=threshold)
     merged_mask = merge_labeled_masks(mask1, new_mask2, method=method)
     
+    # Clean the merged mask to remove tiny artifacts from intersection/union.
+    # Sub-pixel fragments can cause regionprops to produce NaN centroids
+    # (when a region has area but no valid voxel center), triggering errors.
+    # Removing objects below min_size prevents this while preserving valid nuclei.
     # DEFINITIVE FIX: Clean the merged mask to remove any tiny, non-contiguous artifacts
     # created by the intersection. This prevents regionprops from generating invalid (NaN)
     # centroids, which was the root cause of the napari rendering warning.
@@ -76,78 +80,6 @@ def process_consensus_nuclei(mask1, mask2, output_dir, threshold=20.0, method="U
         )
 
     return merged_mask, final_pts
-def segment_nuclei_3d(image_data, gpu=True):
-    """
-    Segments 3D nuclei using the Cellpose model.
-
-    This function downsamples the data for performance, runs the 'nuclei'
-    model, and then scales the resulting masks and centroids back to the
-    original image dimensions.
-
-    Parameters
-    ----------
-    image_data : np.ndarray
-        The 3D (Z, Y, X) image data containing nuclei (e.g., DAPI channel).
-    gpu : bool, optional
-        Whether to use a GPU for computation if available. Defaults to True.
-
-    Returns
-    -------
-    tuple[np.ndarray, np.ndarray]
-        A tuple containing:
-        - masks: A (Z, Y, X) labeled integer mask of the segmented nuclei.
-        - centroids: A (N, 3) array of the (Z, Y, X) centroids for each nucleus.
-    """
-    # 1. SETUP
-    use_gpu = core.use_gpu() if gpu else False
-    model = models.CellposeModel(gpu=use_gpu, model_type='nuclei')
-
-    # 2. SUBSAMPLE Z
-    z_step = constants.NUC_SEG_3D_Z_STEP
-    subsampled_data = image_data[::z_step, :, :]
-    
-    # 3. DOWNSAMPLE X/Y
-    scale_factor = constants.NUC_SEG_3D_SCALE_FACTOR
-    small_data = rescale(
-        subsampled_data, 
-        (1, scale_factor, scale_factor), 
-        preserve_range=True, 
-        anti_aliasing=True
-    ).astype(np.float32) # Cellpose prefers float32
-
-    # 4. EVALUATE (Fixing the ValueError)
-    masks_small, flows, styles = model.eval(
-        small_data,
-        channels=[0,0],      # Grayscale DAPI
-        diameter=None,       # We already handled scaling manually
-        rescale=1.0,         # <--- CRITICAL: Prevents internal resizing
-        do_3D=True,
-        stitch_threshold=constants.NUC_SEG_3D_STITCH_THRESH,
-        z_axis=0,
-        batch_size=constants.NUC_SEG_3D_BATCH_SIZE,
-        progress=True,
-        resample=False       # <--- CRITICAL: Prevents internal resampling
-    )
-
-    # 5. SCALE CENTROIDS
-    props = regionprops(masks_small)
-    centroids = np.array([
-        [p.centroid[0] * z_step, 
-         p.centroid[1] / scale_factor, 
-         p.centroid[2] / scale_factor] 
-        for p in props
-    ])
-    
-    # Resize masks back to original shape
-    masks = resize(
-        masks_small, 
-        image_data.shape, 
-        order=0, 
-        preserve_range=True, 
-        anti_aliasing=False
-    ).astype(np.uint32)
-    
-    return masks, centroids
 
 def get_label_volumes(labels):
     """Return an array of voxel counts for each label in the mask."""
@@ -227,6 +159,11 @@ def _merge_oversegmented_labels(labels, progress_callback=None):
     tuple[np.ndarray, np.ndarray]
         (merged_labels, centroids) with merged labels and recomputed centroids.
     """
+    # Heuristic: Labels are considered over-segmented (splits of one nucleus) when:
+    # - They are spatially adjacent (share a boundary)
+    # - The shared boundary is >30% of the smaller label's total surface area
+    # This indicates a thin boundary (typical of over-segmentation) rather than
+    # a thick contact area (typical of distinct nuclei touching).
     from collections import Counter
 
     if progress_callback: progress_callback(0, "Checking for over-segmented nuclei...")
@@ -239,9 +176,8 @@ def _merge_oversegmented_labels(labels, progress_callback=None):
     # Compute total surface voxels for each label
     label_surface = {}
     for p in props:
-        # Surface area approximated by the difference between the region
-        # and its erosion — but for speed, just use the bounding-box sliced region
-        label_surface[p.label] = p.area  # will refine below
+        # Use regionprops area as a proxy for surface area
+        label_surface[p.label] = p.area  # Use regionprops area as surface approximation (fast, sufficient for merge heuristic)
 
     # Find adjacent label pairs and count shared boundary voxels
     # by shifting the label array in each of 6 directions
@@ -673,40 +609,6 @@ def get_mask_centroids(mask):
     props = regionprops(mask)
     return [{'coord': p.centroid, 'label': p.label} for p in props]
 
-def prepare_id_points(mask_data):
-    """Calculates centroids and prepares arrays for ID visualization."""
-    pts_data = get_mask_centroids(mask_data)
-    if not pts_data:
-        return np.empty((0, mask_data.ndim)), np.empty(0)
-        
-    coords = np.array([p['coord'] for p in pts_data])
-    labels = np.array([p['label'] for p in pts_data])
-    return coords, labels
-
-def merge_labels(mask_data, source_id, target_id):
-    """
-    Merges one label ID into another within a mask array.
-
-    Parameters
-    ----------
-    mask_data : np.ndarray
-        The label mask data.
-    source_id : int
-        The label ID to be replaced.
-    target_id : int
-        The label ID to replace with.
-
-    Returns
-    -------
-    np.ndarray
-        A new mask array with the labels merged.
-    """
-    if source_id == target_id:
-        return mask_data
-    new_data = mask_data.copy()
-    new_data[new_data == source_id] = target_id
-    return new_data
-
 def delete_label(mask_data, label_id):
     """
     Deletes a label from a mask by setting its pixels to 0.
@@ -729,40 +631,6 @@ def delete_label(mask_data, label_id):
     new_data[new_data == label_id] = 0
     return new_data
 
-def extrude_label(mask_data, z_index, label_id):
-    """
-    Extrudes a label by computing the union of its 2D mask across all Z slices,
-    then applying that merged footprint to every slice. Eliminates overhangs.
-
-    Parameters
-    ----------
-    mask_data : np.ndarray
-        The 3D label mask data.
-    z_index : int
-        Unused (kept for API compatibility). The union is computed over all slices.
-    label_id : int
-        The ID of the label to extrude.
-
-    Returns
-    -------
-    np.ndarray
-        A new 3D mask array with the label extruded using the max XY footprint.
-    """
-    if mask_data.ndim != 3 or label_id == 0:
-        return mask_data
-
-    # Union of the label across all Z slices — gives the largest XY footprint
-    union_2d = np.any(mask_data == label_id, axis=0)
-
-    if not np.any(union_2d):
-        return mask_data
-
-    new_data = mask_data.copy()
-    new_data[:, union_2d] = label_id
-    return new_data
-
-
-# zfisher/core/segmentation.py
 
 def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callback=None, method="classical", merge_splits=True, voxel_spacing=None):
     """

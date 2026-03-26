@@ -49,9 +49,12 @@ class _PunctaUndoStack:
                 if viewer and name in viewer.layers:
                     target = viewer.layers[name]
             if target:
-                # Temporarily swap the text format to a constant string
-                # to prevent TypeError when _set_data calls text.apply()
-                # on None-filled features during resize.
+                # Workaround for napari text rendering during undo:
+                # When layer.data is resized, napari calls text.apply() on the
+                # feature table before we can set features. The resized table has
+                # None values, and the format string '{puncta_id:.0f}' crashes on None.
+                # Fix: temporarily set format to '' (constant), swap data+features,
+                # then restore the format string once features are valid.
                 was_visible = target.visible
                 target.visible = False
                 target._Points__indices_view = np.empty(0, int)
@@ -318,7 +321,9 @@ def connect_puncta_editor_layer_sync(viewer):
 
 # --- 1. Algorithmic Math (Operates strictly on Pixel Arrays) ---
 def calculate_fishing_hook(img_layer, data_pos, viewer, use_optimization=True, radius_um=0.1):
-    """Calculates peak intensity using a data coordinate, not a world coordinate."""
+    """Place a punctum by casting a ray through the volume along the camera direction,
+    finding the brightest voxel along the ray, then optionally refining to the local
+    intensity peak within radius_um. Ideal for accurate 3D placement from any view angle."""
     # 1. Get the camera direction (World Space)
     try:
         view_direction = np.array(viewer.camera.view_direction)
