@@ -1,5 +1,6 @@
 import webbrowser
 from pathlib import Path
+from ...version import __version__
 
 from magicgui.widgets import Container, PushButton, Label
 from qtpy.QtWidgets import (
@@ -80,7 +81,7 @@ class HomeWidget(Container):
 
         self._title = Label(value=f"<h1 {style.CREATE_WELCOME_WIDGET_STYLE['h1']}>Welcome to zFISHer</h1>")
         self._subtitle = Label(value=f"<em style='color: {mint};'>Multiplexed Sequential FISH Analysis in Cell Monolayer</em>")
-        self._version = Label(value="<p>Version 1.0</p>")
+        self._version = Label(value=f"<p>Version {__version__}</p>")
         self._workflow = Label(value=workflow_html)
         self._workflow.native.setWordWrap(True)
 

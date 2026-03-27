@@ -4,6 +4,7 @@ import math
 import warnings
 from pathlib import Path
 from functools import partial
+from ..version import __version__ as _zfisher_version
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,7 @@ class WelcomeWidget(QWidget):
         self.layout().setAlignment(Qt.AlignCenter)
         
         # Icon
-        icon_path = Path(__file__).parent.parent.parent / "icon.png"
+        icon_path = Path(__file__).parent.parent / "resources" / "icon.png"
         if icon_path.exists():
             icon_label = QLabel()
             pixmap = QPixmap(str(icon_path)).scaled(128, 128, Qt.KeepAspectRatio, Qt.SmoothTransformation)
@@ -196,7 +197,7 @@ class WelcomeWidget(QWidget):
         # Branding (Mint and White)
         label_html = (
             f"<h1 {style.WELCOME_WIDGET_STYLE['h1']}>zFISHer</h1>"
-            f"<p {style.WELCOME_WIDGET_STYLE['p']}>Version 1.0</p>"
+            f"<p {style.WELCOME_WIDGET_STYLE['p']}>Version {_zfisher_version}</p>"
         )
         self.label = QLabel(label_html)
         self.label.setAlignment(Qt.AlignCenter)
@@ -263,7 +264,7 @@ def launch_zfisher():
     theme_name = style.register_napari_theme()
 
     # Build icon — generate .ico from .png for Windows taskbar compatibility
-    icon_dir = Path(__file__).parent.parent.parent
+    icon_dir = Path(__file__).parent.parent / "resources"
     ico_path = icon_dir / "icon.ico"
     png_path = icon_dir / "icon.png"
     if not ico_path.exists() and png_path.exists():

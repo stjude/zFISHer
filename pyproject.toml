@@ -4,7 +4,7 @@ build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
 name = "zfisher"
-version = "0.1.0"
+version = "1.0.0"
 description = "3D colocalization analysis for multiplexed sequential FISH, built on napari"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -52,3 +52,6 @@ zfisher = "main:main"
 
 [tool.setuptools.packages.find]
 include = ["zfisher*"]
+
+[tool.setuptools.package-data]
+zfisher = ["resources/*.ico", "resources/*.png", "resources/icons/*.svg"]

@@ -404,7 +404,11 @@ def fishing_hook_callback(layer, event):
         return
 
     viewer = napari.current_viewer()
-    img_layer = next((l for l in viewer.layers if isinstance(l, napari.layers.Image) and l.visible), None)
+    channel_name = layer.name.replace(constants.PUNCTA_SUFFIX, "")
+    img_layer = next(
+        (l for l in viewer.layers if isinstance(l, napari.layers.Image) and l.name == channel_name),
+        next((l for l in viewer.layers if isinstance(l, napari.layers.Image) and l.visible), None)
+    )
     if not img_layer or not layer: return
     
     if not np.allclose(layer.scale, img_layer.scale) or not np.allclose(layer.translate, img_layer.translate):

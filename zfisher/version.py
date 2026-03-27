@@ -1,6 +1,6 @@
 """Single source of truth for zFISHer version."""
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 
 
 def get_full_version():
