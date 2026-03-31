@@ -158,12 +158,34 @@ def _refilter_widget(
     viewer.status = f"Removed {total_removed} extranuclear puncta across {len(target_layers)} layer(s)."
 
 
+def _get_mask_layer_choices(widget=None):
+    """Return only aligned, warped, or consensus Labels layers."""
+    viewer = napari.current_viewer()
+    if viewer is None:
+        return []
+    return [
+        l for l in viewer.layers
+        if isinstance(l, napari.layers.Labels) and (
+            l.name.upper().startswith(constants.ALIGNED_PREFIX.upper())
+            or l.name.upper().startswith(constants.WARPED_PREFIX.upper())
+            or l.name == constants.CONSENSUS_MASKS_NAME
+        )
+    ]
+
+
 def _refresh_channel_choices():
-    """Update the channels dropdown based on current viewer layers."""
+    """Update the channels and mask dropdowns based on current viewer layers."""
     viewer = napari.current_viewer()
     choices = _get_puncta_channel_choices(viewer)
     _refilter_widget.channels.choices = choices
     _refilter_widget.channels.value = choices[0] if choices else "All (R1 + R2)"
+
+    # Filter mask dropdown to only show aligned/warped/consensus masks
+    valid_masks = _get_mask_layer_choices()
+    if valid_masks:
+        _refilter_widget.mask_layer.choices = valid_masks
+        if _refilter_widget.mask_layer.value not in valid_masks:
+            _refilter_widget.mask_layer.value = valid_masks[0]
 
 
 # --- UI Helpers ---
@@ -239,7 +261,9 @@ _layout.addWidget(_refilter_undo_btn)
 _layout.addStretch(1)
 
 # Ensure widgets shrink with panel
-from qtpy.QtWidgets import QAbstractSpinBox, QComboBox
+from qtpy.QtWidgets import QAbstractSpinBox, QComboBox, QLabel
 _refilter_widget.native.setMinimumWidth(0)
+for child in _refilter_widget.native.findChildren(QLabel):
+    child.setMinimumWidth(0)
 for child in _refilter_widget.native.findChildren((QAbstractSpinBox, QComboBox)):
     child.setMinimumWidth(0)

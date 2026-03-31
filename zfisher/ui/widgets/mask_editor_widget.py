@@ -462,6 +462,11 @@ _layout.setContentsMargins(0, 0, 0, 0)
 # inside the nested QToolBox (QToolBox wraps pages in QScrollArea).
 _mask_editor_widget.native.setSizePolicy(_QSizePolicy.Preferred, _QSizePolicy.Preferred)
 _mask_editor_widget.native.setMinimumWidth(0)
+from qtpy.QtWidgets import QAbstractSpinBox, QComboBox, QLabel
+for child in _mask_editor_widget.native.findChildren(QLabel):
+    child.setMinimumWidth(0)
+for child in _mask_editor_widget.native.findChildren((QAbstractSpinBox, QComboBox)):
+    child.setMinimumWidth(0)
 
 # --- Header / info / description — added directly to avoid double-nesting ---
 _hdr = widgets.Label(value="Mask Editor")

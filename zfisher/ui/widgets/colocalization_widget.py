@@ -345,8 +345,10 @@ _layout.addWidget(_export_btn.native)
 _layout.addStretch(1)
 
 # Ensure widgets shrink with panel
-from qtpy.QtWidgets import QAbstractSpinBox, QComboBox
+from qtpy.QtWidgets import QAbstractSpinBox, QComboBox, QLabel
 for w in [_rule_builder.native, _tri_rule_builder.native]:
     w.setMinimumWidth(0)
+    for child in w.findChildren(QLabel):
+        child.setMinimumWidth(0)
     for child in w.findChildren((QAbstractSpinBox, QComboBox)):
         child.setMinimumWidth(0)

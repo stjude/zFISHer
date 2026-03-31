@@ -303,7 +303,9 @@ _inner.setSpacing(2)
 _inner.setContentsMargins(0, 0, 0, 0)
 
 _canvas_widget.native.setMinimumWidth(0)
-from qtpy.QtWidgets import QAbstractSpinBox, QComboBox
+from qtpy.QtWidgets import QAbstractSpinBox, QComboBox, QLabel
+for child in _canvas_widget.native.findChildren(QLabel):
+    child.setMinimumWidth(0)
 for child in _canvas_widget.native.findChildren((QAbstractSpinBox, QComboBox)):
     child.setMinimumWidth(0)
 
