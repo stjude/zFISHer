@@ -150,6 +150,9 @@ def _refilter_widget(
 
         inside = mask_data[idx[:, 0], idx[:, 1], idx[:, 2]] > 0
         n_before = len(coords)
+        # Clear stale _indices_view cache to prevent IndexError in text
+        # rendering when point count changes (same fix as viewer_helpers).
+        layer._Points__indices_view = np.empty(0, int)
         layer.data = coords[inside]
         if layer.features is not None and len(layer.features) == n_before:
             layer.features = layer.features.iloc[inside].reset_index(drop=True)
