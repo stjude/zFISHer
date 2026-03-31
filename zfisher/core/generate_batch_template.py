@@ -618,6 +618,14 @@ def parse_batch_config(excel_path):
                     f"Datasets row {row_num} ({name}): {col} unsupported type "
                     f"({p.suffix}). Expected: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
                 )
+            else:
+                # Reject 2D images (MIPs / EDFs) — zFISHer requires Z-stacks
+                z = io.peek_z_depth(p)
+                if z is not None and z <= 1:
+                    errors.append(
+                        f"Datasets row {row_num} ({name}): {col} has only {z} Z-slice(s). "
+                        f"zFISHer requires 3D Z-stacks — MIPs and EDFs are not supported."
+                    )
 
         # Nuclear channels (separate for R1 and R2)
         r1_nuc_raw = str(row.get("R1_Nuclear_Channel", "")).strip()

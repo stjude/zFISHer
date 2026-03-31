@@ -105,8 +105,12 @@ class TiffSession:
         # - 3D (Z, Y, X) → (Z, 1, Y, X): Z-stack, single channel
         # - 4D: if shape[0] < shape[1], assume (C, Z, Y, X) → swap to (Z, C, Y, X)
         #   (C dimension is typically smallest; Z-stacks have ~50 slices, channels ~3-5)
-        if data.ndim == 2:   # (Y, X) -> (1, 1, Y, X)
-            return data[np.newaxis, np.newaxis, :, :]
+        if data.ndim == 2:
+            raise ValueError(
+                "zFISHer requires 3D volumetric data (Z-stacks). "
+                "The loaded file is a 2D image (e.g., MIP or EDF). "
+                "Please provide the original Z-stack instead."
+            )
         elif data.ndim == 3: # (Z, Y, X) -> (Z, 1, Y, X)
             return data[:, np.newaxis, :, :]
         elif data.ndim == 4:
@@ -158,10 +162,13 @@ def load_nd2_session(path: str) -> FISHSession:
             img = np.expand_dims(img, axis=c_idx)
             order.insert(c_idx, 'C')
 
-        # Add singleton Z axis if missing
+        # Reject 2D data (no Z axis = MIP/EDF, not a Z-stack)
         if 'Z' not in order:
-            img = np.expand_dims(img, axis=0)
-            order.insert(0, 'Z')
+            raise ValueError(
+                "zFISHer requires 3D volumetric data (Z-stacks). "
+                "The loaded ND2 file has no Z axis (e.g., MIP or EDF). "
+                "Please provide the original Z-stack instead."
+            )
 
         # Now we should have at least Z, C, Y, X. Let's enforce the order.
         target_order = ['Z', 'C', 'Y', 'X']
@@ -224,6 +231,38 @@ def peek_channel_names(path):
         return None
     except Exception as exc:
         logger.debug("peek_channel_names failed for %s: %s", path, exc)
+        return None
+
+
+def peek_z_depth(path):
+    """Read the Z depth from an image file without loading pixel data.
+
+    Returns the number of Z slices as an int, or ``None`` if it cannot
+    be determined from metadata alone.
+    """
+    path = Path(path)
+    try:
+        if path.suffix.lower() == '.nd2':
+            with nd2.ND2File(str(path)) as f:
+                return f.sizes.get('Z', None)
+
+        with tifffile.TiffFile(str(path)) as tif:
+            if tif.ome_metadata:
+                root = ET.fromstring(tif.ome_metadata)
+                ns = {'ome': 'http://www.openmicroscopy.org/Schemas/OME/2016-06'}
+                pixels = root.find('.//ome:Pixels', ns)
+                if pixels is not None:
+                    sz = pixels.get('SizeZ')
+                    if sz is not None:
+                        return int(sz)
+            # Fallback: check shape from series
+            if tif.series:
+                shape = tif.series[0].shape
+                if len(shape) >= 3:
+                    return shape[0] if len(shape) == 3 else shape[-3]
+        return None
+    except Exception as exc:
+        logger.debug("peek_z_depth failed for %s: %s", path, exc)
         return None
 
 
