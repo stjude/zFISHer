@@ -349,6 +349,7 @@ def _automated_preprocessing_magic_widget(
                         features = features[inside_mask].reset_index(drop=True)
 
                 pts_layer._locked = False
+                pts_layer._Points__indices_view = np.empty(0, int)
                 pts_layer.data = coords
                 if not features.empty:
                     pts_layer.features = features

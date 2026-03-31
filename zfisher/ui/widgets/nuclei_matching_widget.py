@@ -121,6 +121,7 @@ def _nuclei_matching_widget(
                     if not features.empty:
                         features = features[inside_mask].reset_index(drop=True)
 
+                pts_layer._Points__indices_view = np.empty(0, int)
                 pts_layer.data = coords
                 if not features.empty:
                     pts_layer.features = features

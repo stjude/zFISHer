@@ -441,7 +441,8 @@ def fishing_hook_callback(layer, event):
             dist, _ = cKDTree(search_data).query(target_coord_data, k=1)
             if dist < 1.5:
                 if layer.mode == 'add' and len(new_data) > 0:
-                    layer.data = new_data[:-1] 
+                    layer._Points__indices_view = np.empty(0, int)
+                    layer.data = new_data[:-1]
                 viewer.status = "Point already exists here."
                 return
         
@@ -485,6 +486,7 @@ def fishing_hook_callback(layer, event):
             new_row = pd.DataFrame([new_properties])
             current_features = pd.concat([current_features, new_row], ignore_index=True)
             
+        layer._Points__indices_view = np.empty(0, int)
         layer.data = new_data
         layer.features = current_features
         _prev_point_count[0] = len(new_data)  # sync count so data listener doesn't re-process
@@ -823,6 +825,7 @@ def _on_clear_all(_=False):
     global _skip_data_sync
     _skip_data_sync = True
     try:
+        layer._Points__indices_view = np.empty(0, int)
         layer.data = np.empty((0, layer.ndim))
         layer.features = pd.DataFrame(columns=layer.features.columns)
         _prev_point_count[0] = 0
