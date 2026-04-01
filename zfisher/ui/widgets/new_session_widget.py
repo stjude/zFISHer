@@ -28,8 +28,6 @@ class NewSessionWidget(Container):
         self._info.native.setObjectName("widgetInfo")
         self._round1_path = FileEdit(label="R1:", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path(r"..."), tooltip="Path to Round 1 .nd2 or OME-TIFF image file.")
         self._round2_path = FileEdit(label="R2:", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path(r"..."), tooltip="Path to Round 2 .nd2 or OME-TIFF image file.")
-     #   self._round1_path = FileEdit(label="Round 1", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path("/Users/sstaller/zFISHer_MicroTests/R1_micro.tif"))
-     #   self._round2_path = FileEdit(label="Round 2", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path("/Users/sstaller/zFISHer_MicroTests/R2_micro.tif"))
 
         self._output_dir = FileEdit(label="Output:", mode="d", value=Path.home() / "zFISHer_Output", tooltip="Directory where all session files and results will be saved.")
         self._new_session_btn = PushButton(text="Start New Session")

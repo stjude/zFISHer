@@ -364,43 +364,48 @@ def add_dropdown_validations(workbook):
     # --- Puncta sheet ---
     ws = workbook["Puncta"]
 
-    dv = _soft_list(channel_names, "Select or type the channel name.", "Channel")
+    # Round (col B)
+    dv = _strict_list(["Both", "R1", "R2"], "Which round(s) to detect puncta in.", "Round")
     ws.add_data_validation(dv)
     dv.add(f"B2:B{MAX_ROW}")
 
-    dv = _strict_list(sorted(_VALID_PUNCTA_ALGORITHMS), "Choose a detection algorithm.", "Algorithm")
+    dv = _soft_list(channel_names, "Select or type the channel name.", "Channel")
     ws.add_data_validation(dv)
     dv.add(f"C2:C{MAX_ROW}")
 
-    # Sensitivity (col D) — decimal 0-1
-    dv = _numeric_range(0.0, 1.0, allow_decimal=True, prompt="Relative threshold 0-1. Lower = more sensitive.", title="Sensitivity")
+    dv = _strict_list(sorted(_VALID_PUNCTA_ALGORITHMS), "Choose a detection algorithm.", "Algorithm")
     ws.add_data_validation(dv)
     dv.add(f"D2:D{MAX_ROW}")
 
-    # Min_Distance (col E) — integer 1-20
-    dv = _numeric_range(1, 20, allow_decimal=False, prompt="Min separation in pixels. Range: 1-20.", title="Min Distance")
+    # Sensitivity (col E) — decimal 0-1
+    dv = _numeric_range(0.0, 1.0, allow_decimal=True, prompt="Relative threshold 0-1. Lower = more sensitive.", title="Sensitivity")
     ws.add_data_validation(dv)
     dv.add(f"E2:E{MAX_ROW}")
 
-    # Sigma (col F) — decimal 0-5
-    dv = _numeric_range(0.0, 5.0, allow_decimal=True, prompt="Gaussian sigma in pixels. 0 = no smoothing. Range: 0-5.", title="Sigma")
+    # Min_Distance (col F) — integer 1-20
+    dv = _numeric_range(1, 20, allow_decimal=False, prompt="Min separation in pixels. Range: 1-20.", title="Min Distance")
     ws.add_data_validation(dv)
     dv.add(f"F2:F{MAX_ROW}")
 
-    # Nuclei_Only (col G)
-    dv = _strict_list(["TRUE", "FALSE"])
+    # Sigma (col G) — decimal 0-5
+    dv = _numeric_range(0.0, 5.0, allow_decimal=True, prompt="Gaussian sigma in pixels. 0 = no smoothing. Range: 0-5.", title="Sigma")
     ws.add_data_validation(dv)
     dv.add(f"G2:G{MAX_ROW}")
 
-    # Tophat (col H)
+    # Nuclei_Only (col H)
     dv = _strict_list(["TRUE", "FALSE"])
     ws.add_data_validation(dv)
     dv.add(f"H2:H{MAX_ROW}")
 
-    # Tophat_Radius (col I) — integer 1-50
-    dv = _numeric_range(1, 50, allow_decimal=False, prompt="Top-hat filter radius in pixels. Range: 1-50.", title="Tophat Radius")
+    # Tophat (col I)
+    dv = _strict_list(["TRUE", "FALSE"])
     ws.add_data_validation(dv)
     dv.add(f"I2:I{MAX_ROW}")
+
+    # Tophat_Radius (col J) — integer 1-50
+    dv = _numeric_range(1, 50, allow_decimal=False, prompt="Top-hat filter radius in pixels. Range: 1-50.", title="Tophat Radius")
+    ws.add_data_validation(dv)
+    dv.add(f"J2:J{MAX_ROW}")
 
     # --- Colocalization sheet ---
     ws = workbook["Colocalization"]
@@ -476,6 +481,7 @@ def build_template_sheets():
     # --- Puncta: 2 examples + 50 default rows ---
     p_example1 = {
         "Dataset": f"{_EXAMPLE_PREFIX} ALL",
+        "Round": "Both",
         "Channel": "Cy5",
         "Algorithm": "Local Maxima",
         "Sensitivity": constants.PUNCTA_THRESHOLD_REL,
@@ -487,6 +493,7 @@ def build_template_sheets():
     }
     p_example2 = {
         "Dataset": f"{_EXAMPLE_PREFIX} FOV1",
+        "Round": "R1",
         "Channel": "GFP",
         "Algorithm": "Laplacian of Gaussian",
         "Sensitivity": 0.03,
@@ -498,6 +505,7 @@ def build_template_sheets():
     }
     p_default = {
         "Dataset": "ALL",
+        "Round": "Both",
         "Channel": "",
         "Algorithm": "Local Maxima",
         "Sensitivity": constants.PUNCTA_THRESHOLD_REL,
@@ -724,6 +732,17 @@ def parse_batch_config(excel_path):
             if ds != "ALL" and ds not in dataset_names:
                 errors.append(f"Puncta row {row_num}: Dataset '{ds}' not found in Datasets sheet.")
 
+            rnd_val = str(row.get("Round", "Both")).strip()
+            if not rnd_val or rnd_val == "nan":
+                rnd_val = "Both"
+            _VALID_ROUNDS = {"Both", "R1", "R2"}
+            if rnd_val not in _VALID_ROUNDS:
+                errors.append(
+                    f"Puncta row {row_num}: Invalid Round '{rnd_val}'. "
+                    f"Use: {', '.join(sorted(_VALID_ROUNDS))}"
+                )
+                rnd_val = "Both"
+
             algo = str(row.get("Algorithm", "Local Maxima")).strip()
             if algo and algo != "nan" and algo not in _VALID_PUNCTA_ALGORITHMS:
                 errors.append(
@@ -781,6 +800,7 @@ def parse_batch_config(excel_path):
             puncta_rules.append({
                 "dataset": ds,
                 "channel": ch,
+                "round": rnd_val,
                 "params": {
                     "method": algo if (algo and algo != "nan") else "Local Maxima",
                     "threshold_rel": _float("Sensitivity", constants.PUNCTA_THRESHOLD_REL, min_val=0.0, max_val=1.0),
@@ -966,16 +986,24 @@ def validate_channels(config):
 # ------------------------------------------------------------------
 
 def resolve_puncta_for_dataset(dataset_name, puncta_rules):
-    """Return a {channel: params_dict} for this dataset, merging ALL + per-dataset overrides."""
+    """Return a {channel: params_dict} for this dataset, merging ALL + per-dataset overrides.
+
+    Each params_dict includes a ``"round"`` key (``"Both"``, ``"R1"``, or ``"R2"``)
+    so the pipeline can skip channels that don't apply to a given round.
+    """
     result = {}
     # First pass: ALL defaults
     for rule in puncta_rules:
         if rule["dataset"] == "ALL":
-            result[rule["channel"]] = dict(rule["params"])
+            params = dict(rule["params"])
+            params["round"] = rule.get("round", "Both")
+            result[rule["channel"]] = params
     # Second pass: per-dataset overrides
     for rule in puncta_rules:
         if rule["dataset"] == dataset_name:
-            result[rule["channel"]] = dict(rule["params"])
+            params = dict(rule["params"])
+            params["round"] = rule.get("round", "Both")
+            result[rule["channel"]] = params
     return result
 
 

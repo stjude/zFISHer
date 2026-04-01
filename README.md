@@ -196,9 +196,20 @@ The template includes:
 
 All errors and warnings (missing files, invalid values, unrecognized channel names) are reported in a popup before processing begins, with the option to continue or cancel.
 
+## System Requirements
+
+| Component | Minimum |
+|-----------|---------|
+| RAM | 32 GB |
+| GPU VRAM | 8 GB |
+| CPU | 4+ cores, 3.0+ GHz |
+| Python | 3.10 |
+
+A CUDA-compatible NVIDIA GPU is recommended for Cellpose 3D segmentation.
+
 ## Installation
 
-zFISHer requires a Conda environment with Python 3.10.
+zFISHer requires Conda and Python 3.10.
 
 1. **Clone the repository:**
     ```bash
@@ -208,16 +219,22 @@ zFISHer requires a Conda environment with Python 3.10.
 
 2. **Create and activate the Conda environment:**
     ```bash
-    conda env create -f environment.yml
+    conda env create -f zfisher_environment.yml
     conda activate zFISHer
     ```
 
-    If `environment.yml` is not available, install manually:
+3. **Install zFISHer:**
     ```bash
-    conda create -n zFISHer python=3.10
-    conda activate zFISHer
-    pip install napari[all] magicgui scikit-image scipy numpy pandas tifffile SimpleITK cellpose openpyxl
+    pip install .
     ```
+
+4. **(Optional) Enable GPU acceleration for Cellpose:**
+
+    The default environment installs CPU-only PyTorch. For GPU-accelerated Cellpose 3D segmentation, replace it with the CUDA version:
+    ```bash
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+    ```
+    Requires an NVIDIA GPU with CUDA drivers installed. See [PyTorch Get Started](https://pytorch.org/get-started/locally/) to select the correct CUDA version for your system.
 
 ## Usage
 
@@ -256,7 +273,7 @@ Loading a session restores all layers and processing state, so you can close and
 ```
 zFISHer/
   main.py                    # Application entry point
-  environment.yml            # Conda environment specification
+  zfisher_environment.yml    # Conda environment specification
   zfisher/
     constants.py             # Centralized parameters and naming conventions
     version.py               # Version string (auto-appends git hash for dev builds)

@@ -85,8 +85,9 @@ def attach_puncta_listener(layer, name):
                 features = layer.features.reset_index(drop=True) if hasattr(layer, 'features') and not layer.features.empty else pd.DataFrame()
                 full_df = pd.concat([features, coords_df], axis=1)
                 full_df.to_csv(csv_path, index=False)
-            except Exception:
+            except Exception as e:
                 # Fallback: save coordinates only
+                logger.warning("Could not save full puncta CSV for '%s': %s. Saving coordinates only.", name, e)
                 np.savetxt(csv_path, layer.data, delimiter=',', header='Z,Y,X', comments='')
             session.set_processed_file(name, str(csv_path), layer_type='points', metadata={'subtype': 'puncta_csv'})
 
@@ -272,8 +273,8 @@ def on_layer_removed(event, widgets):
             if hasattr(w, "reset_choices"):
                 try:
                     w.reset_choices()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Could not reset choices for widget: %s", e)
         # Restore suppression state after all updates
         _viewer_mod._suppress_custom_controls = was_suppressed
 

@@ -60,8 +60,8 @@ class TiffSession:
                     if 'spacing' in ij_meta:
                         self.voxels = (float(ij_meta['spacing']), 1.0, 1.0)
                     return
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Could not parse ImageJ metadata from %s: %s", self.path, e)
 
         # Final fallback to generic naming if no labels are found
         self.channels = [f"Ch{i+1}" for i in range(self.data.shape[1])]

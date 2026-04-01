@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+title: "zFISHer: An Interactive Platform for 3D Puncta Curation and Colocalization Analysis in Sequential Multiplexed FISH"
+message: "If you use this software, please cite it using the metadata from this file."
+type: software
+license: MIT
+version: 1.0.0
+authors:
+  - given-names: Seth
+    family-names: Staller
+    email: Seth.Staller@STJUDE.ORG
+    affiliation: "St. Jude Children's Research Hospital, Memphis, TN 38105, USA"
+  - given-names: Virginia
+    family-names: Valentine
+    affiliation: "St. Jude Children's Research Hospital, Memphis, TN 38105, USA"
+  - given-names: Steven
+    family-names: Burden
+    email: Steven.Burden@STJUDE.ORG
+    affiliation: "St. Jude Children's Research Hospital, Memphis, TN 38105, USA"
+repository-code: "https://github.com/stjude/zFISHer"
+keywords:
+  - FISH
+  - colocalization
+  - napari
+  - microscopy
+  - 3D
+  - segmentation
+  - registration

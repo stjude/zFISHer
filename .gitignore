@@ -8,11 +8,12 @@ __pycache__/
 *.pyc
 *.py[cod]
 *$py.class
-.venv/
-venv/
-env/
+*.egg-info/
+*.egg
+dist/
+build/
 
-# Data & Images 
+# Data & Images
 *.tif
 *.tiff
 *.nd2
@@ -25,5 +26,26 @@ data/*.tif
 # OS stuff
 .DS_Store
 
-# VScode stuff
+# IDE / editor
 *.code-workspace
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment & secrets
+.env
+.env.*
+
+# Testing & linting
+.pytest_cache/
+.coverage
+.mypy_cache/
+.ruff_cache/
+
+# Logs
+*.log
+
+# Headless test (contains hardcoded paths, not for distribution)
+headlesstest_pipeline.py

@@ -7,5 +7,10 @@ except Exception:
 
 from zfisher.ui.viewer import launch_zfisher
 
-if __name__ == "__main__":
+
+def main():
     launch_zfisher()
+
+
+if __name__ == "__main__":
+    main()

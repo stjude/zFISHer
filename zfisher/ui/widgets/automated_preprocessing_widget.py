@@ -1,3 +1,4 @@
+import logging
 import napari
 import numpy as np
 import tifffile
@@ -5,6 +6,8 @@ import gc
 from pathlib import Path
 from magicgui import magicgui
 from magicgui.widgets import Container, Label
+
+logger = logging.getLogger(__name__)
 
 from ...core import session, segmentation, registration, puncta
 from .. import popups, viewer_helpers
@@ -18,7 +21,8 @@ def _get_qt_parent(viewer):
     try:
         from qtpy.QtWidgets import QApplication
         return QApplication.activeWindow()
-    except Exception:
+    except Exception as e:
+        logger.debug("Could not get Qt parent window: %s", e)
         return None
 
 @magicgui(

@@ -88,18 +88,27 @@ def run_full_zfisher_pipeline(
         )
 
     # --- 2. Load & Convert Raw Images ---
-    _update(5, "Loading Round 1...")
-    r1_sess = io.load_image_session(r1_path)
-    _update(8, "Loading Round 2...")
-    r2_sess = io.load_image_session(r2_path)
+    try:
+        _update(5, "Loading Round 1...")
+        r1_sess = io.load_image_session(r1_path)
+        _update(8, "Loading Round 2...")
+        r2_sess = io.load_image_session(r2_path)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to load image files. Check that the files exist and are valid "
+            f"ND2 or TIFF images.\n  R1: {r1_path}\n  R2: {r2_path}\n  Error: {exc}"
+        ) from exc
 
     input_dir = output_dir / constants.INPUT_DIR
-    if str(r1_path).lower().endswith('.nd2'):
-        _update(10, "Converting R1 to OME-TIF...")
-        io.convert_nd2_to_ome(r1_sess, input_dir, "R1")
-    if str(r2_path).lower().endswith('.nd2'):
-        _update(12, "Converting R2 to OME-TIF...")
-        io.convert_nd2_to_ome(r2_sess, input_dir, "R2")
+    try:
+        if str(r1_path).lower().endswith('.nd2'):
+            _update(10, "Converting R1 to OME-TIF...")
+            io.convert_nd2_to_ome(r1_sess, input_dir, "R1")
+        if str(r2_path).lower().endswith('.nd2'):
+            _update(12, "Converting R2 to OME-TIF...")
+            io.convert_nd2_to_ome(r2_sess, input_dir, "R2")
+    except Exception as exc:
+        raise RuntimeError(f"Failed to convert ND2 to OME-TIFF: {exc}") from exc
 
     # --- 2b. Resolve nuclear channels (may differ between rounds) ---
     if r1_nuclear_channel:
@@ -130,12 +139,18 @@ def run_full_zfisher_pipeline(
     # Map batch config method names to process_session_dapi convention
     method_key = "cellpose" if seg_method.lower() == "cellpose" else "classical"
 
-    seg_results = segmentation.process_session_dapi(
-        r1_data=r1_dapi, r2_data=r2_dapi, output_dir=output_dir,
-        progress_callback=lambda p, t: _update(15 + int(p * 0.10), t),
-        method=method_key, merge_splits=merge_splits,
-        voxel_spacing=r1_sess.voxels,
-    )
+    try:
+        seg_results = segmentation.process_session_dapi(
+            r1_data=r1_dapi, r2_data=r2_dapi, output_dir=output_dir,
+            progress_callback=lambda p, t: _update(15 + int(p * 0.10), t),
+            method=method_key, merge_splits=merge_splits,
+            voxel_spacing=r1_sess.voxels,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"Nuclear segmentation failed: {exc}\n"
+            f"Method: {method_key}, Merge splits: {merge_splits}"
+        ) from exc
 
     # --- 4. Puncta Detection on Raw Images (per-round masks) ---
     seg_dir = output_dir / constants.SEGMENTATION_DIR
@@ -168,6 +183,11 @@ def run_full_zfisher_pipeline(
             # Build params for this channel
             if puncta_config and ch in puncta_config:
                 ch_params = dict(puncta_config[ch])
+                # Skip this channel if it's restricted to the other round
+                ch_round = ch_params.pop("round", "Both")
+                if ch_round != "Both" and ch_round != rnd:
+                    job_i += 1
+                    continue
                 nuclei_only = ch_params.pop("nuclei_only", True)
             else:
                 ch_params = {
@@ -185,15 +205,21 @@ def run_full_zfisher_pipeline(
             job_base = 25 + int((job_i / job_count) * 10)
             _update(job_base, f"Detecting puncta (raw): {rnd} {ch}...")
 
-            result = puncta.process_puncta_detection(
-                image_data=ch_data,
-                mask_data=mask_for_detection,
-                voxels=sess_obj.voxels,
-                params=ch_params,
-                progress_callback=lambda p, t, _b=job_base: _update(
-                    _b + int(p / 100 * 2), f"{rnd} {ch}: {t}"
+            try:
+                result = puncta.process_puncta_detection(
+                    image_data=ch_data,
+                    mask_data=mask_for_detection,
+                    voxels=sess_obj.voxels,
+                    params=ch_params,
+                    progress_callback=lambda p, t, _b=job_base: _update(
+                        _b + int(p / 100 * 2), f"{rnd} {ch}: {t}"
+                    )
                 )
-            )
+            except Exception as exc:
+                logger.error("Puncta detection failed for %s %s: %s", rnd, ch, exc, exc_info=True)
+                _update(job_base, f"Puncta detection failed for {rnd} {ch}: {exc}")
+                job_i += 1
+                continue
             raw_puncta_results[(rnd, ch)] = result
 
             # Persist detection parameters per layer for the final report.
@@ -257,11 +283,16 @@ def run_full_zfisher_pipeline(
             })
 
     aligned_dir = output_dir / constants.ALIGNED_DIR
-    _, bspline_transform, canvas_offset = registration.generate_global_canvas(
-        r1_layers_data=r1_layers, r2_layers_data=r2_layers,
-        shift=shift, output_dir=aligned_dir, apply_warp=apply_warp,
-        progress_callback=lambda p, t: _update(45 + int(p * 0.15), t)
-    )
+    try:
+        _, bspline_transform, canvas_offset = registration.generate_global_canvas(
+            r1_layers_data=r1_layers, r2_layers_data=r2_layers,
+            shift=shift, output_dir=aligned_dir, apply_warp=apply_warp,
+            progress_callback=lambda p, t: _update(45 + int(p * 0.15), t)
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"Canvas generation (alignment + warping) failed: {exc}"
+        ) from exc
     session.update_data("canvas_scale", r1_sess.voxels)
 
     # --- 7. Consensus Nuclei ---
@@ -276,14 +307,19 @@ def run_full_zfisher_pipeline(
             "Canvas generation may have failed."
         )
 
-    merged_mask, _ = segmentation.process_consensus_nuclei(
-        mask1=tifffile.imread(r1_aligned_mask),
-        mask2=tifffile.imread(r2_warped_mask),
-        output_dir=output_dir,
-        threshold=match_threshold if match_threshold > 0 else 0,
-        method=overlap_method,
-        progress_callback=lambda p, t: _update(60 + int(p * 0.1), t)
-    )
+    try:
+        merged_mask, _ = segmentation.process_consensus_nuclei(
+            mask1=tifffile.imread(r1_aligned_mask),
+            mask2=tifffile.imread(r2_warped_mask),
+            output_dir=output_dir,
+            threshold=match_threshold if match_threshold > 0 else 0,
+            method=overlap_method,
+            progress_callback=lambda p, t: _update(60 + int(p * 0.1), t)
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"Consensus nuclei matching failed: {exc}"
+        ) from exc
 
     # --- 8. Transform Puncta to Aligned Space ---
     reports_dir = output_dir / constants.REPORTS_DIR

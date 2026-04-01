@@ -821,6 +821,12 @@ _brush_form.native.layout().setContentsMargins(0, 2, 0, 2)
 _layout.addWidget(_brush_form.native)
 
 _layout.addWidget(_delete_id_row)
+
+_erase_all_btn = QPushButton("Erase All Masks")
+_erase_all_btn.setToolTip("Remove ALL nuclei from this mask layer. This cannot be undone for large masks.")
+_erase_all_btn.setStyleSheet("QPushButton { color: #ff6b6b; }")
+_layout.addWidget(_erase_all_btn)
+
 _layout.addWidget(hover_chk.native)
 
 # --- Undo ---
@@ -1000,7 +1006,48 @@ def _on_delete_id():
     logger.info("MASK EDIT: Deleted nucleus ID %d on layer '%s'", label_id, layer.name)
     viewer.status = f"Deleted Nucleus ID {label_id}."
 
+def _on_erase_all():
+    from qtpy.QtWidgets import QMessageBox
+    viewer = napari.current_viewer()
+    layer = _mask_editor_widget.mask_layer.value
+    if not layer:
+        if viewer:
+            viewer.status = "No mask layer selected."
+        return
+    if not np.any(layer.data):
+        if viewer:
+            viewer.status = "Mask is already empty."
+        return
+    n_ids = int(layer.data.max())
+    reply = QMessageBox.warning(
+        _mask_editor_widget.native,
+        "Erase All Masks",
+        f"This will erase all {n_ids} nuclei from '{layer.name}'.\n\nAre you sure?",
+        QMessageBox.Yes | QMessageBox.Cancel,
+        QMessageBox.Cancel,
+    )
+    if reply != QMessageBox.Yes:
+        return
+    if hasattr(layer, 'mode'):
+        layer.mode = 'pan_zoom'
+    _mask_undo.begin(layer.data)
+    layer.data[:] = 0
+    _mask_undo.end(layer.data)
+    ids_name = f"{layer.name}_IDs"
+
+    def _deferred_updates():
+        layer.refresh()
+        viewer_helpers.add_or_update_label_ids(viewer, layer)
+        if ids_name in viewer.layers:
+            viewer.layers[ids_name].visible = True
+    QTimer.singleShot(50, _deferred_updates)
+    _schedule_save(layer)
+    logger.info("MASK EDIT: Erased all masks on layer '%s' (%d IDs)", layer.name, n_ids)
+    if viewer:
+        viewer.status = f"Erased all {n_ids} nuclei from {layer.name}."
+
 # Connect signals after defining functions
+_erase_all_btn.clicked.connect(_on_erase_all)
 _delete_id_btn.clicked.connect(_on_delete_id)
 paint_chk.changed.connect(_on_paint)
 erase_chk.changed.connect(_on_erase)
