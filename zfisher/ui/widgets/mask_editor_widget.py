@@ -278,6 +278,7 @@ def _delete_label_inplace(layer, label_id, reset_mode=False):
     # Defer all visual updates to next event loop iteration so vispy
     # finishes any in-progress GL draw before buffers are modified.
     ids_name = f"{layer.name}_IDs"
+    centroids_name = layer.name.replace(constants.MASKS_SUFFIX, constants.CENTROIDS_SUFFIX)
 
     def _deferred_updates():
         layer.refresh()
@@ -286,6 +287,16 @@ def _delete_label_inplace(layer, label_id, reset_mode=False):
         # Re-show the IDs layer (look up fresh reference in case it was recreated)
         if ids_name in viewer.layers:
             viewer.layers[ids_name].visible = True
+        # Remove the deleted ID from the centroids layer
+        if centroids_name in viewer.layers:
+            pts = viewer.layers[centroids_name]
+            ids_arr = np.asarray(pts.properties.get('id', np.empty(0)))
+            if len(ids_arr) > 0:
+                keep = ids_arr != label_id
+                pts._Points__indices_view = np.empty(0, int)
+                pts.data = pts.data[keep]
+                pts.properties = {'id': ids_arr[keep]}
+                pts.refresh()
     QTimer.singleShot(50, _deferred_updates)
     # Debounce save to disk
     _schedule_save(layer)
@@ -824,7 +835,6 @@ _layout.addWidget(_delete_id_row)
 
 _erase_all_btn = QPushButton("Erase All Masks")
 _erase_all_btn.setToolTip("Remove ALL nuclei from this mask layer. This cannot be undone for large masks.")
-_erase_all_btn.setStyleSheet("QPushButton { color: #ff6b6b; }")
 _layout.addWidget(_erase_all_btn)
 
 _layout.addWidget(hover_chk.native)
@@ -977,8 +987,22 @@ def _on_mask_undo():
         # Restart a snapshot if still in edit mode so future strokes are tracked
         if in_edit_mode:
             _mask_undo.begin(layer.data)
-        # Refresh IDs to match reverted mask data
-        QTimer.singleShot(50, lambda: viewer_helpers.add_or_update_label_ids(viewer, layer))
+        # Refresh IDs and centroids to match reverted mask data
+        centroids_name = layer.name.replace(constants.MASKS_SUFFIX, constants.CENTROIDS_SUFFIX)
+        def _deferred_undo_refresh():
+            viewer_helpers.add_or_update_label_ids(viewer, layer)
+            # Rebuild centroids from the reverted mask
+            if centroids_name in viewer.layers:
+                from ...core.segmentation import get_mask_centroids
+                pts_data = get_mask_centroids(layer.data)
+                pts = viewer.layers[centroids_name]
+                coords = np.array([p['coord'] for p in pts_data]) if pts_data else np.empty((0, layer.ndim))
+                ids = np.array([p['label'] for p in pts_data]) if pts_data else np.empty(0)
+                pts._Points__indices_view = np.empty(0, int)
+                pts.data = coords
+                pts.properties = {'id': ids}
+                pts.refresh()
+        QTimer.singleShot(50, _deferred_undo_refresh)
         _schedule_save(layer)
         logger.info("MASK EDIT: Undo on layer '%s' (%d remaining)", layer.name, len(_mask_undo))
         viewer.status = f"Undo ({len(_mask_undo)} remaining)."
@@ -1034,12 +1058,20 @@ def _on_erase_all():
     layer.data[:] = 0
     _mask_undo.end(layer.data)
     ids_name = f"{layer.name}_IDs"
+    centroids_name = layer.name.replace(constants.MASKS_SUFFIX, constants.CENTROIDS_SUFFIX)
 
     def _deferred_updates():
         layer.refresh()
         viewer_helpers.add_or_update_label_ids(viewer, layer)
         if ids_name in viewer.layers:
             viewer.layers[ids_name].visible = True
+        # Clear centroids layer if it exists
+        if centroids_name in viewer.layers:
+            pts = viewer.layers[centroids_name]
+            pts._Points__indices_view = np.empty(0, int)
+            pts.data = np.empty((0, layer.ndim))
+            pts.properties = {'id': np.empty(0)}
+            pts.refresh()
     QTimer.singleShot(50, _deferred_updates)
     _schedule_save(layer)
     logger.info("MASK EDIT: Erased all masks on layer '%s' (%d IDs)", layer.name, n_ids)

@@ -182,6 +182,22 @@ class DapiSegmentationWidget(Container):
             viewer.status = "No channels selected."
             return
 
+        # Check if mask layers already exist — ask before overwriting
+        existing = [
+            f"{l.name}{constants.MASKS_SUFFIX}" for l in layers_to_process
+            if f"{l.name}{constants.MASKS_SUFFIX}" in viewer.layers
+        ]
+        if existing:
+            if not popups.show_yes_no_popup(
+                viewer.window._qt_window,
+                "Masks Already Exist",
+                f"The following mask layers already exist:\n\n"
+                + "\n".join(f"  • {n}" for n in existing)
+                + "\n\nReplace them with new segmentation?",
+            ):
+                viewer.status = "Segmentation cancelled."
+                return
+
         # If Cellpose selected, check if model is downloaded
         if method == "Deep Learning (Cellpose)":
             from cellpose.models import MODEL_DIR

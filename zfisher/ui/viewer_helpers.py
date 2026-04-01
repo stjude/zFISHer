@@ -629,31 +629,28 @@ def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napa
         centroid_layer_name = f"{source_layer.name}{constants.CENTROIDS_SUFFIX}"
         ids = np.arange(len(centroids)) + 1
         if centroid_layer_name in viewer.layers:
-            # Remove and recreate to avoid vispy stale-buffer issues
-            import zfisher.ui.events as _events_mod
-            old = viewer.layers[centroid_layer_name]
-            layer_idx = list(viewer.layers).index(old)
-            _events_mod._programmatic_removal = True
-            try:
-                viewer.layers.remove(old)
-            finally:
-                _events_mod._programmatic_removal = False
+            # Update in-place to avoid remove/add race that creates duplicates
+            layer = viewer.layers[centroid_layer_name]
+            layer._Points__indices_view = np.empty(0, int)
+            layer.data = centroids
+            layer.properties = {'id': ids}
+            layer.scale = source_layer.scale
+            layer.size = 5
+            layer.face_color = 'orange'
+            layer.refresh()
         else:
-            layer_idx = None
-        new_pts = viewer.add_points(
-            centroids,
-            name=centroid_layer_name,
-            size=5,
-            face_color='orange',
-            border_color='transparent',
-            border_width=0,
-            scale=source_layer.scale,
-            properties={'id': ids},
-            blending='translucent_no_depth',
-            visible=False,
-        )
-        if layer_idx is not None:
-            viewer.layers.move(len(viewer.layers) - 1, layer_idx)
+            new_pts = viewer.add_points(
+                centroids,
+                name=centroid_layer_name,
+                size=5,
+                face_color='orange',
+                border_color='transparent',
+                border_width=0,
+                scale=source_layer.scale,
+                properties={'id': ids},
+                blending='translucent_no_depth',
+                visible=False,
+            )
         if seg_dir:
             cent_path = seg_dir / f"{centroid_layer_name}.npy"
             np.save(cent_path, centroids)
@@ -723,11 +720,10 @@ def add_or_update_label_ids(viewer: napari.Viewer, labels_layer: napari.layers.L
     coords = np.array([p['coord'] for p in pts_data]) if pts_data else np.empty((0, labels_layer.ndim))
     labels = np.array([p['label'] for p in pts_data]) if pts_data else np.empty(0)
 
-    if len(coords) > 0:
-        _add_or_replace_ids_layer(
-            viewer, name, coords, labels,
-            scale=labels_layer.scale, translate=labels_layer.translate,
-        )
+    _add_or_replace_ids_layer(
+        viewer, name, coords, labels,
+        scale=labels_layer.scale, translate=labels_layer.translate,
+    )
 
     # Register in session so this IDs layer is recreated on next session load.
     if not session.is_loading():
