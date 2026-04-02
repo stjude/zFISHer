@@ -168,7 +168,14 @@ class HomeWidget(Container):
         except Exception:
             pass
 
-        self._viewer.layers.clear()
+        # Set programmatic removal so layer-removed events don't delete
+        # output files from disk (they belong to the saved session).
+        from ..events import _set_programmatic_removal
+        _set_programmatic_removal(True)
+        try:
+            self._viewer.layers.clear()
+        finally:
+            _set_programmatic_removal(False)
         session.clear_session()
         if hasattr(self._viewer.window, 'custom_scale_bar'):
             self._viewer.window.custom_scale_bar.hide()

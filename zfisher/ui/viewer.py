@@ -291,7 +291,7 @@ def launch_zfisher():
     # zFISHer uses its own status bar and popup system instead.
     try:
         from napari.utils.notifications import notification_manager
-        notification_manager.enabled = False
+        notification_manager.notification_ready.block()
     except Exception:
         pass
 

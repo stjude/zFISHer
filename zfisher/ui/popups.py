@@ -11,12 +11,48 @@ from qtpy.QtGui import QPainter, QColor, QPainterPath
 # Saved state for napari notification suppression
 _saved_napari_handlers = []
 _saved_showwarning = None
+_stray_popup_suppressing = False
+
+
+def _install_stray_popup_filter():
+    """Monkey-patch napari widgets that flash as top-level windows.
+
+    During layer-control construction, napari creates QColorSwatchEdit and
+    QtWrappedLabel without a parent, causing them to briefly appear as
+    top-level windows.  We patch their setHidden/setVisible so that while
+    ``_stray_popup_suppressing`` is True, they stay hidden.
+    """
+    # Patch QColorSwatchEdit — the main offender
+    try:
+        from napari._qt.widgets.qt_color_swatch import QColorSwatchEdit
+        if not hasattr(QColorSwatchEdit, '_orig_setHidden'):
+            QColorSwatchEdit._orig_setHidden = QColorSwatchEdit.setHidden
+            def _patched_setHidden(self, hidden):
+                if not hidden and _stray_popup_suppressing and self.isWindow():
+                    return  # block setHidden(False) while suppressing
+                QColorSwatchEdit._orig_setHidden(self, hidden)
+            QColorSwatchEdit.setHidden = _patched_setHidden
+    except ImportError:
+        pass
+
+    # Patch QtWrappedLabel
+    try:
+        from napari._qt.layer_controls.widgets.qt_widget_controls_base import QtWrappedLabel
+        if not hasattr(QtWrappedLabel, '_orig_setHidden'):
+            QtWrappedLabel._orig_setHidden = QtWrappedLabel.setHidden
+            def _patched_setHidden_label(self, hidden):
+                if not hidden and _stray_popup_suppressing and self.isWindow():
+                    return
+                QtWrappedLabel._orig_setHidden(self, hidden)
+            QtWrappedLabel.setHidden = _patched_setHidden_label
+    except ImportError:
+        pass
 
 
 def _suppress_napari_notifications():
     """Aggressively suppress napari notification toasts.
 
-    1. Disable the notification_manager (if the attribute exists).
+    1. Block the notification_ready signal so no toasts are dispatched.
     2. Remove any napari-related logging handlers from the root logger
        so that log messages don't trigger notification toasts.
     3. Replace warnings.showwarning with a no-op so that even if
@@ -25,11 +61,11 @@ def _suppress_napari_notifications():
     """
     global _saved_napari_handlers, _saved_showwarning
 
-    # 1. Disable notification manager
+    # 1. Block the notification signal (napari 0.6+ has no 'enabled' flag)
     try:
         from napari.utils.notifications import notification_manager
         notification_manager.records = []
-        notification_manager.enabled = False
+        notification_manager.notification_ready.block()
     except Exception:
         pass
 
@@ -56,10 +92,16 @@ def _suppress_napari_notifications():
     except Exception:
         pass
 
+    # 5. Install a global event filter to block stray napari widget popups
+    global _stray_popup_suppressing
+    _stray_popup_suppressing = True
+    _install_stray_popup_filter()
+
 
 def _restore_napari_notifications():
     """Re-enable napari notifications and restore removed handlers."""
-    global _saved_napari_handlers, _saved_showwarning
+    global _saved_napari_handlers, _saved_showwarning, _stray_popup_suppressing
+    _stray_popup_suppressing = False
 
     # Dismiss any toast widgets that appeared despite suppression
     try:
@@ -72,10 +114,10 @@ def _restore_napari_notifications():
 
     try:
         from napari.utils.notifications import notification_manager
-        # Clear any records that accumulated while disabled so they
-        # don't appear as toasts the moment we re-enable.
+        # Clear any records that accumulated while blocked so they
+        # don't appear as toasts the moment we unblock.
         notification_manager.records = []
-        notification_manager.enabled = True
+        notification_manager.notification_ready.unblock()
     except Exception:
         pass
 
@@ -265,6 +307,15 @@ class ProgressDialog(QDialog):
             self._warnings_ctx.__exit__(None, None, None)
             self._warnings_ctx = None
         _restore_napari_notifications()
+        # Flush again and close any toasts that slipped through during restore
+        QApplication.processEvents()
+        try:
+            from napari._qt.dialogs.qt_notification import NapariQtNotification
+            for w in QApplication.topLevelWidgets():
+                if isinstance(w, NapariQtNotification):
+                    w.close()
+        except Exception:
+            pass
 
 class BatchProgressDialog(QDialog):
     """

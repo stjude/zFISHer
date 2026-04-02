@@ -164,12 +164,14 @@ class LoadSessionWidget(Container):
                 dialog.update_progress(100, "Done.")
             finally:
                 session.set_loading(False)
-        # Reset suppression AFTER the dialog closes — the dialog's __exit__
-        # calls processEvents() which would trigger custom control popups
-        # if suppression were already cleared.
-        viewer_module._suppress_custom_controls = False
-        # Trigger custom layer controls for the currently selected layer
+        # Keep stray popup filter active while rebuilding controls
+        popups._stray_popup_suppressing = True
         try:
-            self._viewer.layers.selection.events.changed(added=set(), removed=set())
-        except Exception:
-            pass
+            viewer_module._suppress_custom_controls = False
+            # Trigger custom layer controls for the currently selected layer
+            try:
+                self._viewer.layers.selection.events.changed(added=set(), removed=set())
+            except Exception:
+                pass
+        finally:
+            popups._stray_popup_suppressing = False

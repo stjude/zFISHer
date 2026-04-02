@@ -15,6 +15,12 @@ logger = logging.getLogger(__name__)
 _programmatic_removal = False
 
 
+def _set_programmatic_removal(value):
+    """Set the programmatic removal flag (prevents file deletion on layer remove)."""
+    global _programmatic_removal
+    _programmatic_removal = value
+
+
 def is_layer_locked(layer):
     """Check whether a layer has been marked as non-deletable."""
     return getattr(layer, '_locked', False)
