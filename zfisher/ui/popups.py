@@ -174,7 +174,7 @@ class ProgressDialog(QDialog):
         self._warnings_ctx = None
         self.setWindowTitle(title)
         self.setWindowModality(Qt.WindowModal)
-        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowModal)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setMinimumWidth(320)
 
@@ -344,7 +344,7 @@ class BatchProgressDialog(QDialog):
         self.setWindowTitle(title)
         self.setWindowModality(Qt.WindowModal)
         self.setMinimumWidth(380)
-        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowModal)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
 
         _pad = 28
@@ -485,7 +485,7 @@ class _ThemedPopup(QDialog):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setWindowModality(Qt.WindowModal)
-        self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.WindowModal)
+        self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.WindowCloseButtonHint)
         self.setStyleSheet("_ThemedPopup { background-color: #1a1421; }")
         self.setMinimumWidth(340)
         self.setMaximumWidth(480)

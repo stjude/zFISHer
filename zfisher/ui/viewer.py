@@ -226,7 +226,7 @@ class WelcomeWidget(QWidget):
             painter.fillRect(self.rect(), style.WELCOME_WIDGET_BG_COLOR)
             
     def eventFilter(self, obj, event):
-        if obj is self.parent() and event.type() == event.Resize:
+        if obj is self.parent() and event.type() == QEvent.Resize:
             self.resize_to_parent()
         return super().eventFilter(obj, event)
 

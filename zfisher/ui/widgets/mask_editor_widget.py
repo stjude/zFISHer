@@ -463,9 +463,12 @@ while _old_layout.count():
         _w.setParent(None)
 
 # Install a fresh vertical layout
-from qtpy import sip
 from qtpy.QtWidgets import QSizePolicy as _QSizePolicy
-sip.delete(_old_layout)
+try:
+    from shiboken6 import delete as _sip_delete
+except ImportError:
+    from sip import delete as _sip_delete
+_sip_delete(_old_layout)
 _layout = _QVBoxLayout(_mask_editor_widget.native)
 _layout.setSpacing(2)
 _layout.setContentsMargins(0, 0, 0, 0)
@@ -476,7 +479,7 @@ _mask_editor_widget.native.setMinimumWidth(0)
 from qtpy.QtWidgets import QAbstractSpinBox, QComboBox, QLabel
 for child in _mask_editor_widget.native.findChildren(QLabel):
     child.setMinimumWidth(0)
-for child in _mask_editor_widget.native.findChildren((QAbstractSpinBox, QComboBox)):
+for child in _mask_editor_widget.native.findChildren(QAbstractSpinBox) + _mask_editor_widget.native.findChildren(QComboBox):
     child.setMinimumWidth(0)
 
 # --- Header / info / description — added directly to avoid double-nesting ---

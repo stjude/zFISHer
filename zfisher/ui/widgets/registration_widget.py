@@ -132,7 +132,7 @@ _registration_widget.native.setMinimumWidth(0)
 from qtpy.QtWidgets import QAbstractSpinBox, QComboBox, QLabel
 for child in _registration_widget.native.findChildren(QLabel):
     child.setMinimumWidth(0)
-for child in _registration_widget.native.findChildren((QAbstractSpinBox, QComboBox)):
+for child in _registration_widget.native.findChildren(QAbstractSpinBox) + _registration_widget.native.findChildren(QComboBox):
     child.setMinimumWidth(0)
 
 _layout.addWidget(_registration_widget.native)

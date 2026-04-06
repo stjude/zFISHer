@@ -350,5 +350,5 @@ for w in [_rule_builder.native, _tri_rule_builder.native]:
     w.setMinimumWidth(0)
     for child in w.findChildren(QLabel):
         child.setMinimumWidth(0)
-    for child in w.findChildren((QAbstractSpinBox, QComboBox)):
+    for child in w.findChildren(QAbstractSpinBox) + w.findChildren(QComboBox):
         child.setMinimumWidth(0)
