@@ -104,6 +104,34 @@ class _PunctaUndoStack:
 _puncta_undo = _PunctaUndoStack()
 
 
+def _compute_quality_at_point(points_layer, z, y, x, radius=2):
+    """Find the source image layer for a points layer and compute (intensity, SNR)
+    at the given (z, y, x) voxel. Returns (np.nan, np.nan) if the image can't be
+    resolved or the point is out of bounds.
+    """
+    viewer = napari.current_viewer()
+    if viewer is None:
+        return np.nan, np.nan
+    img_name = points_layer.name
+    if img_name.endswith(constants.PUNCTA_SUFFIX):
+        img_name = img_name[: -len(constants.PUNCTA_SUFFIX)]
+    if img_name not in viewer.layers:
+        return np.nan, np.nan
+    img = viewer.layers[img_name].data
+    if img.ndim != 3:
+        return np.nan, np.nan
+    z, y, x = int(round(z)), int(round(y)), int(round(x))
+    if not (0 <= z < img.shape[0] and 0 <= y < img.shape[1] and 0 <= x < img.shape[2]):
+        return np.nan, np.nan
+    y0, y1 = max(0, y - radius), min(img.shape[1], y + radius + 1)
+    x0, x1 = max(0, x - radius), min(img.shape[2], x + radius + 1)
+    crop = img[z, y0:y1, x0:x1]
+    peak = float(img[z, y, x])
+    bg = float(np.median(crop)) if crop.size > 0 else 1.0
+    snr = peak / bg if bg > 0 else 0.0
+    return peak, snr
+
+
 def reset_puncta_editor_state():
     """Clear all module-level state. Called on session reset."""
     global _skip_data_sync, _f_key_held, _f_key_bound
@@ -217,11 +245,13 @@ def _on_points_data_changed(event=None):
         if i < len(features) and pd.notna(features.loc[idx].get('puncta_id')) and features.loc[idx]['puncta_id'] != features.iloc[prev - 1]['puncta_id'] if prev > 0 else False:
             continue  # already has a unique ID (set by fishing hook)
         features.loc[idx, 'puncta_id'] = next_id
-        # Fill other required columns with defaults
-        for col, default in [('Nucleus_ID', 0), ('Intensity', np.nan), ('SNR', np.nan)]:
+        # Compute intensity + SNR at the point from the source image layer
+        z, y, x = layer.data[i]
+        peak, snr = _compute_quality_at_point(layer, z, y, x)
+        for col, default in [('Nucleus_ID', 0), ('Intensity', peak), ('SNR', snr), ('Source', 'manual')]:
             if col not in features.columns:
                 features[col] = default
-            elif pd.isna(features.loc[idx].get(col, np.nan)):
+            else:
                 features.loc[idx, col] = default
         next_id += 1
 
@@ -461,11 +491,14 @@ def fishing_hook_callback(layer, event):
         else:
             next_id = 0
 
+        z, y, x = target_coord_data
+        _peak, _snr = _compute_quality_at_point(layer, z, y, x)
         new_properties = {
             'puncta_id': next_id,
             'Nucleus_ID': 0,
-            'Intensity': np.nan,
-            'SNR': np.nan,
+            'Intensity': _peak,
+            'SNR': _snr,
+            'Source': 'manual',
         }
 
         # Ensure all required columns exist

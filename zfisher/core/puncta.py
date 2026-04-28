@@ -62,10 +62,114 @@ def preprocess_white_tophat(image_data, radius=constants.PUNCTA_TOPHAT_RADIUS,
                 progress_callback(pct, f"Background subtraction: slice {i + 1}/{n_slices}...")
     return np.stack(processed_slices, axis=0)
 
-def _detect_radial_symmetry(image_data, threshold_rel, sigma):
-    """High-precision localization for high-density transcripts."""
-    coords = peak_local_max(image_data, min_distance=1, threshold_rel=threshold_rel)
-    return coords.astype(float) if len(coords) > 0 else np.empty((0, 3))
+def _refine_radial_symmetry_3d(image_data, coord, radius, spacing):
+    """Refine a single candidate point using 3D radial symmetry (Parthasarathy, 2012).
+
+    Computes intensity gradients in a local patch, then solves a weighted
+    least-squares problem to find the point where gradient rays converge,
+    yielding sub-voxel localization.
+    """
+    z, y, x = np.round(coord).astype(int)
+    nz, ny, nx = image_data.shape
+
+    z0, z1 = max(0, z - radius), min(nz, z + radius + 1)
+    y0, y1 = max(0, y - radius), min(ny, y + radius + 1)
+    x0, x1 = max(0, x - radius), min(nx, x + radius + 1)
+
+    patch = image_data[z0:z1, y0:y1, x0:x1].astype(np.float64)
+    if patch.size < 8:
+        return coord.astype(float)
+
+    # Compute gradients scaled by voxel spacing
+    gz, gy, gx = np.gradient(patch, spacing[0], spacing[1], spacing[2])
+    mag = np.sqrt(gz**2 + gy**2 + gx**2)
+
+    # Threshold: only use voxels with meaningful gradients
+    mask = mag > (np.max(mag) * 0.1)
+    if np.sum(mask) < 4:
+        return coord.astype(float)
+
+    # Coordinates of each voxel in the patch (physical units)
+    pz, py, px = np.mgrid[0:patch.shape[0], 0:patch.shape[1], 0:patch.shape[2]]
+    pz = pz.astype(float) * spacing[0]
+    py = py.astype(float) * spacing[1]
+    px = px.astype(float) * spacing[2]
+
+    # Extract masked gradient vectors and positions
+    gz_m = gz[mask]
+    gy_m = gy[mask]
+    gx_m = gx[mask]
+    mag_m = mag[mask]
+    pz_m = pz[mask]
+    py_m = py[mask]
+    px_m = px[mask]
+
+    # Normalize gradient directions
+    gz_n = gz_m / mag_m
+    gy_n = gy_m / mag_m
+    gx_n = gx_m / mag_m
+
+    # Weights: gradient magnitude squared (stronger gradients = more reliable)
+    w = mag_m ** 2
+
+    # Weighted least-squares: find point minimizing distance to all gradient rays.
+    # For each voxel i at position p_i with unit gradient direction d_i,
+    # the projection matrix M_i = I - d_i * d_i^T projects onto the plane
+    # perpendicular to d_i. The center minimizes Σ w_i * |M_i * (c - p_i)|^2.
+    # Solution: (Σ w_i * M_i) * c = Σ w_i * M_i * p_i
+    A = np.zeros((3, 3))
+    b = np.zeros(3)
+
+    for i in range(len(gz_n)):
+        d = np.array([gz_n[i], gy_n[i], gx_n[i]])
+        M = np.eye(3) - np.outer(d, d)
+        wM = w[i] * M
+        p = np.array([pz_m[i], py_m[i], px_m[i]])
+        A += wM
+        b += wM @ p
+
+    try:
+        center_physical = np.linalg.solve(A, b)
+    except np.linalg.LinAlgError:
+        return coord.astype(float)
+
+    # Convert back to voxel coordinates and offset to global position
+    center_voxel = center_physical / spacing
+    result = center_voxel + np.array([z0, y0, x0], dtype=float)
+
+    # Reject if refined position is outside the patch (bad convergence)
+    if (result[0] < z0 or result[0] >= z1 or
+        result[1] < y0 or result[1] >= y1 or
+        result[2] < x0 or result[2] >= x1):
+        return coord.astype(float)
+
+    return result
+
+
+def _detect_radial_symmetry(image_data, threshold_rel, sigma, z_scale=1.0):
+    """3D radial symmetry detection (Parthasarathy, 2012) with sub-voxel precision.
+
+    Uses local maxima as initial candidates, then refines each to sub-voxel
+    accuracy by solving a weighted least-squares gradient ray intersection.
+    """
+    if sigma > 0:
+        smoothed = gaussian(image_data, sigma=(sigma * z_scale, sigma, sigma), preserve_range=True)
+    else:
+        smoothed = image_data
+
+    # Find initial candidates via local maxima
+    candidates = peak_local_max(smoothed, min_distance=1, threshold_rel=threshold_rel)
+    if len(candidates) == 0:
+        return np.empty((0, 3))
+
+    spacing = np.array([z_scale, 1.0, 1.0])
+    radius = max(2, int(np.ceil(sigma))) if sigma > 0 else 2
+
+    refined = np.empty((len(candidates), 3), dtype=float)
+    for i, coord in enumerate(candidates):
+        refined[i] = _refine_radial_symmetry_3d(image_data, coord, radius, spacing)
+
+    return refined
 
 def _detect_spots_local_maxima(image_data, min_distance, threshold_rel, sigma):
     """Standard intensity-based peak finding."""
@@ -103,7 +207,7 @@ def detect_spots_3d(image_data, method="Local Maxima", progress_callback=None, *
                                              progress_callback=progress_callback, progress_range=(25, 40))
 
     if method == "Radial Symmetry":
-        return _detect_radial_symmetry(image_data, kwargs.get('threshold_rel', 0.1), kwargs.get('sigma', 1.0))
+        return _detect_radial_symmetry(image_data, kwargs.get('threshold_rel', 0.1), kwargs.get('sigma', 1.0), z_scale=kwargs.get('z_scale', 1.0))
     elif method == "Local Maxima":
         return _detect_spots_local_maxima(image_data, kwargs.get('min_distance', 3), 
                                           kwargs.get('threshold_rel', 0.1), kwargs.get('sigma', 1.0))
@@ -223,8 +327,10 @@ def transform_puncta_to_aligned_space(raw_puncta, round_id, shift, canvas_offset
     if output_path:
         if progress_callback:
             progress_callback(90, "Saving transformed puncta...")
-        header = "Z,Y,X,Nucleus_ID,Intensity,SNR"
-        np.savetxt(output_path, final_data, delimiter=",", header=header, comments='')
+        import pandas as pd
+        df = pd.DataFrame(final_data, columns=['Z', 'Y', 'X', 'Nucleus_ID', 'Intensity', 'SNR'])
+        df['Source'] = 'auto'
+        df.to_csv(output_path, index=False)
 
         session_key = layer_name if layer_name else Path(output_path).stem
         session.set_processed_file(
@@ -283,11 +389,12 @@ def process_puncta_detection(image_data, mask_data=None, voxels=None, params=Non
 
     if output_path:
         if progress_callback: progress_callback(90, "Saving results...")
-        # Save detected puncta as CSV: Z, Y, X, Nucleus_ID, Intensity, SNR.
-        # This format matches the expected input for transform_puncta_to_aligned_space
-        # and is human-readable for manual review.
-        header = "Z,Y,X,Nucleus_ID,Intensity,SNR"
-        np.savetxt(output_path, final_data, delimiter=",", header=header, comments='')
+        # Save detected puncta as CSV: Z, Y, X, Nucleus_ID, Intensity, SNR, Source.
+        # Use pandas so the Source column (string) coexists with numeric columns.
+        import pandas as pd
+        df = pd.DataFrame(final_data, columns=['Z', 'Y', 'X', 'Nucleus_ID', 'Intensity', 'SNR'])
+        df['Source'] = 'auto'
+        df.to_csv(output_path, index=False)
 
         # Use explicit layer_name if provided, otherwise derive from file stem
         session_key = layer_name if layer_name else Path(output_path).stem
