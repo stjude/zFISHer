@@ -1,4 +1,6 @@
 {
+    "python.defaultInterpreterPath": "C:\\Users\\Zev\\anaconda3\\envs\\zFISHer\\python.exe",
+    "python.terminal.activateEnvironment": true,
     "python-envs.pythonProjects": [
         {
             "path": "",
