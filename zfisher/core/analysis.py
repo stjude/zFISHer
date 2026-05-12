@@ -405,17 +405,30 @@ def calculate_stats(per_nucleus_df, total_nuclei=None):
     if total_nuclei is None:
         total_nuclei = int(per_nucleus_df['Nuclei_ID'].nunique())
 
+    if total_nuclei <= 0:
+        return pd.DataFrame()
+
     rows = []
     for ch in channels:
-        # Extend counts to include nuclei with 0 puncta in this channel
         present = per_nucleus_df[ch].values
-        n_missing = max(total_nuclei - len(present), 0)
-        zeros = np.zeros(n_missing)
-        all_counts = np.concatenate([present, zeros])
+        if len(present) > total_nuclei:
+            logger.warning(
+                "calculate_stats[%s]: per-nucleus dataframe has %d nuclei but "
+                "consensus mask only has %d (likely mask edited after puncta "
+                "assignment); dividing by mask count.",
+                ch, len(present), total_nuclei,
+            )
 
-        raw_sum = int(all_counts.sum())
-        mean = float(all_counts.mean())
-        std = float(all_counts.std(ddof=0))
+        # Mean and std are reported against the consensus mask's nucleus count.
+        # All puncta count toward Raw_Sum, even those orphaned by mask edits.
+        raw_sum = int(present.sum())
+        if len(present) < total_nuclei:
+            all_counts = np.concatenate([present, np.zeros(total_nuclei - len(present))])
+        else:
+            all_counts = present.astype(float)
+        mean = raw_sum / total_nuclei
+        # Population std around the reported mean, divisor = total_nuclei
+        std = float(np.sqrt(((all_counts - mean) ** 2).sum() / total_nuclei))
         cv = (std / mean * 100) if mean > 0 else 0.0
 
         rows.append({
@@ -459,6 +472,13 @@ def calculate_distribution(per_nucleus_df, total_nuclei=None):
     rows = []
     for ch in channels:
         present = per_nucleus_df[ch].values
+        if len(present) > total_nuclei:
+            logger.warning(
+                "calculate_distribution[%s]: per-nucleus dataframe has %d nuclei "
+                "but consensus mask only has %d (likely mask edited after puncta "
+                "assignment); bins will sum to more than Total_Nuclei.",
+                ch, len(present), total_nuclei,
+            )
         zeros_count = max(total_nuclei - len(present), 0)
 
         n0 = int((present == 0).sum()) + zeros_count
