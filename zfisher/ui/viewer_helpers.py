@@ -728,3 +728,104 @@ def add_or_update_label_ids(viewer: napari.Viewer, labels_layer: napari.layers.L
     # Register in session so this IDs layer is recreated on next session load.
     if not session.is_loading():
         session.set_processed_file(name, "", layer_type='points', metadata={'subtype': 'computed_ids'})
+
+
+def resync_puncta_nucleus_ids(
+    viewer: napari.Viewer,
+    mask_layer: napari.layers.Labels,
+    *,
+    remove_extranuclear: bool = False,
+    save_csv: bool = True,
+) -> dict:
+    """Re-query the mask at every punctum's coordinates and update Nucleus_ID.
+
+    Keeps puncta layers' ``Nucleus_ID`` feature column in sync with the current
+    state of a mask layer (typically the consensus mask). Mask edits (merge,
+    delete, paint, erase, extrude) do not automatically propagate to the
+    cached ``Nucleus_ID`` on each punctum — this helper re-reads the mask at
+    each punctum's voxel coordinates and writes the result back.
+
+    Parameters
+    ----------
+    viewer : napari.Viewer
+        The viewer containing puncta layers.
+    mask_layer : napari.layers.Labels
+        Mask whose label values should become each punctum's ``Nucleus_ID``.
+    remove_extranuclear : bool, default False
+        If True, drop puncta whose updated ``Nucleus_ID`` is 0. Default False
+        — cascade-after-mask-edit should not silently delete puncta.
+    save_csv : bool, default True
+        If True and ``output_dir`` is set in the session, re-save each puncta
+        layer's CSV in the reports directory.
+
+    Returns
+    -------
+    dict
+        ``{'updated_layers': N, 'removed_total': M}``.
+    """
+    if mask_layer is None:
+        return {'updated_layers': 0, 'removed_total': 0}
+
+    mask_data = mask_layer.data
+    mask_scale = np.array(mask_layer.scale)
+    mask_translate = np.array(mask_layer.translate)
+    mask_shape = np.array(mask_data.shape)
+
+    puncta_layers = [
+        l for l in list(viewer.layers)
+        if isinstance(l, napari.layers.Points) and constants.PUNCTA_SUFFIX in l.name
+    ]
+
+    updated = 0
+    removed_total = 0
+    for pts_layer in puncta_layers:
+        coords = np.array(pts_layer.data)
+        if len(coords) == 0:
+            continue
+
+        pts_scale = np.array(pts_layer.scale)
+        pts_translate = np.array(pts_layer.translate)
+        world_coords = coords * pts_scale + pts_translate
+        voxel_coords = np.round((world_coords - mask_translate) / mask_scale).astype(int)
+
+        in_bounds = np.all((voxel_coords >= 0) & (voxel_coords < mask_shape), axis=1)
+        clipped = np.clip(voxel_coords, 0, mask_shape - 1)
+        new_ids = mask_data[clipped[:, 0], clipped[:, 1], clipped[:, 2]]
+        new_ids[~in_bounds] = 0
+
+        features = (
+            pts_layer.features.copy()
+            if hasattr(pts_layer, 'features') and not pts_layer.features.empty
+            else pd.DataFrame()
+        )
+        if not features.empty and 'Nucleus_ID' in features.columns:
+            features['Nucleus_ID'] = new_ids
+
+        if remove_extranuclear:
+            inside = new_ids > 0
+            n_removed = int((~inside).sum())
+            removed_total += n_removed
+            coords = coords[inside]
+            if not features.empty:
+                features = features[inside].reset_index(drop=True)
+
+        # Update the napari layer (clear the indices_view cache to avoid GL crashes
+        # when the point count changes).
+        pts_layer._Points__indices_view = np.empty(0, int)
+        pts_layer.data = coords
+        if not features.empty:
+            pts_layer.features = features
+
+        if save_csv:
+            out_dir = session.get_data("output_dir")
+            if out_dir and pts_layer.name:
+                reports_dir = Path(out_dir) / constants.REPORTS_DIR
+                reports_dir.mkdir(exist_ok=True, parents=True)
+                csv_path = reports_dir / f"{pts_layer.name}.csv"
+                coords_df = pd.DataFrame(coords, columns=['Z', 'Y', 'X'])
+                full_df = pd.concat([features.reset_index(drop=True), coords_df], axis=1)
+                full_df.to_csv(csv_path, index=False)
+
+        updated += 1
+
+    return {'updated_layers': updated, 'removed_total': removed_total}

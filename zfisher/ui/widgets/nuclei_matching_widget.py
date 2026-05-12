@@ -1,7 +1,4 @@
 import napari
-import numpy as np
-import pandas as pd
-from pathlib import Path
 from magicgui import magicgui
 from magicgui.widgets import Container, Label
 
@@ -77,64 +74,19 @@ def _nuclei_matching_widget(
         # 5. Reassign nucleus IDs and optionally remove extranuclear puncta
         removed_total = 0
         if merged_mask is not None:
+            dialog.update_progress(90, "Reassigning nuclei to puncta...")
             consensus_layer = next(
                 (l for l in viewer.layers
                  if isinstance(l, napari.layers.Labels)
                  and constants.CONSENSUS_MASKS_NAME in l.name),
                 None
             )
-            consensus_scale = np.array(consensus_layer.scale) if consensus_layer else np.ones(3)
-            consensus_translate = np.array(consensus_layer.translate) if consensus_layer else np.zeros(3)
-
-            puncta_layers = [
-                l for l in list(viewer.layers)
-                if isinstance(l, napari.layers.Points)
-                and constants.PUNCTA_SUFFIX in l.name
-            ]
-            for pts_layer in puncta_layers:
-                dialog.update_progress(90, f"Reassigning nuclei: {pts_layer.name}...")
-                coords = np.array(pts_layer.data)
-                if len(coords) == 0:
-                    continue
-
-                pts_scale = np.array(pts_layer.scale)
-                pts_translate = np.array(pts_layer.translate)
-                world_coords = coords * pts_scale + pts_translate
-                voxel_coords = np.round((world_coords - consensus_translate) / consensus_scale).astype(int)
-
-                mask_shape = np.array(merged_mask.shape)
-                in_bounds = np.all((voxel_coords >= 0) & (voxel_coords < mask_shape), axis=1)
-                clipped = np.clip(voxel_coords, 0, mask_shape - 1)
-                new_ids = merged_mask[clipped[:, 0], clipped[:, 1], clipped[:, 2]]
-                new_ids[~in_bounds] = 0
-
-                features = pts_layer.features.copy() if hasattr(pts_layer, 'features') and not pts_layer.features.empty else pd.DataFrame()
-                if not features.empty and 'Nucleus_ID' in features.columns:
-                    features['Nucleus_ID'] = new_ids
-
-                # Filter out extranuclear puncta if toggled on
-                if remove_outliers:
-                    inside_mask = new_ids > 0
-                    n_removed = int((~inside_mask).sum())
-                    removed_total += n_removed
-                    coords = coords[inside_mask]
-                    if not features.empty:
-                        features = features[inside_mask].reset_index(drop=True)
-
-                pts_layer._Points__indices_view = np.empty(0, int)
-                pts_layer.data = coords
-                if not features.empty:
-                    pts_layer.features = features
-
-                # Re-save the updated CSV
-                out_dir = session.get_data("output_dir")
-                if out_dir:
-                    reports_dir = Path(out_dir) / constants.REPORTS_DIR
-                    reports_dir.mkdir(exist_ok=True, parents=True)
-                    csv_path = reports_dir / f"{pts_layer.name}.csv"
-                    coords_df = pd.DataFrame(coords, columns=['Z', 'Y', 'X'])
-                    full_df = pd.concat([features.reset_index(drop=True), coords_df], axis=1)
-                    full_df.to_csv(csv_path, index=False)
+            if consensus_layer is not None:
+                result = viewer_helpers.resync_puncta_nucleus_ids(
+                    viewer, consensus_layer,
+                    remove_extranuclear=remove_outliers, save_csv=True,
+                )
+                removed_total = result['removed_total']
 
         # Hide the input mask layers so only the consensus is visible
         r1_mask_layer.visible = False

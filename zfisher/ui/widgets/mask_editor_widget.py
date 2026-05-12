@@ -55,6 +55,25 @@ class _MaskUndoStack:
 
 _mask_undo = _MaskUndoStack()
 
+
+def _resync_puncta_for_layer(viewer, layer):
+    """Cascade a mask edit on ``layer`` into the puncta layers' ``Nucleus_ID``.
+
+    Only meaningful for the consensus mask — per-round masks are not the
+    source of truth for puncta nucleus assignments. No-op otherwise.
+    """
+    if viewer is None or layer is None:
+        return
+    if constants.CONSENSUS_MASKS_NAME not in layer.name:
+        return
+    try:
+        viewer_helpers.resync_puncta_nucleus_ids(
+            viewer, layer, remove_extranuclear=False, save_csv=True,
+        )
+    except Exception:
+        logger.exception("resync_puncta_nucleus_ids failed after mask edit")
+
+
 class MaskHighlighter:
     """Highlights the hovered nucleus by setting its color to red.
 
@@ -260,6 +279,7 @@ def _mask_editor_widget(
     _schedule_save(mask_layer)
     # Refresh IDs layer from scratch — more reliable than incremental removal
     QTimer.singleShot(50, lambda: viewer_helpers.add_or_update_label_ids(viewer, mask_layer))
+    _resync_puncta_for_layer(viewer, mask_layer)
 
     viewer.status = f"Merged ID {source_id} into {target_id} ({count} pixels)."
 
@@ -300,6 +320,7 @@ def _delete_label_inplace(layer, label_id, reset_mode=False):
     QTimer.singleShot(50, _deferred_updates)
     # Debounce save to disk
     _schedule_save(layer)
+    _resync_puncta_for_layer(viewer, layer)
 
 def _remove_id_from_points_layer(mask_layer, deleted_id):
     """Remove a single ID from the IDs points layer using napari's native API.
@@ -593,6 +614,7 @@ def _on_paint_toggle(checked):
             ids_name = f"{layer.name}_IDs"
             if ids_name in viewer.layers:
                 QTimer.singleShot(100, lambda: viewer_helpers.add_or_update_label_ids(viewer, layer))
+        _resync_puncta_for_layer(viewer, layer)
 
 _paint_toggle_btn.clicked.connect(_on_paint_toggle)
 
@@ -705,7 +727,11 @@ _paint_brush_slider.changed.connect(_on_paint_brush_changed)
 
 # Refresh IDs button
 _refresh_ids_btn = QPushButton("Refresh IDs")
-_refresh_ids_btn.setToolTip("Recompute centroids and refresh the ID labels overlay.")
+_refresh_ids_btn.setToolTip(
+    "Recompute centroids, refresh the ID labels overlay, and re-sync puncta "
+    "Nucleus_IDs from the current mask. Use this if puncta nucleus assignments "
+    "appear stale after mask editing."
+)
 
 def _on_refresh_ids(_checked=False):
     viewer = napari.current_viewer()
@@ -713,6 +739,8 @@ def _on_refresh_ids(_checked=False):
     if not viewer or not layer:
         return
     viewer_helpers.add_or_update_label_ids(viewer, layer)
+    # Also resync puncta Nucleus_IDs (no-op for non-consensus mask layers)
+    _resync_puncta_for_layer(viewer, layer)
     viewer.status = "IDs refreshed."
 
 _refresh_ids_btn.clicked.connect(_on_refresh_ids)
@@ -775,6 +803,8 @@ def _on_erase_toggle(checked):
     else:
         _mask_undo.end(layer.data)  # store diff of entire erase session
         layer.mode = 'pan_zoom'
+        viewer = napari.current_viewer()
+        _resync_puncta_for_layer(viewer, layer)
 
 _erase_toggle_btn.clicked.connect(_on_erase_toggle)
 
@@ -936,6 +966,7 @@ def _on_extrude(_checked=False):
     viewer_helpers.add_or_update_label_ids(viewer, layer)
 
     _schedule_save(layer)
+    _resync_puncta_for_layer(viewer, layer)
     viewer.status = f"Extruded ID {label_id} through all Z slices."
 
 @require_active_session("Please start or load a session before editing masks.")
@@ -949,6 +980,7 @@ def _on_delete():
             _mask_undo.begin(layer.data)
             layer.data = segmentation.delete_label(layer.data, src)
             _mask_undo.end(layer.data)
+            _resync_puncta_for_layer(viewer, layer)
             viewer.status = f"Deleted ID {src}."
         else:
             viewer.status = f"ID {src} not found."
@@ -1007,6 +1039,7 @@ def _on_mask_undo():
                 pts.refresh()
         QTimer.singleShot(50, _deferred_undo_refresh)
         _schedule_save(layer)
+        _resync_puncta_for_layer(viewer, layer)
         logger.info("MASK EDIT: Undo on layer '%s' (%d remaining)", layer.name, len(_mask_undo))
         viewer.status = f"Undo ({len(_mask_undo)} remaining)."
     else:
@@ -1077,6 +1110,7 @@ def _on_erase_all():
             pts.refresh()
     QTimer.singleShot(50, _deferred_updates)
     _schedule_save(layer)
+    _resync_puncta_for_layer(viewer, layer)
     logger.info("MASK EDIT: Erased all masks on layer '%s' (%d IDs)", layer.name, n_ids)
     if viewer:
         viewer.status = f"Erased all {n_ids} nuclei from {layer.name}."
