@@ -401,8 +401,14 @@ def run_full_zfisher_pipeline(
                     'threshold': rule['threshold'],
                 })
 
-        # Count total nuclei for stats
-        total_nuclei = int(merged_mask.max()) if merged_mask is not None else None
+        # Count total nuclei for stats: distinct nonzero labels in the consensus
+        # mask. `.max()` would return the highest label ID, which overcounts when
+        # labels are non-contiguous (gaps from remove_small_objects or mask edits).
+        if merged_mask is not None:
+            unique_ids = np.unique(merged_mask)
+            total_nuclei = int((unique_ids > 0).sum())
+        else:
+            total_nuclei = None
 
         report_filename = f"zFISHer_Report{constants.EXCEL_SUFFIX}"
         try:
