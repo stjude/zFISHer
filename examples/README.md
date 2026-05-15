@@ -16,7 +16,7 @@ examples/
 The two raw `.nd2` acquisitions are archived on Zenodo:
 
 - **DOI:** [10.5281/zenodo.19897527](https://doi.org/10.5281/zenodo.19897527)
-- Files: `1-19-24Fdecon.nd2` (Round 1, HOXB DNA FISH, ~700 MB) and `1-17-24Adecon.nd2` (Round 2, XPO1 IF, ~750 MB)
+- Files: `1-19-24Fdecon.nd2` (HOXB DNA FISH) and `1-17-24Adecon.nd2` (XPO1 IF)
 
 Acquisition parameters and sample preparation are described in **Supplementary Methods 2** of the manuscript.
 Analysis approach is described in **Supplementary Methods 3** of the manuscript.
