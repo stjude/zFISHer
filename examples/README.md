@@ -15,7 +15,7 @@ examples/
 
 The two raw `.nd2` acquisitions are archived on Zenodo:
 
-- **DOI:** [10.5281/zenodo.19897527](https://doi.org/10.5281/zenodo.19897527)
+- **DOI:** [10.5281/zenodo.19897527](https://doi.org/10.5281/zenodo.20288536)
 - Files: `1-19-24Fdecon.nd2` (HOXB DNA FISH) and `1-17-24Adecon.nd2` (XPO1 IF)
 
 Acquisition parameters and sample preparation are described in **Supplementary Methods 2** of the manuscript.
@@ -30,5 +30,5 @@ The data is licensed under the CC-BY 4.0 license.
 
 If you use this dataset, please cite both:
 1. This repository: https://github.com/stjude/zFISHer
-2. The dataset: https://doi.org/10.5281/zenodo.19897527
+2. The dataset: https://doi.org/10.5281/zenodo.20288536
 
