@@ -43,10 +43,17 @@ dependencies = [
     "Pillow==12.0.0",
 ]
 
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
 [project.urls]
 Homepage = "https://github.com/stjude/zFISHer"
 Repository = "https://github.com/stjude/zFISHer"
 Issues = "https://github.com/stjude/zFISHer/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
 
 [project.scripts]
 zfisher = "main:main"

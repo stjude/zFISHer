@@ -7,7 +7,7 @@ from qtpy.QtWidgets import QApplication
 from .. import popups, viewer_helpers
 from ..decorators import require_active_session, error_handler
 from ... import constants
-from ._shared import make_header_divider
+from ._shared import make_divider as _make_divider, make_section_header as _make_section_header, make_section_desc as _make_section_desc, make_spacer as _make_spacer
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,8 @@ def _puncta_widget(
         }
         
         out_dir = session.get_data("output_dir")
-        csv_path = Path(out_dir) / constants.REPORTS_DIR / f"{image_layer.name}_puncta.csv" if out_dir else None
+        _raw_puncta_name = f"{image_layer.name}{constants.PUNCTA_SUFFIX}"
+        csv_path = constants.puncta_csv_path(Path(out_dir) / constants.REPORTS_DIR, _raw_puncta_name) if out_dir else None
 
         # Run detection in a background thread so the indeterminate progress
         # bar can animate during the blocking computation.
@@ -102,6 +103,7 @@ def _puncta_widget(
                     voxels=getattr(image_layer, 'scale', (1,1,1)),
                     params=params,
                     output_path=csv_path,
+                    layer_name=_raw_puncta_name,
                     progress_callback=_thread_progress
                 )
             except Exception as e:
@@ -272,32 +274,6 @@ def _on_image_change(new_layer: "napari.layers.Image"):
 # --- UI Wrapper (native layout like colocalization_widget) ---
 from qtpy.QtWidgets import QFrame
 from ..style import COLORS
-
-def _make_divider():
-    line = QFrame()
-    line.setFixedHeight(2)
-    line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
-    return line
-
-def _make_section_header(text):
-    """Create a left-aligned bold section header in light purple using plain QLabel."""
-    label = QLabel(f"<b style='color: #7a6b8a;'>{text}</b>")
-    label.setContentsMargins(0, 0, 0, 0)
-    label.setStyleSheet("margin: 0px 2px; padding: 0px;")
-    return label
-
-def _make_section_desc(text):
-    """Create a white description label with word wrap and bottom margin."""
-    desc = QLabel(text)
-    desc.setWordWrap(True)
-    desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
-    return desc
-
-def _make_spacer():
-    from qtpy.QtWidgets import QWidget as _W
-    s = _W()
-    s.setFixedHeight(20)
-    return s
 
 class _PunctaWidgetContainer(widgets.Container):
     """Wrapper that delegates reset_choices to the inner magicgui widget."""

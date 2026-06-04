@@ -8,39 +8,12 @@ from magicgui.widgets import Container, Label, PushButton, LineEdit
 from qtpy.QtWidgets import QFrame
 
 from ...core import session, analysis
+from ._shared import make_divider as _make_divider, make_section_header as _make_section_header, make_section_desc as _make_section_desc, make_spacer as _make_spacer
 from .. import popups
 from ..decorators import require_active_session, error_handler
 from ... import constants
 
 logger = logging.getLogger(__name__)
-
-
-def _make_divider():
-    """Create a horizontal line divider using a native Qt QFrame."""
-    line = QFrame()
-    line.setFixedHeight(2)
-    line.setStyleSheet("background-color: #7a6b8a; border: none; margin: 8px 0px;")
-    return line
-
-def _make_section_header(text):
-    from qtpy.QtWidgets import QLabel
-    label = QLabel(f"<b style='color: #7a6b8a;'>{text}</b>")
-    label.setContentsMargins(0, 0, 0, 0)
-    label.setStyleSheet("margin: 0px 2px; padding: 0px;")
-    return label
-
-def _make_section_desc(text):
-    from qtpy.QtWidgets import QLabel
-    desc = QLabel(text)
-    desc.setWordWrap(True)
-    desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
-    return desc
-
-def _make_spacer():
-    from qtpy.QtWidgets import QWidget as _W
-    s = _W()
-    s.setFixedHeight(20)
-    return s
 
 
 # =====================================================================
@@ -225,6 +198,8 @@ def _on_export():
             d = {'name': l.name, 'data': l.data, 'scale': l.scale, 'translate': l.translate}
             if hasattr(l, 'features') and 'Nucleus_ID' in l.features.columns:
                 d['nucleus_ids'] = l.features['Nucleus_ID'].values
+            if hasattr(l, 'features') and 'puncta_id' in l.features.columns:
+                d['puncta_id'] = l.features['puncta_id'].values
             points_data.append(d)
 
         # Count actual nuclei from the consensus mask layer

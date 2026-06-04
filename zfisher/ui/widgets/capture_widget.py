@@ -12,6 +12,7 @@ from ...core import session
 from .. import popups
 from ..decorators import require_active_session
 from ... import constants
+from ._shared import make_divider as _make_divider, make_section_header as _make_section_header, make_section_desc as _make_section_desc, make_spacer as _make_spacer
 
 logger = logging.getLogger(__name__)
 
@@ -763,30 +764,6 @@ def reset_capture_state():
 # --- UI Wrapper ---
 from qtpy.QtWidgets import QFrame, QLabel, QSizePolicy
 from ..style import COLORS
-
-def _make_divider():
-    line = QFrame()
-    line.setFixedHeight(2)
-    line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
-    return line
-
-def _make_section_header(text):
-    lbl = QLabel(f"<b style='color: #7a6b8a;'>{text}</b>")
-    lbl.setContentsMargins(0, 0, 0, 0)
-    lbl.setStyleSheet("margin: 0px 2px; padding: 0px;")
-    return lbl
-
-def _make_section_desc(text):
-    lbl = QLabel(text)
-    lbl.setWordWrap(True)
-    lbl.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
-    return lbl
-
-def _make_spacer(height=20):
-    spacer = QFrame()
-    spacer.setFixedHeight(height)
-    spacer.setStyleSheet("background: transparent; border: none;")
-    return spacer
 
 capture_widget = widgets.Container(labels=False)
 header = widgets.Label(value="Capture & Annotate")

@@ -5,8 +5,15 @@ from magicgui import magicgui, widgets
 from qtpy.QtWidgets import QFrame, QPushButton
 
 from ..decorators import require_active_session, error_handler
-from .. import style
+from .. import style, viewer_helpers
 from ... import constants
+from ...core import puncta
+from ._shared import (
+    make_divider as _make_divider,
+    make_section_header as _make_section_header,
+    make_section_desc as _make_section_desc,
+    make_spacer as _make_spacer,
+)
 
 
 class _RefilterUndoStack:
@@ -45,13 +52,6 @@ _refilter_undo = _RefilterUndoStack()
 def reset_refilter_state():
     """Clear all module-level state. Called on session reset."""
     _refilter_undo.clear()
-
-
-def _make_divider():
-    line = QFrame()
-    line.setFixedHeight(2)
-    line.setStyleSheet(f"background-color: {style.COLORS['separator_color']}; border: none; margin: 8px 0px;")
-    return line
 
 
 def _get_puncta_channel_choices(viewer):
@@ -143,17 +143,18 @@ def _refilter_widget(
         if len(coords) == 0:
             continue
 
-        idx = np.round(coords).astype(int)
-        idx[:, 0] = np.clip(idx[:, 0], 0, mask_data.shape[0] - 1)
-        idx[:, 1] = np.clip(idx[:, 1], 0, mask_data.shape[1] - 1)
-        idx[:, 2] = np.clip(idx[:, 2], 0, mask_data.shape[2] - 1)
-
-        inside = mask_data[idx[:, 0], idx[:, 1], idx[:, 2]] > 0
+        # Convert puncta coords -> world -> mask voxels so the lookup respects
+        # both layers' scale/translate (a punctum and the mask need not share a
+        # coordinate frame). Previously this indexed the mask directly with the
+        # puncta data coords, which silently removed the wrong puncta whenever
+        # the scales/translates differed.
+        labels = puncta.lookup_label_ids(
+            coords, layer.scale, layer.translate,
+            mask_data, mask_layer.scale, mask_layer.translate,
+        )
+        inside = labels > 0
         n_before = len(coords)
-        # Clear stale _indices_view cache to prevent IndexError in text
-        # rendering when point count changes (same fix as viewer_helpers).
-        layer._Points__indices_view = np.empty(0, int)
-        layer.data = coords[inside]
+        viewer_helpers.set_points_data(layer, coords[inside])
         if layer.features is not None and len(layer.features) == n_before:
             layer.features = layer.features.iloc[inside].reset_index(drop=True)
         total_removed += n_before - inside.sum()
@@ -190,27 +191,6 @@ def _refresh_channel_choices():
         if _refilter_widget.mask_layer.value not in valid_masks:
             _refilter_widget.mask_layer.value = valid_masks[0]
 
-
-# --- UI Helpers ---
-def _make_section_header(text):
-    from qtpy.QtWidgets import QLabel
-    label = QLabel(f"<b style='color: #7a6b8a;'>{text}</b>")
-    label.setContentsMargins(0, 0, 0, 0)
-    label.setStyleSheet("margin: 0px 2px; padding: 0px;")
-    return label
-
-def _make_section_desc(text):
-    from qtpy.QtWidgets import QLabel
-    desc = QLabel(text)
-    desc.setWordWrap(True)
-    desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
-    return desc
-
-def _make_spacer():
-    from qtpy.QtWidgets import QWidget as _W
-    s = _W()
-    s.setFixedHeight(20)
-    return s
 
 # --- UI Wrapper ---
 class _RefilterWidgetContainer(widgets.Container):

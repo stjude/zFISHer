@@ -312,7 +312,7 @@ def run_full_zfisher_pipeline(
             mask1=tifffile.imread(r1_aligned_mask),
             mask2=tifffile.imread(r2_warped_mask),
             output_dir=output_dir,
-            threshold=match_threshold if match_threshold > 0 else 0,
+            threshold=match_threshold or None,
             method=overlap_method,
             progress_callback=lambda p, t: _update(60 + int(p * 0.1), t)
         )
@@ -335,7 +335,7 @@ def run_full_zfisher_pipeline(
         _update(job_base, f"Transforming puncta: {rnd} {ch}...")
 
         puncta_layer_name = f"{prefix_str} {rnd} - {ch}{constants.PUNCTA_SUFFIX}"
-        csv_out = reports_dir / f"{puncta_layer_name.replace(' ', '_')}.csv"
+        csv_out = constants.puncta_csv_path(reports_dir, puncta_layer_name)
 
         transformed = puncta.transform_puncta_to_aligned_space(
             raw_puncta=raw_data,
@@ -356,12 +356,14 @@ def run_full_zfisher_pipeline(
         if transformed is not None and len(transformed) > 0:
             coords = transformed[:, :3]  # Z, Y, X
             nuc_ids = transformed[:, 3] if transformed.shape[1] > 3 else None
+            puncta_id = transformed[:, 6] if transformed.shape[1] > 6 else None
             aligned_puncta_layers.append({
                 'name': puncta_layer_name,
                 'data': coords,
                 'scale': np.array(r1_sess.voxels),
                 'translate': np.zeros(3),
                 'nucleus_ids': nuc_ids,
+                'puncta_id': puncta_id,
             })
 
         job_i += 1

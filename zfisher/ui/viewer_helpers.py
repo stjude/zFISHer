@@ -15,6 +15,22 @@ logger = logging.getLogger(__name__)
 # Global to track the zoom listener, but now it's scoped to this module
 _current_scale_updater = None
 
+
+def set_points_data(layer, data):
+    """Assign ``data`` to a napari Points layer, clearing its cached
+    (name-mangled) ``_Points__indices_view`` FIRST.
+
+    This is the single chokepoint for a load-bearing napari-private workaround:
+    when a Points layer's point count changes while a stale view-index cache is
+    still live, vispy raises an IndexError / corrupts the GL buffer. Clearing the
+    cache immediately before reassigning ``data`` avoids it. The clear-before-
+    assign order is REQUIRED — do not reorder or split. If a napari upgrade
+    renames this internal attribute, fix it HERE rather than at every call site.
+    """
+    layer._Points__indices_view = np.empty(0, int)
+    layer.data = data
+
+
 def add_image_session_to_viewer(viewer: napari.Viewer, image_session, prefix: str):
     """
     Adds image data from a FISHSession or TiffSession object to the napari viewer.
@@ -98,9 +114,15 @@ def _load_points_layer(viewer, name, path, scale, file_info, translate):
             
             data = df[coord_cols].to_numpy()
             features = df.drop(columns=coord_cols, errors='ignore')
-            
-            # Ensure puncta_id exists for text display
+
+            # A persisted puncta_id is authoritative and kept verbatim. Only
+            # legacy CSVs lacking the column fall back to a positional index
+            # (NOT stable across edits/re-runs), so warn when that happens.
             if 'puncta_id' not in features.columns:
+                logger.warning(
+                    "Puncta CSV for layer '%s' has no puncta_id column; assigning "
+                    "positional ids (not stable across edits/re-runs).", name
+                )
                 features['puncta_id'] = np.arange(len(data))
             
             text_params = {
@@ -375,9 +397,8 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
         if existing_action == 'replace':
             # Replace: clear existing, use only new data
             new_features['puncta_id'] = np.arange(len(new_features))
-            pts_layer._Points__indices_view = np.empty(0, int)
             pts_layer.visible = False
-            pts_layer.data = coords
+            set_points_data(pts_layer, coords)
             pts_layer.features = new_features
             pts_layer.text = text_params
             pts_layer.size = 3
@@ -413,9 +434,8 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
             combined_coords = np.vstack([existing_coords, coords])
             combined_features = pd.concat([existing_features, new_features], ignore_index=True)
 
-            pts_layer._Points__indices_view = np.empty(0, int)
             pts_layer.visible = False
-            pts_layer.data = combined_coords
+            set_points_data(pts_layer, combined_coords)
             pts_layer.features = combined_features
             pts_layer.text = text_params
             pts_layer.size = 3
@@ -448,13 +468,13 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
         coords_df = pd.DataFrame(puncta_layer.data, columns=['Z', 'Y', 'X'])
         full_df_to_save = pd.concat([puncta_layer.features.reset_index(drop=True), coords_df.reset_index(drop=True)], axis=1)
 
-        # Define path and save
+        # Define path and save (one canonical file per layer)
         reports_dir = Path(out_dir) / constants.REPORTS_DIR
         reports_dir.mkdir(exist_ok=True)
-        csv_path = reports_dir / f"{layer_name}.csv"
-        
+        csv_path = constants.puncta_csv_path(reports_dir, layer_name)
+
         full_df_to_save.to_csv(csv_path, index=False)
-        
+
         # Update session file to point to this new CSV
         session.set_processed_file(layer_name, str(csv_path), layer_type='points', metadata={'subtype': 'puncta_csv'})
 
@@ -487,8 +507,7 @@ def _add_or_replace_ids_layer(viewer, name, coords, labels, scale, translate=Non
         was_visible = layer.visible
         layer.visible = False
         # Force-clear stale _indices_view to prevent IndexError during refresh
-        layer._Points__indices_view = np.empty(0, int)
-        layer.data = coords
+        set_points_data(layer, coords)
         layer.properties = {'label': labels}
         layer.text = {'string': '{label}', 'size': 12, 'color': '#40b5d8', 'translation': np.array([0, -5, 0])}
         layer.scale = scale
@@ -631,8 +650,7 @@ def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napa
         if centroid_layer_name in viewer.layers:
             # Update in-place to avoid remove/add race that creates duplicates
             layer = viewer.layers[centroid_layer_name]
-            layer._Points__indices_view = np.empty(0, int)
-            layer.data = centroids
+            set_points_data(layer, centroids)
             layer.properties = {'id': ids}
             layer.scale = source_layer.scale
             layer.size = 5
@@ -811,8 +829,7 @@ def resync_puncta_nucleus_ids(
 
         # Update the napari layer (clear the indices_view cache to avoid GL crashes
         # when the point count changes).
-        pts_layer._Points__indices_view = np.empty(0, int)
-        pts_layer.data = coords
+        set_points_data(pts_layer, coords)
         if not features.empty:
             pts_layer.features = features
 
@@ -821,10 +838,16 @@ def resync_puncta_nucleus_ids(
             if out_dir and pts_layer.name:
                 reports_dir = Path(out_dir) / constants.REPORTS_DIR
                 reports_dir.mkdir(exist_ok=True, parents=True)
-                csv_path = reports_dir / f"{pts_layer.name}.csv"
+                csv_path = constants.puncta_csv_path(reports_dir, pts_layer.name)
                 coords_df = pd.DataFrame(coords, columns=['Z', 'Y', 'X'])
                 full_df = pd.concat([features.reset_index(drop=True), coords_df], axis=1)
                 full_df.to_csv(csv_path, index=False)
+                # Re-register so the session points at the freshly-resynced file
+                # (previously omitted, which left the registry on a stale path).
+                session.set_processed_file(
+                    pts_layer.name, str(csv_path),
+                    layer_type='points', metadata={'subtype': 'puncta_csv'}
+                )
 
         updated += 1
 

@@ -13,6 +13,31 @@ from .. import constants
 
 logger = logging.getLogger(__name__)
 
+# One-shot guard so the positional-fallback warning is emitted at most once.
+_warned_positional_ids = False
+
+
+def _stable_id(id_array, idx):
+    """Return the persisted ``puncta_id`` at ``idx``, or the positional index.
+
+    Analysis reports identify puncta by their stable ``puncta_id`` so the same
+    physical punctum carries the same id across the Distances, Colocalization,
+    and Tri-Colocalization sheets (and across re-runs). When a layer has no
+    ``puncta_id`` (legacy in-memory layers / old CSVs), it falls back to the
+    positional index and warns once so the degraded case is visible.
+    """
+    if id_array is not None and idx < len(id_array):
+        return int(id_array[idx])
+    global _warned_positional_ids
+    if not _warned_positional_ids:
+        logger.warning(
+            "A puncta layer has no puncta_id; analysis is falling back to "
+            "positional indices for reported IDs. IDs may not be stable across "
+            "sheets or re-runs for this layer."
+        )
+        _warned_positional_ids = True
+    return int(idx)
+
 
 # =====================================================================
 # Computation helpers
@@ -63,14 +88,16 @@ def calculate_distances(points_layers_data):
 
             # Collect results
             src_nuc_ids = source.get('nucleus_ids')
+            src_pids = source.get('puncta_id')
+            tgt_pids = target.get('puncta_id')
             for i, (d, idx) in enumerate(zip(dists, idxs)):
                 nuc_id = int(src_nuc_ids[i]) if src_nuc_ids is not None and i < len(src_nuc_ids) else None
                 results.append({
                     "Source_Layer": source['name'],
-                    "Source_ID": i,
+                    "Source_ID": _stable_id(src_pids, i),
                     "Nucleus_ID": nuc_id,
                     "Target_Layer": target['name'],
-                    "Target_ID": idx,
+                    "Target_ID": _stable_id(tgt_pids, idx),
                     "Distance_um": d,
                     "Z": src_data[i][0],
                     "Y": src_data[i][1],
@@ -141,6 +168,8 @@ def calculate_pairwise_colocalization(points_layers_data, rules):
         seen = set()
         src_nuc_ids = src_layer.get('nucleus_ids')
         tgt_nuc_ids = tgt_layer.get('nucleus_ids')
+        src_pids = src_layer.get('puncta_id')
+        tgt_pids = tgt_layer.get('puncta_id')
 
         for src_idx, tgt_indices in enumerate(pairs):
             for tgt_idx in tgt_indices:
@@ -160,13 +189,13 @@ def calculate_pairwise_colocalization(points_layers_data, rules):
 
                 coloc_rows.append({
                     "Layer_A": src_name,
-                    "ID_A": src_idx,
+                    "ID_A": _stable_id(src_pids, src_idx),
                     "Nucleus_ID_A": src_nid,
                     "Z_A": src_world[src_idx][0],
                     "Y_A": src_world[src_idx][1],
                     "X_A": src_world[src_idx][2],
                     "Layer_B": tgt_name,
-                    "ID_B": tgt_idx,
+                    "ID_B": _stable_id(tgt_pids, tgt_idx),
                     "Nucleus_ID_B": tgt_nid,
                     "Z_B": tgt_world[tgt_idx][0],
                     "Y_B": tgt_world[tgt_idx][1],
@@ -297,22 +326,25 @@ def calculate_tri_colocalization(points_layers_data, tri_rules):
             anchor_layer = layers_by_name[anchor_name]
             nuc_ids = anchor_layer.get('nucleus_ids')
             nuc_id = int(nuc_ids[best_anchor]) if nuc_ids is not None and best_anchor < len(nuc_ids) else None
+            anchor_pids = anchor_layer.get('puncta_id')
+            cha_pids = layers_by_name[ch_a_name].get('puncta_id')
+            chb_pids = layers_by_name[ch_b_name].get('puncta_id')
 
             all_hits.append({
                 'Anchor_Layer': anchor_name,
-                'Anchor_ID': best_anchor,
+                'Anchor_ID': _stable_id(anchor_pids, best_anchor),
                 'Nucleus_ID': nuc_id,
                 'Anchor_Z': a_coord[0],
                 'Anchor_Y': a_coord[1],
                 'Anchor_X': a_coord[2],
                 'Channel_A': ch_a_name,
-                'ChA_ID': best_ch_a,
+                'ChA_ID': _stable_id(cha_pids, best_ch_a),
                 'ChA_Z': ca_coord[0],
                 'ChA_Y': ca_coord[1],
                 'ChA_X': ca_coord[2],
                 'ChA_Distance_um': best_ch_a_dist,
                 'Channel_B': ch_b_name,
-                'ChB_ID': best_ch_b,
+                'ChB_ID': _stable_id(chb_pids, best_ch_b),
                 'ChB_Z': cb_coord[0],
                 'ChB_Y': cb_coord[1],
                 'ChB_X': cb_coord[2],

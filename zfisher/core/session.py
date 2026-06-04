@@ -25,6 +25,27 @@ _SESSION_DATA = {
 }
 _is_loading = False
 
+
+def _sessions_dir(out_dir):
+    """Directory where session JSONs are written — a ``sessions/`` subfolder of
+    the output directory."""
+    return Path(out_dir) / constants.SESSIONS_DIR
+
+
+def _session_save_path(out_dir, filename):
+    """Canonical write path for a session JSON, creating ``sessions/`` if needed."""
+    d = _sessions_dir(out_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    return d / filename
+
+
+def _session_exists(out_dir, filename):
+    """True if a session named ``filename`` exists in either the canonical
+    ``sessions/`` subfolder or the legacy output-dir root (so numbering and the
+    overwrite guard account for both old and new layouts)."""
+    return (_sessions_dir(out_dir) / filename).exists() or (Path(out_dir) / filename).exists()
+
+
 def set_loading(state: bool):
     """
     Sets the global session loading state.
@@ -166,15 +187,16 @@ def initialize_new_session(output_dir, r1_path, r2_path, progress_callback=None)
     This can be called by the Widget OR a headless script.
     """
     output_dir = Path(output_dir)
-    session_file = output_dir / constants.SESSION_FILENAME
-    if session_file.exists():
+    # Refuse to clobber an existing session in either the new sessions/ subfolder
+    # or the legacy output-dir root.
+    if _session_exists(output_dir, constants.SESSION_FILENAME):
         return False
 
     # 1. Create directory structure
     output_dir.mkdir(parents=True, exist_ok=True)
     for folder in [constants.SEGMENTATION_DIR, constants.ALIGNED_DIR,
                    constants.CAPTURES_DIR, constants.INPUT_DIR, constants.REPORTS_DIR,
-                   constants.LOGS_DIR]:
+                   constants.LOGS_DIR, constants.SESSIONS_DIR]:
         (output_dir / folder).mkdir(exist_ok=True)
 
     # 2. Reset global state
@@ -207,7 +229,7 @@ def _save_session_unlocked():
 
     try:
         filename = _SESSION_DATA.get("session_filename", constants.SESSION_FILENAME)
-        out_path = Path(out_dir) / filename
+        out_path = _session_save_path(out_dir, filename)
         with open(out_path, 'w') as f:
             json.dump(_SESSION_DATA, f, indent=4, default=str)
     except Exception as e:
@@ -245,20 +267,34 @@ def load_session_file(path):
     # When loading an existing session, create a new session JSON file (session_2, _3, etc.)
     # instead of overwriting the original. This preserves audit history and prevents
     # accidental loss of a saved state.
-    # Find the next available session filename in the output directory
-    # Use output_dir from the loaded data (not path.parent) since that's
-    # where _save_session_unlocked will actually write the file.
-    out_dir = Path(data.get("output_dir", str(path.parent)))
+    # Resolve the output-dir ROOT. Prefer the stored value; otherwise derive it
+    # from the file location — a file under <root>/sessions/ implies the root is
+    # its grandparent (the file may live in the legacy root or the new subfolder).
+    stored = data.get("output_dir")
+    if stored:
+        out_dir = Path(stored)
+    elif path.parent.name == constants.SESSIONS_DIR:
+        out_dir = path.parent.parent
+    else:
+        out_dir = path.parent
+
+    # Find the next free number across BOTH layouts so new files (written to
+    # sessions/) never collide or duplicate a number already used in the root.
     n = 2
-    new_name = f"zfisher_session_{n}.json"
-    while (out_dir / new_name).exists():
+    while _session_exists(out_dir, f"zfisher_session_{n}.json"):
         n += 1
-        new_name = f"zfisher_session_{n}.json"
+    new_name = f"zfisher_session_{n}.json"
     logger.info("Creating new session file: %s", new_name)
 
     with _lock:
         _SESSION_DATA.update(data)
         _SESSION_DATA["session_filename"] = new_name
+        # Ensure output_dir is set so the new file actually saves (legacy sessions
+        # that predate stored output_dir fall back to the derived root). Use a
+        # None-aware check: clear_session() pre-seeds output_dir=None, so
+        # setdefault would not fill it.
+        if not _SESSION_DATA.get("output_dir"):
+            _SESSION_DATA["output_dir"] = str(out_dir)
         # Ensure keys added after the session was originally saved are present
         _SESSION_DATA.setdefault("colocalization_rules", [])
         _SESSION_DATA.setdefault("tri_colocalization_rules", [])

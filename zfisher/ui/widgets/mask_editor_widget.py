@@ -13,6 +13,7 @@ from .. import popups, viewer_helpers
 from ..decorators import require_active_session
 from ...core import segmentation
 from ... import constants
+from ._shared import make_divider as _make_divider, make_section_header as _make_section_header
 
 logger = logging.getLogger(__name__)
 
@@ -313,46 +314,13 @@ def _delete_label_inplace(layer, label_id, reset_mode=False):
             ids_arr = np.asarray(pts.properties.get('id', np.empty(0)))
             if len(ids_arr) > 0:
                 keep = ids_arr != label_id
-                pts._Points__indices_view = np.empty(0, int)
-                pts.data = pts.data[keep]
+                viewer_helpers.set_points_data(pts, pts.data[keep])
                 pts.properties = {'id': ids_arr[keep]}
                 pts.refresh()
     QTimer.singleShot(50, _deferred_updates)
     # Debounce save to disk
     _schedule_save(layer)
     _resync_puncta_for_layer(viewer, layer)
-
-def _remove_id_from_points_layer(mask_layer, deleted_id):
-    """Remove a single ID from the IDs points layer using napari's native API.
-
-    Uses ``remove_selected()`` which handles vispy/GL buffer updates internally,
-    avoiding the fragile remove-and-recreate pattern.
-    """
-    viewer = napari.current_viewer()
-    if not viewer:
-        return
-    ids_name = f"{mask_layer.name}_IDs"
-    if ids_name not in viewer.layers:
-        return
-    pts_layer = viewer.layers[ids_name]
-    labels = np.asarray(pts_layer.properties.get('label', np.empty(0)))
-    if len(labels) == 0:
-        return
-    to_remove = set(np.where(labels == deleted_id)[0])
-    if not to_remove:
-        return
-    pts_layer.selected_data = to_remove
-    pts_layer.remove_selected()
-    # Force text to re-sync with updated data/features to prevent IndexError
-    # (napari's text cache can get stale after remove_selected)
-    try:
-        remaining_labels = np.asarray(pts_layer.properties.get('label', np.empty(0)))
-        pts_layer.text = {
-            'string': '{label}', 'size': 12, 'color': '#40b5d8',
-            'translation': np.array([0, -5, 0]),
-        }
-    except Exception:
-        pass
 
 _save_timer = QTimer()
 _save_timer.setSingleShot(True)
@@ -410,20 +378,6 @@ def delete_mask_under_mouse(viewer):
             _delete_label_inplace(layer, val, reset_mode=True)
             logger.info("MASK EDIT: Deleted nucleus ID %d (cursor) on layer '%s'", val, layer.name)
             viewer.status = f"Deleted Nucleus ID {val}"
-
-def _make_divider():
-    """Create a horizontal line divider using a native Qt QFrame."""
-    line = QFrame()
-    line.setFixedHeight(2)
-    line.setStyleSheet("background-color: #7a6b8a; border: none; margin: 8px 0px;")
-    return line
-
-def _make_section_header(text):
-    """Create a left-aligned bold section header in light purple using plain QLabel."""
-    label = _QLabel(f"<b style='color: #7a6b8a;'>{text}</b>")
-    label.setContentsMargins(0, 0, 0, 0)
-    label.setStyleSheet("margin: 0px 2px; padding: 0px;")
-    return label
 
 from qtpy.QtWidgets import QPushButton, QLabel as _QLabel
 
@@ -1033,8 +987,7 @@ def _on_mask_undo():
                 pts = viewer.layers[centroids_name]
                 coords = np.array([p['coord'] for p in pts_data]) if pts_data else np.empty((0, layer.ndim))
                 ids = np.array([p['label'] for p in pts_data]) if pts_data else np.empty(0)
-                pts._Points__indices_view = np.empty(0, int)
-                pts.data = coords
+                viewer_helpers.set_points_data(pts, coords)
                 pts.properties = {'id': ids}
                 pts.refresh()
         QTimer.singleShot(50, _deferred_undo_refresh)
@@ -1104,8 +1057,7 @@ def _on_erase_all():
         # Clear centroids layer if it exists
         if centroids_name in viewer.layers:
             pts = viewer.layers[centroids_name]
-            pts._Points__indices_view = np.empty(0, int)
-            pts.data = np.empty((0, layer.ndim))
+            viewer_helpers.set_points_data(pts, np.empty((0, layer.ndim)))
             pts.properties = {'id': np.empty(0)}
             pts.refresh()
     QTimer.singleShot(50, _deferred_updates)

@@ -210,7 +210,7 @@ def _automated_preprocessing_magic_widget(
                     mask1=tifffile.imread(r1_mask_path),
                     mask2=tifffile.imread(r2_mask_path),
                     output_dir=output_dir,
-                    threshold=match_threshold if match_threshold > 0 else 0,
+                    threshold=match_threshold or None,
                     method=overlap_method,
                     progress_callback=lambda p, t: dialog.update_progress(70 + int(p * 0.25), t)
                 )
@@ -265,16 +265,18 @@ def _automated_preprocessing_magic_widget(
                     nuc_ids = feats['Nucleus_ID'].values if 'Nucleus_ID' in feats.columns else np.zeros(len(coords))
                     intensity = feats['Intensity'].values if 'Intensity' in feats.columns else np.zeros(len(coords))
                     snr = feats['SNR'].values if 'SNR' in feats.columns else np.zeros(len(coords))
+                    pid = feats['puncta_id'].values if 'puncta_id' in feats.columns else None
                 else:
                     nuc_ids = np.zeros(len(coords))
                     intensity = np.zeros(len(coords))
                     snr = np.zeros(len(coords))
+                    pid = None
                 raw_puncta = np.column_stack([coords, nuc_ids, intensity, snr])
 
                 prefix_str = constants.ALIGNED_PREFIX if (round_id == "R1" or bspline_transform is None) else constants.WARPED_PREFIX
                 base_name = pts_layer.name.replace(constants.PUNCTA_SUFFIX, "")
                 aligned_layer_name = f"{prefix_str} {base_name.strip()}{constants.PUNCTA_SUFFIX}"
-                csv_out = reports_dir / f"{aligned_layer_name.replace(' ', '_')}.csv"
+                csv_out = constants.puncta_csv_path(reports_dir, aligned_layer_name)
 
                 transformed = puncta.transform_puncta_to_aligned_space(
                     raw_puncta=raw_puncta,
@@ -285,6 +287,7 @@ def _automated_preprocessing_magic_widget(
                     consensus_mask=merged_mask if match_nuclei else None,
                     output_path=csv_out,
                     layer_name=aligned_layer_name,
+                    puncta_ids=pid,
                 )
 
                 if transformed is not None and len(transformed) > 0:
@@ -353,8 +356,7 @@ def _automated_preprocessing_magic_widget(
                         features = features[inside_mask].reset_index(drop=True)
 
                 pts_layer._locked = False
-                pts_layer._Points__indices_view = np.empty(0, int)
-                pts_layer.data = coords
+                viewer_helpers.set_points_data(pts_layer, coords)
                 if not features.empty:
                     pts_layer.features = features
                 pts_layer._locked = True
@@ -364,10 +366,14 @@ def _automated_preprocessing_magic_widget(
                 if out_dir:
                     reports_dir = Path(out_dir) / constants.REPORTS_DIR
                     reports_dir.mkdir(exist_ok=True, parents=True)
-                    csv_path = reports_dir / f"{pts_layer.name}.csv"
+                    csv_path = constants.puncta_csv_path(reports_dir, pts_layer.name)
                     coords_df = pd.DataFrame(coords, columns=['Z', 'Y', 'X'])
                     full_df = pd.concat([features.reset_index(drop=True), coords_df], axis=1)
                     full_df.to_csv(csv_path, index=False)
+                    session.set_processed_file(
+                        pts_layer.name, str(csv_path),
+                        layer_type='points', metadata={'subtype': 'puncta_csv'}
+                    )
 
         if hide_raw:
             nuc_ch = session.get_nuclear_channel()
@@ -384,30 +390,7 @@ def _automated_preprocessing_magic_widget(
 # UI Wrapper
 from qtpy.QtWidgets import QFrame, QLabel, QSizePolicy
 from ..style import COLORS
-
-def _make_divider():
-    line = QFrame()
-    line.setFixedHeight(2)
-    line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
-    return line
-
-def _make_section_header(text):
-    label = QLabel(f"<b style='color: #7a6b8a;'>{text}</b>")
-    label.setContentsMargins(0, 0, 0, 0)
-    label.setStyleSheet("margin: 0px 2px; padding: 0px;")
-    return label
-
-def _make_section_desc(text):
-    desc = QLabel(text)
-    desc.setWordWrap(True)
-    desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
-    return desc
-
-def _make_spacer():
-    from qtpy.QtWidgets import QWidget as _W
-    s = _W()
-    s.setFixedHeight(20)
-    return s
+from ._shared import make_divider as _make_divider, make_section_header as _make_section_header, make_section_desc as _make_section_desc, make_spacer as _make_spacer
 
 # Insert section headers into the magicgui form
 # Widget order: r1_dapi(0), r2_dapi(1), match_nuclei(2), hide_raw(3), call_button(4)

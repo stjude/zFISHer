@@ -75,27 +75,44 @@ def reset_events_state():
     _attached_listeners.clear()
 
 
+def save_puncta_layer(layer):
+    """Write a puncta layer's current data + features to its canonical CSV and
+    register it in the session.
+
+    Exposed so callers can persist explicitly after a manual add: the napari
+    ``data`` event can fire while a freshly added point still carries
+    placeholder features (the real puncta_id / Nucleus_ID / Source are written
+    on the following line), so code that has just finished mutating
+    ``layer.features`` should call this to guarantee the saved CSV is complete.
+    """
+    out_dir = session.get_data("output_dir")
+    if not out_dir:
+        return
+    reports_dir = Path(out_dir) / constants.REPORTS_DIR
+    reports_dir.mkdir(exist_ok=True, parents=True)
+    # Read the live layer name (not a name captured earlier) so a renamed layer
+    # still writes/registers under one canonical path.
+    live_name = layer.name
+    csv_path = constants.puncta_csv_path(reports_dir, live_name)
+    try:
+        coords_df = pd.DataFrame(layer.data, columns=['Z', 'Y', 'X'])
+        features = layer.features.reset_index(drop=True) if hasattr(layer, 'features') and not layer.features.empty else pd.DataFrame()
+        full_df = pd.concat([features, coords_df], axis=1)
+        full_df.to_csv(csv_path, index=False)
+    except Exception as e:
+        # Fallback: save coordinates only
+        logger.warning("Could not save full puncta CSV for '%s': %s. Saving coordinates only.", live_name, e)
+        np.savetxt(csv_path, layer.data, delimiter=',', header='Z,Y,X', comments='')
+    session.set_processed_file(live_name, str(csv_path), layer_type='points', metadata={'subtype': 'puncta_csv'})
+
+
 def attach_puncta_listener(layer, name):
     """Attaches listeners to a points layer for auto-saving and color syncing."""
     if id(layer) in _attached_listeners:
         return
 
     def sync_data(event=None):
-        out_dir = session.get_data("output_dir")
-        if out_dir:
-            reports_dir = Path(out_dir) / constants.REPORTS_DIR
-            reports_dir.mkdir(exist_ok=True, parents=True)
-            csv_path = reports_dir / f"{name}.csv"
-            try:
-                coords_df = pd.DataFrame(layer.data, columns=['Z', 'Y', 'X'])
-                features = layer.features.reset_index(drop=True) if hasattr(layer, 'features') and not layer.features.empty else pd.DataFrame()
-                full_df = pd.concat([features, coords_df], axis=1)
-                full_df.to_csv(csv_path, index=False)
-            except Exception as e:
-                # Fallback: save coordinates only
-                logger.warning("Could not save full puncta CSV for '%s': %s. Saving coordinates only.", name, e)
-                np.savetxt(csv_path, layer.data, delimiter=',', header='Z,Y,X', comments='')
-            session.set_processed_file(name, str(csv_path), layer_type='points', metadata={'subtype': 'puncta_csv'})
+        save_puncta_layer(layer)
 
     _sync_color_guard = {'active': False}
 

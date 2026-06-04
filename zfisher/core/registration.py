@@ -25,7 +25,10 @@ class _TranslationTransform3D:
         return coords + self.translation
 from scipy.spatial import cKDTree
 from scipy import ndimage as ndi
-import SimpleITK as sitk
+try:
+    import SimpleITK as sitk
+except ImportError:  # SimpleITK is only needed for B-spline deformable registration
+    sitk = None
 import warnings
 import gc
 import tifffile
@@ -318,9 +321,6 @@ def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
         original fixed-image origin to the new canvas origin.
     """
     logger.debug("align_and_pad: received shift_vector: %s", shift_vector)
-    # Round shift to nearest integer for lossless padding
-    shift = np.round(shift_vector).astype(int)
-    dz, dy, dx = shift
     # Separate integer and fractional shift components:
     # Integer part is used for array indexing/padding.
     # Fractional part is applied via scipy.ndimage.shift for sub-pixel accuracy.
@@ -384,7 +384,7 @@ def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
     
     return padded_fixed, padded_moving, canvas_offset_pixels
 
-def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=16, use_mask=True):
+def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=constants.DEFORMABLE_DOWNSAMPLE_FACTOR, use_mask=True):
     """
     Calculates a B-Spline deformable transform using SimpleITK.
 

@@ -8,7 +8,7 @@ from ...core import session, registration, puncta # Importing from core
 from .. import popups, viewer_helpers, events
 from ..decorators import require_active_session, error_handler
 from ... import constants
-from ._shared import make_header_divider
+from ._shared import make_divider as _make_divider, make_section_header as _make_section_header, make_section_desc as _make_section_desc, make_spacer as _make_spacer
 
 @magicgui(
     call_button="Generate Global Canvas",
@@ -188,17 +188,26 @@ def _canvas_widget(
                     nuc_ids = feats['Nucleus_ID'].values if 'Nucleus_ID' in feats.columns else np.zeros(len(coords))
                     intensity = feats['Intensity'].values if 'Intensity' in feats.columns else np.zeros(len(coords))
                     snr = feats['SNR'].values if 'SNR' in feats.columns else np.zeros(len(coords))
+                    pid = feats['puncta_id'].values if 'puncta_id' in feats.columns else None
                 else:
                     nuc_ids = np.zeros(len(coords))
                     intensity = np.zeros(len(coords))
                     snr = np.zeros(len(coords))
+                    pid = None
                 raw_puncta = np.column_stack([coords, nuc_ids, intensity, snr])
 
                 prefix_str = constants.ALIGNED_PREFIX if (round_id == "R1" or bspline_transform is None) else constants.WARPED_PREFIX
                 base_name = pts_layer.name.replace(constants.PUNCTA_SUFFIX, "")
                 aligned_layer_name = f"{prefix_str} {base_name.strip()}{constants.PUNCTA_SUFFIX}"
-                csv_out = reports_dir / f"{aligned_layer_name.replace(' ', '_')}.csv"
+                csv_out = constants.puncta_csv_path(reports_dir, aligned_layer_name)
 
+                # consensus_mask=None is intentional: in the manual workflow the
+                # canvas step runs BEFORE the consensus mask exists, so this is a
+                # geometry-only transform (puncta get Nucleus_ID=0 for now). The
+                # required "Match Nuclei" step then assigns nuclei via
+                # viewer_helpers.resync_puncta_nucleus_ids (same path the
+                # automated pipeline uses), so the two paths converge. Do NOT try
+                # to wire a consensus mask here — it does not exist yet.
                 transformed = puncta.transform_puncta_to_aligned_space(
                     raw_puncta=raw_puncta,
                     round_id=round_id,
@@ -208,6 +217,7 @@ def _canvas_widget(
                     consensus_mask=None,
                     output_path=csv_out,
                     layer_name=aligned_layer_name,
+                    puncta_ids=pid,
                 )
 
                 if transformed is not None and len(transformed) > 0:
@@ -247,30 +257,6 @@ def _canvas_widget(
 # --- UI Helpers ---
 from qtpy.QtWidgets import QLabel, QFrame, QSizePolicy
 from ..style import COLORS
-
-def _make_divider():
-    line = QFrame()
-    line.setFixedHeight(2)
-    line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
-    return line
-
-def _make_section_header(text):
-    label = QLabel(f"<b style='color: #7a6b8a;'>{text}</b>")
-    label.setContentsMargins(0, 0, 0, 0)
-    label.setStyleSheet("margin: 0px 2px; padding: 0px;")
-    return label
-
-def _make_section_desc(text):
-    desc = QLabel(text)
-    desc.setWordWrap(True)
-    desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
-    return desc
-
-def _make_spacer():
-    from qtpy.QtWidgets import QWidget as _W
-    s = _W()
-    s.setFixedHeight(20)
-    return s
 
 # --- UI Wrapper ---
 class _CanvasContainer(Container):
