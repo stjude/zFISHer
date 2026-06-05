@@ -16,18 +16,28 @@ logger = logging.getLogger(__name__)
 _current_scale_updater = None
 
 
-def set_points_data(layer, data):
-    """Assign ``data`` to a napari Points layer, clearing its cached
-    (name-mangled) ``_Points__indices_view`` FIRST.
+def clear_points_index_cache(layer):
+    """Clear a Points layer's cached (name-mangled) ``_Points__indices_view``.
 
-    This is the single chokepoint for a load-bearing napari-private workaround:
-    when a Points layer's point count changes while a stale view-index cache is
-    still live, vispy raises an IndexError / corrupts the GL buffer. Clearing the
-    cache immediately before reassigning ``data`` avoids it. The clear-before-
-    assign order is REQUIRED — do not reorder or split. If a napari upgrade
-    renames this internal attribute, fix it HERE rather than at every call site.
+    The single place that touches this napari-private attribute. Use it before
+    mutating a VISIBLE Points layer's transform (scale/translate), so a forced
+    vispy redraw can't run against a stale view-index cache. If a napari upgrade
+    renames the attribute, fix it HERE.
     """
     layer._Points__indices_view = np.empty(0, int)
+
+
+def set_points_data(layer, data):
+    """Assign ``data`` to a napari Points layer, clearing its cached
+    ``_Points__indices_view`` FIRST.
+
+    Load-bearing napari-private workaround: when a Points layer's point count
+    changes while a stale view-index cache is still live, vispy raises an
+    IndexError / corrupts the GL buffer. Clearing the cache immediately before
+    reassigning ``data`` avoids it. The clear-before-assign order is REQUIRED —
+    do not reorder or split.
+    """
+    clear_points_index_cache(layer)
     layer.data = data
 
 

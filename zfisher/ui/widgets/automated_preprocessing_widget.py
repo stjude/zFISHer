@@ -298,9 +298,13 @@ def _automated_preprocessing_magic_widget(
                     })()
                     viewer_helpers.add_or_update_puncta_layer(viewer, ref, transformed)
 
-                # Remove the original raw puncta layer now that it's been transformed
+                # Remove the original raw puncta layer now that it's been transformed.
+                # Hide + clear the GL index cache before teardown — removing a
+                # visible 3D Points node can crash vispy natively.
                 try:
                     pts_layer._locked = False  # Unlock so it can be removed
+                    pts_layer.visible = False
+                    viewer_helpers.clear_points_index_cache(pts_layer)
                     viewer.layers.remove(pts_layer)
                 except ValueError:
                     pass

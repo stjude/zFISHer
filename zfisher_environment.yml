@@ -4,25 +4,18 @@ channels:
   - conda-forge
   - defaults
 dependencies:
+  # Conda provides only what pip handles poorly on Windows and what is NOT a
+  # pyproject.toml dependency, so no version is pinned in two places:
+  #   - the Python interpreter itself
+  #   - the CPU-only PyTorch stack (cellpose's backend; pip tends to pull a CUDA build)
   - python=3.10.19
-  - napari=0.6.6
-  - pyside6=6.8.1
-  - numpy=1.24.3
-  - scikit-image=0.24.0
-  - pandas=2.3.3
-  - tifffile=2025.2.18
-  - magicgui=0.10.1
-  - simpleitk=2.5.3
-  - packaging=26.0
-  - qtpy=2.4.3
-  - cpuonly
   - pytorch=2.3.1
   - torchvision=0.18.1
-  - pillow=12.0.0
+  - cpuonly
   - pip
   - pip:
-    - cellpose==4.0.8
-    - nd2==0.11.2
-    - openpyxl==3.1.5
-    - scipy==1.15.3
-    - markdown==3.10.2
+    # Everything else (napari, PySide6, numpy, scipy, scikit-image, pandas,
+    # SimpleITK, cellpose, nd2, openpyxl, magicgui, tifffile, qtpy, markdown,
+    # packaging, Pillow) is resolved from pyproject.toml — the single source of
+    # truth for Python-package versions.
+    - -e .

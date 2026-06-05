@@ -229,7 +229,15 @@ def on_layer_inserted(event, widgets):
     QTimer.singleShot(100, update_widgets)
 
 def _remove_layer_and_file(layer_name):
-    """Remove a layer's session entry and delete its file from disk."""
+    """Remove a layer's session entry and BACK UP its file on disk.
+
+    The file is renamed to ``<name>.bak`` instead of being deleted, so an
+    accidental removal — a misclick, or a layer torn down while napari crashes —
+    never destroys irreplaceable data such as a manually-curated puncta CSV. The
+    backup is recovered automatically on the next session load when the canonical
+    file is missing (see ``session.load_session_file``). If the backup itself
+    fails, the original is left untouched — we never destroy the only copy.
+    """
     from pathlib import Path
     processed = session.get_data("processed_files", default={})
     file_info = processed.get(layer_name)
@@ -239,10 +247,11 @@ def _remove_layer_and_file(layer_name):
             try:
                 p = Path(path)
                 if p.exists():
-                    p.unlink()
-                    logger.info("Deleted file on disk: %s", path)
+                    backup = p.with_name(p.name + ".bak")
+                    p.replace(backup)  # atomic; overwrites any prior backup
+                    logger.info("Backed up removed layer file: %s -> %s", path, backup.name)
             except Exception as e:
-                logger.warning("Could not delete file for '%s': %s", layer_name, e)
+                logger.warning("Could not back up file for '%s': %s (left in place)", layer_name, e)
     session.remove_processed_file(layer_name)
 
 def on_layer_removed(event, widgets):

@@ -292,17 +292,20 @@ def _on_points_data_changed(event=None):
         _puncta_undo._stack.append(('data', layer.name, _prev_snapshot[0][0], _prev_snapshot[0][1]))
         _prev_snapshot[0] = None
 
-    # Points were added (napari appends new points at the end) — assign a
-    # monotonic id to each new point that does not already carry one. A point
-    # placed by the fishing hook already has its id set, so it is skipped.
+    # Points were added (napari appends new points at the end). napari fills the
+    # new rows' features from ``layer.feature_defaults`` — typically an existing
+    # (or just-deleted) id — so every point placed by the native Add tool arrives
+    # carrying a bogus puncta_id (the "all show the same number" symptom, and id
+    # REUSE after deleting the highest-numbered point). Every row that reaches this
+    # loop is a native add: the fishing hook and undo both set _skip_data_sync and
+    # sync the point count, so they never get here. So unconditionally draw a fresh
+    # id from the monotonic counter — never trust the broadcast value.
     features = layer.features
     if 'puncta_id' not in features.columns:
         features['puncta_id'] = pd.Series(dtype='float')
 
     for i in range(prev, n):
         idx = features.index[i] if i < len(features) else i
-        if i < len(features) and pd.notna(features.loc[idx].get('puncta_id')):
-            continue  # already has an id (e.g. set by the fishing hook)
         features.loc[idx, 'puncta_id'] = _next_puncta_ids(layer, 1)[0]
         # Compute intensity + SNR, and assign the nucleus from the consensus mask.
         z, y, x = layer.data[i]
@@ -501,13 +504,24 @@ def fishing_hook_callback(layer, event):
 
     viewer = napari.current_viewer()
     channel_name = layer.name.replace(constants.PUNCTA_SUFFIX, "")
-    img_layer = next(
-        (l for l in viewer.layers if isinstance(l, napari.layers.Image) and l.name == channel_name),
-        next((l for l in viewer.layers if isinstance(l, napari.layers.Image) and l.visible), None)
-    )
-    if not img_layer or not layer: return
-    
+    images = [l for l in viewer.layers if isinstance(l, napari.layers.Image)]
+    # Prefer THIS layer's source image (even if hidden); else a visible image
+    # whose coordinate frame already matches this layer's. Never fall back to a
+    # mismatched image (e.g. a post-warp 'Aligned …' image): resyncing the puncta
+    # layer onto it corrupts its calibration, snaps to the wrong place, and writes
+    # the layer transform on a visible layer (a native-GL-crash risk).
+    img_layer = next((l for l in images if l.name == channel_name), None)
+    if img_layer is None:
+        img_layer = next((l for l in images if l.visible
+                          and np.allclose(l.scale, layer.scale)
+                          and np.allclose(l.translate, layer.translate)), None)
+    if not img_layer or not layer:
+        viewer.status = "Fishing hook: no matching reference image for this layer."
+        return
+
     if not np.allclose(layer.scale, img_layer.scale) or not np.allclose(layer.translate, img_layer.translate):
+        # Clear the GL index cache before mutating the transform on a visible layer.
+        viewer_helpers.clear_points_index_cache(layer)
         layer.scale = img_layer.scale
         layer.translate = img_layer.translate
 
@@ -539,6 +553,11 @@ def fishing_hook_callback(layer, event):
                 if layer.mode == 'add' and len(new_data) > 0:
                     viewer_helpers.set_points_data(layer, new_data[:-1])
                 viewer.status = "Point already exists here."
+                # Reset the guard and resync the count — otherwise it stays True
+                # and the data handler silently stops assigning ids to later
+                # native adds.
+                _skip_data_sync = False
+                _prev_point_count[0] = len(layer.data)
                 return
         
         # --- ID Management ---
@@ -593,16 +612,26 @@ def fishing_hook_callback(layer, event):
 pe_undo_btn = widgets.PushButton(text="Undo", tooltip="Undo the last puncta edit (add or remove).")
 
 def _on_puncta_undo():
+    global _skip_data_sync
     viewer = napari.current_viewer()
     layer = _puncta_editor_widget.points_layer.value
     if not viewer:
         return
-    result = _puncta_undo.undo(layer)
+    # Restore under the guard so the data-change handler doesn't treat restored
+    # points as new (renumbering them or pushing bogus undo snapshots).
+    _skip_data_sync = True
+    try:
+        result = _puncta_undo.undo(layer)
+    finally:
+        _skip_data_sync = False
     if result is None:
         viewer.status = "Nothing to undo."
         return
     kind, restored_layer = result
     if kind == 'data':
+        # Resync trackers to the restored state for the next native-add diff.
+        _prev_point_count[0] = len(restored_layer.data)
+        _prev_snapshot[0] = (restored_layer.data.copy(), restored_layer.features.copy())
         logger.info("PUNCTA EDIT: Undo on layer '%s' (%d remaining)", restored_layer.name, len(_puncta_undo))
         viewer.status = f"Undo ({len(_puncta_undo)} remaining)."
     elif kind == 'layer':
