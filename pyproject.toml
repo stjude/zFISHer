@@ -35,6 +35,8 @@ dependencies = [
     "magicgui==0.10.1",
     "SimpleITK==2.5.3",
     "cellpose==4.0.8",
+    "torch==2.3.1",
+    "torchvision==0.18.1",
     "nd2==0.11.2",
     "openpyxl==3.1.5",
     "markdown==3.10.2",
