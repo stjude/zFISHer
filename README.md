@@ -209,32 +209,66 @@ A CUDA-compatible NVIDIA GPU is recommended for Cellpose 3D segmentation.
 
 ## Installation
 
-zFISHer requires Conda and Python 3.10.
 
-1. **Clone the repository:**
-    ```bash
-    git clone https://github.com/stjude/zFISHer.git
-    cd zFISHer
+zFISHer requires **Python 3.10**. The package declares `requires-python = ">=3.10,<3.11"`, so it will **not** install on Python 3.9 or 3.11+ — pip will refuse with a version error. Choose one of the two setups below.
+
+
+Clone the repository first (run all install commands from the repository root):
+
+
+```bash
+git clone https://github.com/stjude/zFISHer.git
+cd zFISHer
+```
+
+
+### Option A — Conda (recommended)
+
+
+The Conda environment file pins Python 3.10, installs the CPU-only PyTorch stack (which pip handles poorly, especially on Windows), and installs zFISHer plus the rest of its dependencies from `pyproject.toml`:
+
+
+```bash
+conda env create -f zfisher_environment.yml
+conda activate zFISHer
+```
+
+
+`conda env create` installs zFISHer itself, so there is **no separate `pip install` step**. Skip to [Usage](#usage).
+
+
+### Option B — pip / venv (from pyproject.toml)
+
+
+If you manage your own environment, **it must use Python 3.10** (pip enforces this and will refuse any other version). Create and activate a Python 3.10 environment, then install:
+
+
+```bash
+# Create a Python 3.10 environment — for example, with conda:
+conda create -n zFISHer python=3.10
+conda activate zFISHer
+
+
+# ...or with venv, pointing at a Python 3.10 interpreter:
+#   Windows:       py -3.10 -m venv .venv  &&  .venv\Scripts\activate
+#   macOS/Linux:   python3.10 -m venv .venv  &&  source .venv/bin/activate
+
+
+pip install .
+```
+
+
+This resolves every dependency from `pyproject.toml`. PyTorch is pulled in by Cellpose from PyPI and may be a large build; for a lean CPU-only install, run `pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu` before `pip install .`, or just use Option A.
     ```
 
-2. **Create and activate the Conda environment:**
-    ```bash
-    conda env create -f zfisher_environment.yml
-    conda activate zFISHer
-    ```
+### (Optional) Enable GPU acceleration for Cellpose:**
 
-3. **Install zFISHer:**
-    ```bash
-    pip install .
-    ```
+The default environment installs CPU-only PyTorch. For GPU-accelerated Cellpose 3D segmentation, replace it with the CUDA version:
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+```
+Requires an NVIDIA GPU with CUDA drivers installed. See [PyTorch Get Started](https://pytorch.org/get-started/locally/) to select the correct CUDA version for your system.
 
-4. **(Optional) Enable GPU acceleration for Cellpose:**
-
-    The default environment installs CPU-only PyTorch. For GPU-accelerated Cellpose 3D segmentation, replace it with the CUDA version:
-    ```bash
-    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-    ```
-    Requires an NVIDIA GPU with CUDA drivers installed. See [PyTorch Get Started](https://pytorch.org/get-started/locally/) to select the correct CUDA version for your system.
 
 ## Usage
 
