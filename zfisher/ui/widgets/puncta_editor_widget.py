@@ -632,6 +632,16 @@ def _on_puncta_undo():
         # Resync trackers to the restored state for the next native-add diff.
         _prev_point_count[0] = len(restored_layer.data)
         _prev_snapshot[0] = (restored_layer.data.copy(), restored_layer.features.copy())
+        # Rebuild the id text + refresh. The data-event handler that normally
+        # re-renders puncta_id labels is suppressed during undo (_skip_data_sync),
+        # and the in-place format restore in undo() doesn't force a redraw — so
+        # without this the labels go blank after a restore.
+        if 'puncta_id' in restored_layer.features.columns:
+            restored_layer.text = {
+                'string': '{puncta_id:.0f}', 'size': restored_layer.text.size,
+                'color': 'white', 'translation': np.array([0, 5, 5]),
+            }
+        restored_layer.refresh()
         logger.info("PUNCTA EDIT: Undo on layer '%s' (%d remaining)", restored_layer.name, len(_puncta_undo))
         viewer.status = f"Undo ({len(_puncta_undo)} remaining)."
     elif kind == 'layer':
