@@ -78,21 +78,36 @@ def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None, co
 
         df_meta = pd.DataFrame(meta_list)
 
-        with pd.ExcelWriter(save_path, engine='openpyxl') as writer:
-            df.to_excel(writer, sheet_name=constants.DISTANCES_SHEET, index=False)
-            if coloc_df is not None and not coloc_df.empty:
-                coloc_df.to_excel(writer, sheet_name=constants.COLOCALIZATION_SHEET, index=False)
-            if tri_coloc_df is not None and not tri_coloc_df.empty:
-                tri_coloc_df.to_excel(writer, sheet_name=constants.TRI_COLOCALIZATION_SHEET, index=False)
-            if per_nucleus_df is not None and not per_nucleus_df.empty:
-                per_nucleus_df.to_excel(writer, sheet_name=constants.PER_NUCLEI_SHEET, index=False)
-            if stats_df is not None and not stats_df.empty:
-                stats_df.to_excel(writer, sheet_name=constants.STATS_SHEET, index=False)
-            if distribution_df is not None and not distribution_df.empty:
-                distribution_df.to_excel(writer, sheet_name=constants.DISTRIBUTION_SHEET, index=False)
-            if params_df is not None and not params_df.empty:
-                params_df.to_excel(writer, sheet_name=constants.PARAMETERS_SHEET, index=False)
-            df_meta.to_excel(writer, sheet_name=constants.METADATA_SHEET, index=False)
+        # Defer cyclic garbage collection across the openpyxl write. After a long
+        # GUI session that removed layers (e.g. the warp removes the raw puncta
+        # layers), orphaned vispy GL buffer objects can sit in reference cycles;
+        # if the cyclic collector fires mid-write — when no GL context is current
+        # — finalizing one issues a glDelete* with no context and crashes the
+        # process with a native access violation ("Garbage-collecting"). Reference
+        # counting still frees normal objects during the write; we only delay the
+        # cyclic sweep until the file is safely on disk.
+        import gc as _gc
+        _gc_was_enabled = _gc.isenabled()
+        _gc.disable()
+        try:
+            with pd.ExcelWriter(save_path, engine='openpyxl') as writer:
+                df.to_excel(writer, sheet_name=constants.DISTANCES_SHEET, index=False)
+                if coloc_df is not None and not coloc_df.empty:
+                    coloc_df.to_excel(writer, sheet_name=constants.COLOCALIZATION_SHEET, index=False)
+                if tri_coloc_df is not None and not tri_coloc_df.empty:
+                    tri_coloc_df.to_excel(writer, sheet_name=constants.TRI_COLOCALIZATION_SHEET, index=False)
+                if per_nucleus_df is not None and not per_nucleus_df.empty:
+                    per_nucleus_df.to_excel(writer, sheet_name=constants.PER_NUCLEI_SHEET, index=False)
+                if stats_df is not None and not stats_df.empty:
+                    stats_df.to_excel(writer, sheet_name=constants.STATS_SHEET, index=False)
+                if distribution_df is not None and not distribution_df.empty:
+                    distribution_df.to_excel(writer, sheet_name=constants.DISTRIBUTION_SHEET, index=False)
+                if params_df is not None and not params_df.empty:
+                    params_df.to_excel(writer, sheet_name=constants.PARAMETERS_SHEET, index=False)
+                df_meta.to_excel(writer, sheet_name=constants.METADATA_SHEET, index=False)
+        finally:
+            if _gc_was_enabled:
+                _gc.enable()
 
         return save_path
 

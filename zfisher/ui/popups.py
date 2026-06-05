@@ -14,6 +14,47 @@ _saved_showwarning = None
 _stray_popup_suppressing = False
 
 
+def _reconcile_points_gl():
+    """Reconcile every Points layer's GL index cache + VBO with its current data.
+
+    While a progress dialog is open, layer add/update paths mutate Points data —
+    often while the layer is invisible, where napari's refresh short-circuits
+    (``if not (self.visible or force): return``) — leaving the vispy Markers
+    vertex buffer and view-index cache stale. The next deferred paint then issues
+    an oversized ``glDrawArrays`` and reads past the buffer: a native access
+    violation that surfaces under the shipped PySide6 backend (PyQt5 happened to
+    coalesce the paint when buffers were consistent, masking it). Clearing the
+    index cache and forcing a reslice (``force=True`` reslices even invisible
+    layers) re-uploads the VBO with a matching count, so the next draw is safe.
+    Best-effort: never raises.
+    """
+    try:
+        import napari
+        from napari.layers import Points
+        from . import viewer_helpers
+        viewer = napari.current_viewer()
+        if viewer is None:
+            return
+        for layer in list(viewer.layers):
+            if isinstance(layer, Points):
+                try:
+                    viewer_helpers.clear_points_index_cache(layer)
+                    layer.refresh(force=True)  # force=True: reslice invisible layers too
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+def _pump_events():
+    """Pump Qt events after reconciling Points-layer GL state. Replaces direct
+    ``QApplication.processEvents()`` in the progress dialogs so a deferred vispy
+    redraw never draws a Markers visual whose VBO is stale (see
+    :func:`_reconcile_points_gl`)."""
+    _reconcile_points_gl()
+    QApplication.processEvents()
+
+
 def _install_stray_popup_filter():
     """Monkey-patch napari widgets that flash as top-level windows.
 
@@ -217,7 +258,7 @@ class ProgressDialog(QDialog):
         self.show()
         self.raise_()
         self._center_on_parent()
-        QApplication.processEvents()
+        _pump_events()
 
     def _center_on_parent(self):
         """Position the dialog at the center of its parent widget."""
@@ -263,7 +304,7 @@ class ProgressDialog(QDialog):
                 self._bar.setRange(0, 100)  # back to determinate
             self._bar.setValue(value)
         if not self._canvas_frozen:
-            QApplication.processEvents()
+            _pump_events()
 
     def freeze_canvas(self):
         """Suppress processEvents during layer mutations to prevent vispy
@@ -281,7 +322,7 @@ class ProgressDialog(QDialog):
         """Re-enable processEvents and force a single clean redraw."""
         if self._canvas_frozen:
             self._canvas_frozen = False
-            QApplication.processEvents()
+            _pump_events()
 
     def __enter__(self):
         # Suppress Python warnings and napari notification toasts
@@ -301,14 +342,14 @@ class ProgressDialog(QDialog):
             self._overlay = None
         # Flush any remaining Qt events while notifications are still suppressed
         # so that deferred napari toasts from layer mutations don't appear.
-        QApplication.processEvents()
+        _pump_events()
         # Now safe to restore warnings and notifications
         if self._warnings_ctx:
             self._warnings_ctx.__exit__(None, None, None)
             self._warnings_ctx = None
         _restore_napari_notifications()
         # Flush again and close any toasts that slipped through during restore
-        QApplication.processEvents()
+        _pump_events()
         try:
             from napari._qt.dialogs.qt_notification import NapariQtNotification
             for w in QApplication.topLevelWidgets():
@@ -385,7 +426,7 @@ class BatchProgressDialog(QDialog):
         self.show()
         self.raise_()
         self._center_on_parent()
-        QApplication.processEvents()
+        _pump_events()
 
     def _center_on_parent(self):
         parent = self.parent()
@@ -411,7 +452,7 @@ class BatchProgressDialog(QDialog):
             self._batch_label.setText(text)
         self._batch_bar.setValue(value)
         if not self._canvas_frozen:
-            QApplication.processEvents()
+            _pump_events()
 
     def update_item_progress(self, value: int, text: str = None):
         """Updates the current item's pipeline progress bar."""
@@ -419,7 +460,7 @@ class BatchProgressDialog(QDialog):
             self._item_label.setText(text)
         self._item_bar.setValue(value)
         if not self._canvas_frozen:
-            QApplication.processEvents()
+            _pump_events()
 
     def freeze_canvas(self):
         self._canvas_frozen = True
@@ -427,7 +468,7 @@ class BatchProgressDialog(QDialog):
     def unfreeze_canvas(self):
         if self._canvas_frozen:
             self._canvas_frozen = False
-            QApplication.processEvents()
+            _pump_events()
 
     def __enter__(self):
         self._warnings_ctx = warnings.catch_warnings()
@@ -443,7 +484,7 @@ class BatchProgressDialog(QDialog):
             self._overlay.close()
             self._overlay.deleteLater()
             self._overlay = None
-        QApplication.processEvents()
+        _pump_events()
         if self._warnings_ctx:
             self._warnings_ctx.__exit__(None, None, None)
             self._warnings_ctx = None

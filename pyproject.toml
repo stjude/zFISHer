@@ -25,7 +25,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Visualization",
 ]
 dependencies = [
-    "napari[all]==0.6.6",
+    "napari[optional]==0.6.6",
     "PySide6==6.8.1",
     "numpy==2.2.6",
     "scipy==1.15.3",
@@ -35,6 +35,11 @@ dependencies = [
     "magicgui==0.10.1",
     "SimpleITK==2.5.3",
     "cellpose==4.0.8",
+    # Pin torch explicitly: cellpose only requires torch>=1.6, so a fresh pip
+    # install would otherwise pull a too-new torch that fails to import on
+    # Python 3.10 (torch.distributed._pycute uses a 3.11+ `Self | int` annotation).
+    "torch==2.3.1",
+    "torchvision==0.18.1",
     "nd2==0.11.2",
     "openpyxl==3.1.5",
     "markdown==3.10.2",

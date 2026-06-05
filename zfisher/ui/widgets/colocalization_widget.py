@@ -327,3 +327,10 @@ for w in [_rule_builder.native, _tri_rule_builder.native]:
         child.setMinimumWidth(0)
     for child in w.findChildren(QAbstractSpinBox) + w.findChildren(QComboBox):
         child.setMinimumWidth(0)
+
+# Long-content labels (info + the rule readouts) must word-wrap and be allowed to
+# shrink — otherwise their full-width text forces the whole panel wider than the
+# sidebar, which clips every other label at the viewport edge.
+for _lbl in (info.native, _rules_display.native, _tri_rules_display.native):
+    _lbl.setWordWrap(True)
+    _lbl.setMinimumWidth(0)
