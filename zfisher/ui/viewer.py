@@ -73,7 +73,6 @@ class DraggableScaleBar(QWidget):
         self.viewer.layers.events.inserted.connect(self.on_layer_change)
         self.viewer.layers.events.removed.connect(self.on_layer_change)
 
-        self.pixel_size_um = 1.0
         self.bar_length_um = 10
         self.bar_length_px = 100
         self.text = ""
@@ -93,13 +92,7 @@ class DraggableScaleBar(QWidget):
             if p_w > 0 and p_h > 0:
                 self.move(p_w - self.width() - 20, p_h - self.height() - 20)
 
-    def get_pixel_size(self):
-        # This should ideally get the pixel size from the current layer
-        # For now, it seems to be hardcoded in dependent calculations
-        return 1.0
-
     def recalculate(self):
-        self.pixel_size_um = self.get_pixel_size()
         self.on_zoom()
 
     def on_layer_change(self, event=None):
@@ -110,16 +103,13 @@ class DraggableScaleBar(QWidget):
         if zoom == 0: return
         target_px = 150
         
-        # Get pixel size from the active layer's scale metadata.
-        # Fallback to 1.0 when no layer is selected (scale bar is inaccurate
-        # but remains visible until a layer provides real pixel spacing).
-        active_layer = self.viewer.layers.selection.active
-        if active_layer:
-             pixel_size_x = active_layer.scale[-1]
-        else:
-             pixel_size_x = 1.0
-
-        um_per_canvas_px = pixel_size_x / zoom if pixel_size_x > 0 else 1.0 / zoom
+        # napari's camera.zoom is canvas-pixels per WORLD unit, and the world unit
+        # is already physical (um) because each layer's voxel scale is baked into
+        # the data->world transform. So um-per-canvas-pixel is simply 1/zoom -- the
+        # exact formula napari's own scale bar uses. Multiplying by the layer's
+        # voxel size here would double-count the calibration and shrink the bar by
+        # ~10x for sub-um voxels (10 um reading as 1 um).
+        um_per_canvas_px = 1.0 / zoom
 
         target_um = target_px * um_per_canvas_px
         if target_um <= 0: return
