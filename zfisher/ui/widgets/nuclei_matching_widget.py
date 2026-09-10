@@ -3,10 +3,10 @@ from magicgui import magicgui
 from magicgui.widgets import Container, Label
 
 from ...core import session, segmentation
+from ._shared import make_divider as _make_divider, make_section_header as _make_section_header, make_section_desc as _make_section_desc, make_spacer as _make_spacer
 from .. import popups, viewer_helpers
 from ..decorators import require_active_session, error_handler
 from ... import constants
-from ._shared import make_header_divider
 
 @magicgui(
     call_button="Match & Merge Nuclei",
@@ -58,7 +58,7 @@ def _nuclei_matching_widget(
             mask1=r1_mask_layer.data,
             mask2=r2_mask_layer.data,
             output_dir=output_dir,
-            threshold=match_threshold if match_threshold > 0 else 0,
+            threshold=match_threshold or None,
             method=method,
             progress_callback=lambda p, m: dialog.update_progress(p, m)
         )
@@ -99,30 +99,6 @@ def _nuclei_matching_widget(
 # --- UI Helpers ---
 from qtpy.QtWidgets import QLabel, QFrame, QSizePolicy
 from ..style import COLORS
-
-def _make_divider():
-    line = QFrame()
-    line.setFixedHeight(2)
-    line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
-    return line
-
-def _make_section_header(text):
-    label = QLabel(f"<b style='color: #7a6b8a;'>{text}</b>")
-    label.setContentsMargins(0, 0, 0, 0)
-    label.setStyleSheet("margin: 0px 2px; padding: 0px;")
-    return label
-
-def _make_section_desc(text):
-    desc = QLabel(text)
-    desc.setWordWrap(True)
-    desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
-    return desc
-
-def _make_spacer():
-    from qtpy.QtWidgets import QWidget as _W
-    s = _W()
-    s.setFixedHeight(20)
-    return s
 
 # --- UI Wrapper ---
 class _NucleiMatchingContainer(Container):

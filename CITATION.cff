@@ -3,7 +3,6 @@ title: "zFISHer: An Interactive Platform for 3D Puncta Curation and Colocalizati
 message: "If you use this software, please cite it using the metadata from this file."
 type: software
 license: MIT
-version: 1.0.0
 authors:
   - given-names: Seth
     family-names: Staller

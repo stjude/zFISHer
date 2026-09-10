@@ -7,6 +7,7 @@ import pandas as pd
 from scipy.spatial import cKDTree
 
 from ..decorators import require_active_session
+from .. import viewer_helpers
 from ... import constants
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,39 @@ def _compute_quality_at_point(points_layer, z, y, x, radius=2):
     return peak, snr
 
 
+def _nucleus_id_at_point(points_layer, z, y, x):
+    """Return the consensus-mask nucleus label at a point, or 0.
+
+    Queries the ``Consensus_Nuclei_masks`` layer at the point's world
+    coordinates (mapped into the mask's voxel space, mirroring
+    ``viewer_helpers.resync_puncta_nucleus_ids``), so a manually added punctum
+    gets its real nucleus immediately instead of defaulting to 0 (which would
+    drop it from the per-nucleus / Stats / Distribution report tabs).
+
+    Returns 0 when there is no consensus mask (e.g. before alignment) or the
+    point is out of bounds. That is harmless: puncta added to raw layers get
+    their Nucleus_ID reassigned from the consensus mask when transformed into
+    aligned space.
+    """
+    viewer = napari.current_viewer()
+    if viewer is None:
+        return 0
+    mask_layer = next(
+        (l for l in viewer.layers
+         if isinstance(l, napari.layers.Labels)
+         and constants.CONSENSUS_MASKS_NAME in l.name),
+        None,
+    )
+    if mask_layer is None:
+        return 0
+    world = np.array([z, y, x], dtype=float) * np.array(points_layer.scale) + np.array(points_layer.translate)
+    voxel = np.round((world - np.array(mask_layer.translate)) / np.array(mask_layer.scale)).astype(int)
+    shape = np.array(mask_layer.data.shape)
+    if np.any(voxel < 0) or np.any(voxel >= shape):
+        return 0
+    return int(mask_layer.data[voxel[0], voxel[1], voxel[2]])
+
+
 def reset_puncta_editor_state():
     """Clear all module-level state. Called on session reset."""
     global _skip_data_sync, _f_key_held, _f_key_bound
@@ -198,16 +232,43 @@ def delete_point_under_mouse(viewer):
         layer.selected_data = {val}; layer.remove_selected()
         viewer.status = f"Deleted spot {val}"
 
-def register_editor_hotkeys(viewer):
-    @viewer.bind_key('x', overwrite=True)
-    def _delete_hotkey(v): delete_point_under_mouse(v)
-
 _previous_editor_layer = [None]  # mutable container to allow closure mutation
 
 _prev_data_connection = [None]  # (layer, callback) for data event
 _prev_point_count = [0]
 _prev_snapshot = [None]  # (data, features) snapshot before native add
 _skip_data_sync = False  # set True when our own code modifies data
+
+
+def _seed_next_puncta_id(layer):
+    """Ensure a per-layer monotonic puncta_id counter exists and is not stale.
+
+    The counter is stored in ``layer.metadata['next_puncta_id']`` and only ever
+    increases. Seeding from ``max(existing puncta_id) + 1`` at layer-attach time
+    captures the high-water mark *before* any deletes, so deleting the
+    highest-numbered punctum and adding a new one never reuses the freed id.
+    Calling this repeatedly is safe — it never lowers the counter.
+
+    (In-memory only: the mark is re-seeded from the surviving max on a fresh
+    session load, so reuse is prevented within an editing session.)
+    """
+    cur_max = -1
+    feats = getattr(layer, 'features', None)
+    if feats is not None and 'puncta_id' in feats.columns:
+        m = feats['puncta_id'].dropna().max()
+        if pd.notna(m):
+            cur_max = int(m)
+    prev = int(layer.metadata.get('next_puncta_id', 0))
+    layer.metadata['next_puncta_id'] = max(prev, cur_max + 1)
+
+
+def _next_puncta_ids(layer, count):
+    """Allocate ``count`` monotonically increasing puncta_ids for ``layer``."""
+    _seed_next_puncta_id(layer)
+    start = int(layer.metadata['next_puncta_id'])
+    layer.metadata['next_puncta_id'] = start + count
+    return list(range(start, start + count))
+
 
 def _on_points_data_changed(event=None):
     """Auto-assign unique puncta_id when points are added via napari's native Add mode."""
@@ -231,29 +292,30 @@ def _on_points_data_changed(event=None):
         _puncta_undo._stack.append(('data', layer.name, _prev_snapshot[0][0], _prev_snapshot[0][1]))
         _prev_snapshot[0] = None
 
-    # Points were added — assign unique IDs to all new points
-    n_new = n - prev
+    # Points were added (napari appends new points at the end). napari fills the
+    # new rows' features from ``layer.feature_defaults`` — typically an existing
+    # (or just-deleted) id — so every point placed by the native Add tool arrives
+    # carrying a bogus puncta_id (the "all show the same number" symptom, and id
+    # REUSE after deleting the highest-numbered point). Every row that reaches this
+    # loop is a native add: the fishing hook and undo both set _skip_data_sync and
+    # sync the point count, so they never get here. So unconditionally draw a fresh
+    # id from the monotonic counter — never trust the broadcast value.
     features = layer.features
     if 'puncta_id' not in features.columns:
         features['puncta_id'] = pd.Series(dtype='float')
 
-    max_id = features['puncta_id'].dropna().max()
-    next_id = int(max_id) + 1 if pd.notna(max_id) else 0
-
     for i in range(prev, n):
         idx = features.index[i] if i < len(features) else i
-        if i < len(features) and pd.notna(features.loc[idx].get('puncta_id')) and features.loc[idx]['puncta_id'] != features.iloc[prev - 1]['puncta_id'] if prev > 0 else False:
-            continue  # already has a unique ID (set by fishing hook)
-        features.loc[idx, 'puncta_id'] = next_id
-        # Compute intensity + SNR at the point from the source image layer
+        features.loc[idx, 'puncta_id'] = _next_puncta_ids(layer, 1)[0]
+        # Compute intensity + SNR, and assign the nucleus from the consensus mask.
         z, y, x = layer.data[i]
         peak, snr = _compute_quality_at_point(layer, z, y, x)
-        for col, default in [('Nucleus_ID', 0), ('Intensity', peak), ('SNR', snr), ('Source', 'manual')]:
+        nuc = _nucleus_id_at_point(layer, z, y, x)
+        for col, default in [('Nucleus_ID', nuc), ('Intensity', peak), ('SNR', snr), ('Source', 'manual')]:
             if col not in features.columns:
                 features[col] = default
             else:
                 features.loc[idx, col] = default
-        next_id += 1
 
     _skip_data_sync = True
     try:
@@ -263,6 +325,10 @@ def _on_points_data_changed(event=None):
             'color': 'white', 'translation': np.array([0, 5, 5]),
         }
         layer.refresh()
+        # Persist explicitly: the autosave fired on the data event before these
+        # features were assigned, so save again now that the table is complete.
+        from .. import events as _events
+        _events.save_puncta_layer(layer)
     finally:
         _skip_data_sync = False
 
@@ -298,6 +364,9 @@ def _on_layer_change(new_layer):
         _prev_snapshot[0] = (new_layer.data.copy(), new_layer.features.copy())
         new_layer.events.data.connect(_on_points_data_changed)
         _prev_data_connection[0] = (new_layer, _on_points_data_changed)
+        # Seed the monotonic id counter from the current max BEFORE any edits,
+        # so a later delete-of-the-highest-id then add cannot reuse the freed id.
+        _seed_next_puncta_id(new_layer)
 
         # Sync: select the layer in the viewer layer list and make it visible
         viewer = napari.current_viewer()
@@ -435,13 +504,24 @@ def fishing_hook_callback(layer, event):
 
     viewer = napari.current_viewer()
     channel_name = layer.name.replace(constants.PUNCTA_SUFFIX, "")
-    img_layer = next(
-        (l for l in viewer.layers if isinstance(l, napari.layers.Image) and l.name == channel_name),
-        next((l for l in viewer.layers if isinstance(l, napari.layers.Image) and l.visible), None)
-    )
-    if not img_layer or not layer: return
-    
+    images = [l for l in viewer.layers if isinstance(l, napari.layers.Image)]
+    # Prefer THIS layer's source image (even if hidden); else a visible image
+    # whose coordinate frame already matches this layer's. Never fall back to a
+    # mismatched image (e.g. a post-warp 'Aligned …' image): resyncing the puncta
+    # layer onto it corrupts its calibration, snaps to the wrong place, and writes
+    # the layer transform on a visible layer (a native-GL-crash risk).
+    img_layer = next((l for l in images if l.name == channel_name), None)
+    if img_layer is None:
+        img_layer = next((l for l in images if l.visible
+                          and np.allclose(l.scale, layer.scale)
+                          and np.allclose(l.translate, layer.translate)), None)
+    if not img_layer or not layer:
+        viewer.status = "Fishing hook: no matching reference image for this layer."
+        return
+
     if not np.allclose(layer.scale, img_layer.scale) or not np.allclose(layer.translate, img_layer.translate):
+        # Clear the GL index cache before mutating the transform on a visible layer.
+        viewer_helpers.clear_points_index_cache(layer)
         layer.scale = img_layer.scale
         layer.translate = img_layer.translate
 
@@ -471,9 +551,13 @@ def fishing_hook_callback(layer, event):
             dist, _ = cKDTree(search_data).query(target_coord_data, k=1)
             if dist < 1.5:
                 if layer.mode == 'add' and len(new_data) > 0:
-                    layer._Points__indices_view = np.empty(0, int)
-                    layer.data = new_data[:-1]
+                    viewer_helpers.set_points_data(layer, new_data[:-1])
                 viewer.status = "Point already exists here."
+                # Reset the guard and resync the count — otherwise it stays True
+                # and the data handler silently stops assigning ids to later
+                # native adds.
+                _skip_data_sync = False
+                _prev_point_count[0] = len(layer.data)
                 return
         
         # --- ID Management ---
@@ -481,21 +565,14 @@ def fishing_hook_callback(layer, event):
         if 'puncta_id' not in current_features:
             current_features['puncta_id'] = pd.Series(dtype='int')
 
-        # Determine next ID, ignoring NaNs
-        if not current_features['puncta_id'].empty:
-            max_id = current_features['puncta_id'].dropna().max()
-            if pd.notna(max_id):
-                next_id = int(max_id) + 1
-            else: # No valid IDs exist
-                next_id = 0
-        else:
-            next_id = 0
+        # Monotonic id — never reuses a number freed by a prior delete.
+        next_id = _next_puncta_ids(layer, 1)[0]
 
         z, y, x = target_coord_data
         _peak, _snr = _compute_quality_at_point(layer, z, y, x)
         new_properties = {
             'puncta_id': next_id,
-            'Nucleus_ID': 0,
+            'Nucleus_ID': _nucleus_id_at_point(layer, z, y, x),
             'Intensity': _peak,
             'SNR': _snr,
             'Source': 'manual',
@@ -519,10 +596,13 @@ def fishing_hook_callback(layer, event):
             new_row = pd.DataFrame([new_properties])
             current_features = pd.concat([current_features, new_row], ignore_index=True)
             
-        layer._Points__indices_view = np.empty(0, int)
-        layer.data = new_data
+        viewer_helpers.set_points_data(layer, new_data)
         layer.features = current_features
         _prev_point_count[0] = len(new_data)  # sync count so data listener doesn't re-process
+        # Persist explicitly now that data AND features are both set — the
+        # data-event autosave may have run before features were assigned.
+        from .. import events as _events
+        _events.save_puncta_layer(layer)
         _skip_data_sync = False
         layer.refresh()
         logger.info("PUNCTA EDIT: Added point ID %d at %s on layer '%s'", next_id, np.round(target_coord_data, 1), layer.name)
@@ -532,16 +612,36 @@ def fishing_hook_callback(layer, event):
 pe_undo_btn = widgets.PushButton(text="Undo", tooltip="Undo the last puncta edit (add or remove).")
 
 def _on_puncta_undo():
+    global _skip_data_sync
     viewer = napari.current_viewer()
     layer = _puncta_editor_widget.points_layer.value
     if not viewer:
         return
-    result = _puncta_undo.undo(layer)
+    # Restore under the guard so the data-change handler doesn't treat restored
+    # points as new (renumbering them or pushing bogus undo snapshots).
+    _skip_data_sync = True
+    try:
+        result = _puncta_undo.undo(layer)
+    finally:
+        _skip_data_sync = False
     if result is None:
         viewer.status = "Nothing to undo."
         return
     kind, restored_layer = result
     if kind == 'data':
+        # Resync trackers to the restored state for the next native-add diff.
+        _prev_point_count[0] = len(restored_layer.data)
+        _prev_snapshot[0] = (restored_layer.data.copy(), restored_layer.features.copy())
+        # Rebuild the id text + refresh. The data-event handler that normally
+        # re-renders puncta_id labels is suppressed during undo (_skip_data_sync),
+        # and the in-place format restore in undo() doesn't force a redraw — so
+        # without this the labels go blank after a restore.
+        if 'puncta_id' in restored_layer.features.columns:
+            restored_layer.text = {
+                'string': '{puncta_id:.0f}', 'size': restored_layer.text.size,
+                'color': 'white', 'translation': np.array([0, 5, 5]),
+            }
+        restored_layer.refresh()
         logger.info("PUNCTA EDIT: Undo on layer '%s' (%d remaining)", restored_layer.name, len(_puncta_undo))
         viewer.status = f"Undo ({len(_puncta_undo)} remaining)."
     elif kind == 'layer':
@@ -558,28 +658,7 @@ from ..style import COLORS
 
 from qtpy.QtWidgets import QLabel as _QLabel, QWidget as _QWidget
 
-def _make_divider():
-    line = QFrame()
-    line.setFixedHeight(2)
-    line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
-    return line
-
-def _make_section_header(text):
-    label = _QLabel(f"<b style='color: #7a6b8a;'>{text}</b>")
-    label.setContentsMargins(0, 0, 0, 0)
-    label.setStyleSheet("margin: 0px 2px; padding: 0px;")
-    return label
-
-def _make_section_desc(text):
-    desc = _QLabel(text)
-    desc.setWordWrap(True)
-    desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
-    return desc
-
-def _make_spacer():
-    s = _QWidget()
-    s.setFixedHeight(20)
-    return s
+from ._shared import make_divider as _make_divider, make_section_header as _make_section_header, make_section_desc as _make_section_desc, make_spacer as _make_spacer
 
 class _PunctaEditorWidgetContainer(widgets.Container):
     """Wrapper that delegates reset_choices to the inner magicgui widget."""
@@ -858,8 +937,7 @@ def _on_clear_all(_=False):
     global _skip_data_sync
     _skip_data_sync = True
     try:
-        layer._Points__indices_view = np.empty(0, int)
-        layer.data = np.empty((0, layer.ndim))
+        viewer_helpers.set_points_data(layer, np.empty((0, layer.ndim)))
         layer.features = pd.DataFrame(columns=layer.features.columns)
         _prev_point_count[0] = 0
         layer.refresh()

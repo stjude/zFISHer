@@ -1,5 +1,5 @@
 import numpy as np
-from skimage.feature import peak_local_max, blob_log
+from skimage.feature import peak_local_max
 from skimage.filters import gaussian, threshold_otsu
 from skimage.measure import regionprops
 from scipy.spatial import cKDTree
@@ -7,8 +7,11 @@ import logging
 from skimage.transform import rescale, resize
 from scipy import ndimage as ndi
 from skimage.segmentation import watershed
-from skimage.morphology import remove_small_objects, white_tophat, disk, ball
-from cellpose import models, core
+from skimage.morphology import remove_small_objects
+try:
+    from cellpose import models, core
+except ImportError:  # cellpose (+torch) is heavy and only needed for Cellpose segmentation
+    models = core = None
 from pathlib import Path
 import tifffile
 
@@ -17,11 +20,7 @@ from .. import constants
 logger = logging.getLogger(__name__)
 
 
-# zfisher/core/segmentation.py
-# zfisher/core/segmentation.py
-
-# zfisher/core/segmentation.py (Partial: focus on process_consensus_nuclei)
-def process_consensus_nuclei(mask1, mask2, output_dir, threshold=20.0, method="Union", progress_callback=None):
+def process_consensus_nuclei(mask1, mask2, output_dir, threshold=None, method="Union", progress_callback=None):
     """
     Updated Core Orchestrator to support Union vs Intersection and 3D coordinate integrity.
     """
@@ -36,9 +35,6 @@ def process_consensus_nuclei(mask1, mask2, output_dir, threshold=20.0, method="U
     # Sub-pixel fragments can cause regionprops to produce NaN centroids
     # (when a region has area but no valid voxel center), triggering errors.
     # Removing objects below min_size prevents this while preserving valid nuclei.
-    # DEFINITIVE FIX: Clean the merged mask to remove any tiny, non-contiguous artifacts
-    # created by the intersection. This prevents regionprops from generating invalid (NaN)
-    # centroids, which was the root cause of the napari rendering warning.
     # The 'in_place' argument is not available in all scikit-image versions.
     # Reassigning the result is the backward-compatible way to achieve the same outcome.
     merged_mask = remove_small_objects(merged_mask, min_size=constants.NUC_SEG_OTSU_MIN_SIZE)
@@ -472,7 +468,7 @@ def segment_nuclei_cellpose(image_data, gpu=True, merge_splits=True, progress_ca
     if progress_callback: progress_callback(100, "Done.")
     return labels, centroids
 
-def match_nuclei_labels(mask1, mask2, threshold=20, progress_callback=None):
+def match_nuclei_labels(mask1, mask2, threshold=None, progress_callback=None):
     """
     Matches nuclei in mask2 to mask1 based on centroid distance.
 
@@ -515,28 +511,46 @@ def match_nuclei_labels(mask1, mask2, threshold=20, progress_callback=None):
     tree = cKDTree(c1)
     dists, idxs = tree.query(c2)
 
-    # Auto-determine threshold from the distance distribution if not explicitly set
+    # Resolve the match threshold: None (or a non-positive value, for backward
+    # compatibility) auto-detects from the distance distribution; a positive
+    # value is used as-is. Either way the resolved threshold is logged so it is
+    # clear which was used.
     if threshold is None or threshold <= 0:
         median_dist = np.median(dists[np.isfinite(dists)])
         mad = np.median(np.abs(dists[np.isfinite(dists)] - median_dist))
         threshold = median_dist + 3 * max(mad, 1.0)
+        logger.info("Nucleus match threshold: %.1f px (auto)", threshold)
         if progress_callback: progress_callback(40, f"Auto threshold: {threshold:.1f} px")
+    else:
+        logger.info("Nucleus match threshold: %.1f px (manual)", threshold)
+        if progress_callback: progress_callback(40, f"Using match threshold: {threshold:.1f} px")
 
     if progress_callback: progress_callback(50, "Creating ID map...")
-    mapping = {}
-    next_id = np.max(l1) + 1
+    next_id = int(np.max(l1)) + 1
 
+    # Resolve collisions deterministically by DISTANCE: when several mask2 nuclei
+    # fall within threshold of the same mask1 nucleus, the CLOSEST one inherits
+    # that mask1 ID (ties broken by smaller mask2 label for reproducibility).
+    # Every other mask2 nucleus — a tie loser or an unmatched/too-far nucleus —
+    # gets a fresh sequential ID, assigned in mask2 label order. This makes the
+    # relabeling independent of regionprops iteration order (previously the first
+    # nucleus encountered won the ID, making consensus non-deterministic), and
+    # replaces the O(n^2) ``in mapping.values()`` scan with O(1) dict lookups.
+    best_for_target = {}  # mask1 label -> (distance, mask2 label) of the closest claimant
     for i, (d, idx) in enumerate(zip(dists, idxs)):
-        old_label = l2[i]
         if d < threshold:
-            target_label = l1[idx]
-            # Handle potential merges: if multiple mask2 labels map to one mask1 label
-            if target_label in mapping.values():
-                # This old_label should be considered unmatched and get a new ID
-                mapping[old_label] = next_id
-                next_id += 1
-            else:
-                mapping[old_label] = target_label
+            target_label = int(l1[idx])
+            old_label = int(l2[i])
+            prev = best_for_target.get(target_label)
+            if prev is None or d < prev[0] or (d == prev[0] and old_label < prev[1]):
+                best_for_target[target_label] = (d, old_label)
+    winners = {old_label: target for target, (_, old_label) in best_for_target.items()}
+
+    mapping = {}
+    for i in range(len(l2)):
+        old_label = int(l2[i])
+        if old_label in winners:
+            mapping[old_label] = winners[old_label]
         else:
             mapping[old_label] = next_id
             next_id += 1

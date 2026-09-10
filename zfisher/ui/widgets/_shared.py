@@ -24,6 +24,47 @@ def make_header_divider():
     wrapper.native.layout().addWidget(line)
     return wrapper
 
+
+# --- Canonical section-styling helpers (shared by all sidebar widgets) ---------
+# These replace per-widget copies of the same four helpers. The separator color
+# is sourced from the theme (COLORS['separator_color']) so a theme change applies
+# everywhere instead of being silently missed by hardcoded copies.
+
+def make_divider():
+    """Full-width 2px horizontal divider (raw QFrame) for inside a widget form."""
+    from qtpy.QtWidgets import QFrame
+    line = QFrame()
+    line.setFixedHeight(2)
+    line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
+    return line
+
+
+def make_section_header(text):
+    """Bold accent-colored section header label."""
+    from qtpy.QtWidgets import QLabel
+    label = QLabel(f"<b style='color: {COLORS['separator_color']};'>{text}</b>")
+    label.setContentsMargins(0, 0, 0, 0)
+    label.setStyleSheet("margin: 0px 2px; padding: 0px;")
+    return label
+
+
+def make_section_desc(text):
+    """Wrapped descriptive text label shown under a section header."""
+    from qtpy.QtWidgets import QLabel
+    desc = QLabel(text)
+    desc.setWordWrap(True)
+    desc.setStyleSheet("color: white; margin: 2px 2px 10px 2px;")
+    return desc
+
+
+def make_spacer(height=20):
+    """Fixed-height invisible spacer widget."""
+    from qtpy.QtWidgets import QWidget
+    s = QWidget()
+    s.setFixedHeight(height)
+    return s
+
+
 def load_raw_data_into_viewer(viewer, round1_path, round2_path, output_dir=None, progress_callback=None):
     """
     Orchestrates loading raw image data (ND2/TIFF), converting it, and adding it to the viewer.

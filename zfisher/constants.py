@@ -14,6 +14,7 @@ CAPTURES_DIR = "captures"
 INPUT_DIR = "input"
 REPORTS_DIR = "reports"
 LOGS_DIR = "logs"
+SESSIONS_DIR = "sessions"
 
 # --- Layer Name Prefixes/Suffixes ---
 ALIGNED_PREFIX = "Aligned"
@@ -23,6 +24,32 @@ MASKS_SUFFIX = "_masks"
 PUNCTA_SUFFIX = "_puncta"
 CONSENSUS_MASKS_NAME = "Consensus_Nuclei_masks"
 CONSENSUS_IDS_SUFFIX = "_IDs"
+
+# --- Puncta CSV schema & canonical naming ---
+# Every puncta CSV is written with these columns, in this order. `puncta_id`
+# is a stable, persisted per-punctum identifier (assigned once at detection and
+# carried through the world-space transform and all edits) so a punctum keeps
+# the same identity across reloads, re-runs, and analysis report tabs.
+PUNCTA_CSV_COLUMNS = ['puncta_id', 'Z', 'Y', 'X', 'Nucleus_ID', 'Intensity', 'SNR', 'Source']
+
+
+def puncta_csv_stem(layer_name):
+    """Canonical on-disk filename stem for a puncta layer's CSV.
+
+    Spaces are replaced with underscores so the stem is filesystem-safe and
+    identical regardless of which writer produces the file. Every puncta writer
+    routes its path through :func:`puncta_csv_path`, so a layer maps to exactly
+    one file (no spaces-vs-underscore twins). The session-registry key, by
+    contrast, stays the layer's (human-readable) display name so existing
+    sessions keep working without a migration.
+    """
+    return layer_name.replace(' ', '_')
+
+
+def puncta_csv_path(reports_dir, layer_name):
+    """Canonical CSV path for a puncta layer inside ``reports_dir``."""
+    from pathlib import Path
+    return Path(reports_dir) / f"{puncta_csv_stem(layer_name)}.csv"
 
 # --- Segmentation Parameters ---
 # Classical Nuclei Segmentation

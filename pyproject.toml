@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zfisher"
-version = "1.0.0"
+dynamic = ["version"]
 description = "3D colocalization analysis for multiplexed sequential FISH, built on napari"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -35,6 +35,9 @@ dependencies = [
     "magicgui==0.10.1",
     "SimpleITK==2.5.3",
     "cellpose==4.0.8",
+    # Pin torch explicitly: cellpose only requires torch>=1.6, so a fresh pip
+    # install would otherwise pull a too-new torch that fails to import on
+    # Python 3.10 (torch.distributed._pycute uses a 3.11+ `Self | int` annotation).
     "torch==2.3.1",
     "torchvision==0.18.1",
     "nd2==0.11.2",
@@ -45,13 +48,23 @@ dependencies = [
     "Pillow==12.0.0",
 ]
 
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
 [project.urls]
 Homepage = "https://github.com/stjude/zFISHer"
 Repository = "https://github.com/stjude/zFISHer"
 Issues = "https://github.com/stjude/zFISHer/issues"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
 [project.scripts]
 zfisher = "main:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "zfisher.version.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["zfisher*"]

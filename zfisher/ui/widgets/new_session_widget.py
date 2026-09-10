@@ -8,7 +8,7 @@ from qtpy.QtWidgets import QFrame
 from ...core import session
 from .. import popups
 from ..decorators import error_handler
-from ._shared import load_raw_data_into_viewer
+from ._shared import load_raw_data_into_viewer, make_divider as _make_divider
 from ..style import COLORS
 
 class NewSessionWidget(Container):
@@ -26,19 +26,12 @@ class NewSessionWidget(Container):
         self._header.native.setObjectName("widgetHeader")
         self._info = Label(value="<i>Create a new session by loading Round 1 and Round 2 image files.</i>")
         self._info.native.setObjectName("widgetInfo")
-        self._round1_path = FileEdit(label="R1:", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path(r"..."), tooltip="Path to Round 1 .nd2 or OME-TIFF image file.")
-        self._round2_path = FileEdit(label="R2:", filter="*.nd2 *.tif *.tiff *.ome.tif", value=Path(r"..."), tooltip="Path to Round 2 .nd2 or OME-TIFF image file.")
+        self._round1_path = FileEdit(label="R1:", filter="*.nd2 *.tif *.tiff *.ome.tif", tooltip="Path to Round 1 .nd2 or OME-TIFF image file.")
+        self._round2_path = FileEdit(label="R2:", filter="*.nd2 *.tif *.tiff *.ome.tif", tooltip="Path to Round 2 .nd2 or OME-TIFF image file.")
 
         self._output_dir = FileEdit(label="Output:", mode="d", value=Path.home() / "zFISHer_Output", tooltip="Directory where all session files and results will be saved.")
         self._new_session_btn = PushButton(text="Start New Session")
         self._new_session_btn.tooltip = "Load the input files and initialize a new zFISHer session."
-
-    @staticmethod
-    def _make_divider():
-        line = QFrame()
-        line.setFixedHeight(2)
-        line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
-        return line
 
     def _init_layout(self):
         """Arranges all widgets in the container using native layout."""
@@ -70,7 +63,7 @@ class NewSessionWidget(Container):
         _layout.setContentsMargins(0, 0, 0, 0)
         _layout.addWidget(self._header.native)
         _layout.addWidget(self._info.native)
-        _layout.addWidget(self._make_divider())
+        _layout.addWidget(_make_divider())
         _layout.addWidget(self._desc)
         _layout.addSpacerItem(spacer())
         _layout.addWidget(self._r1_form.native)

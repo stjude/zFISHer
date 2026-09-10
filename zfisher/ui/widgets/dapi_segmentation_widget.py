@@ -8,6 +8,7 @@ from ...core import session
 from .. import popups, viewer_helpers
 from ..decorators import error_handler
 from ..style import COLORS
+from ._shared import make_divider as _make_divider
 from ...core.segmentation import (
     segment_nuclei_classical, segment_nuclei_cellpose,
     get_label_volumes, compute_min_volume_threshold, filter_small_labels,
@@ -88,13 +89,6 @@ class DapiSegmentationWidget(Container):
         self._cellpose_status.setVisible(False)
         self._cellpose_status.setStyleSheet("margin: 4px 2px; font-size: 12px;")
 
-    @staticmethod
-    def _make_divider():
-        line = QFrame()
-        line.setFixedHeight(2)
-        line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
-        return line
-
     def _init_layout(self):
         self._desc = QLabel(
             "Select the nuclear stain channel for each round. "
@@ -122,7 +116,7 @@ class DapiSegmentationWidget(Container):
         _layout.setContentsMargins(0, 0, 0, 0)
         _layout.addWidget(self._header.native)
         _layout.addWidget(self._info.native)
-        _layout.addWidget(self._make_divider())
+        _layout.addWidget(_make_divider())
         _layout.addWidget(self._desc)
         _layout.addWidget(self._r1_form.native)
         _layout.addWidget(self._r2_form.native)

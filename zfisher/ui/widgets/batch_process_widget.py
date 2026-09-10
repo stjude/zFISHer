@@ -15,6 +15,7 @@ from ...core.generate_batch_template import (
     resolve_coloc_for_dataset,
 )
 from .. import popups
+from ._shared import make_divider as _make_divider
 from ..decorators import error_handler
 from ..style import COLORS
 
@@ -58,12 +59,7 @@ class BatchProcessWidget(Container):
         self._batch_run_btn.tooltip = "Validate the batch file and run the full pipeline on all datasets."
         self._batch_run_btn.native.setMinimumWidth(0)
 
-    @staticmethod
-    def _make_divider():
-        line = QFrame()
-        line.setFixedHeight(2)
-        line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
-        return line
+    _make_divider = staticmethod(_make_divider)
 
     def _init_layout(self):
         from qtpy.QtWidgets import QLabel, QSpacerItem, QSizePolicy
@@ -232,7 +228,7 @@ class BatchProcessWidget(Container):
             )
             return
 
-        if not output_base:
+        if not str(self._batch_output_dir.value).strip():
             popups.show_error_popup(
                 self._viewer.window._qt_window,
                 "No Output Directory",

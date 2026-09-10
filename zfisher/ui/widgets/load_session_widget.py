@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 from ...core import session
 from .. import popups, viewer_helpers
 from ..decorators import error_handler
-from ._shared import load_raw_data_into_viewer
+from ._shared import load_raw_data_into_viewer, make_divider as _make_divider
 from ..style import COLORS
 from .colocalization_widget import refresh_rules_display
 
@@ -32,13 +32,6 @@ class LoadSessionWidget(Container):
         self._load_session_file = FileEdit(label="Session File:", filter="*.json", tooltip="Select a previously saved session file (e.g., zfisher_session_1.json).")
         self._load_session_btn = PushButton(text="Load Session")
         self._load_session_btn.tooltip = "Restore the selected session and reload all processed layers."
-
-    @staticmethod
-    def _make_divider():
-        line = QFrame()
-        line.setFixedHeight(2)
-        line.setStyleSheet(f"background-color: {COLORS['separator_color']}; border: none; margin: 8px 0px;")
-        return line
 
     def _init_layout(self):
         """Arranges all widgets in the container using native layout."""
@@ -63,7 +56,7 @@ class LoadSessionWidget(Container):
         _layout.setContentsMargins(0, 0, 0, 0)
         _layout.addWidget(self._header.native)
         _layout.addWidget(self._info.native)
-        _layout.addWidget(self._make_divider())
+        _layout.addWidget(_make_divider())
         _layout.addWidget(self._desc)
         _layout.addSpacerItem(spacer())
         _layout.addWidget(self._form.native)

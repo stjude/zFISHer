@@ -8,6 +8,81 @@ from .. import constants
 
 logger = logging.getLogger(__name__)
 
+
+def _save_puncta_csv(final_data, output_path, layer_name):
+    """Persist a puncta array to CSV in canonical column order and register it.
+
+    Parameters
+    ----------
+    final_data : np.ndarray
+        (N, 7) array with columns Z, Y, X, Nucleus_ID, Intensity, SNR, puncta_id.
+    output_path : str or Path
+        Destination CSV path.
+    layer_name : str or None
+        Layer name used to derive the session-registry key (falls back to the
+        file stem when None).
+
+    Notes
+    -----
+    The on-disk column order follows ``constants.PUNCTA_CSV_COLUMNS`` so every
+    writer produces an identical schema (puncta_id first). Z/Y/X/Nucleus_ID/
+    Intensity/SNR keep their original float representation; ``puncta_id`` is
+    written as an integer.
+    """
+    from . import session
+    import pandas as pd
+
+    df = pd.DataFrame(final_data[:, :6], columns=['Z', 'Y', 'X', 'Nucleus_ID', 'Intensity', 'SNR'])
+    df['puncta_id'] = final_data[:, 6].astype(int)
+    df['Source'] = 'auto'
+    df = df[constants.PUNCTA_CSV_COLUMNS]
+    df.to_csv(output_path, index=False)
+
+    session_key = layer_name if layer_name else Path(output_path).stem
+    session.set_processed_file(
+        session_key, str(output_path), "points",
+        metadata={'format': 'csv', 'subtype': 'puncta_csv'}
+    )
+
+
+def lookup_label_ids(coords, points_scale, points_translate,
+                     mask_data, mask_scale, mask_translate):
+    """Return the mask label under each point, in the mask's voxel space.
+
+    Converts points from their own layer (data) coordinates to world
+    coordinates (``coords * points_scale + points_translate``) and then into the
+    mask's voxel indices (``(world - mask_translate) / mask_scale``), so the
+    lookup is correct even when the points and the mask have different scale /
+    translate. Points outside the mask bounds get label 0.
+
+    Parameters
+    ----------
+    coords : array-like, shape (N, 3)
+        Point coordinates in the points layer's data space (Z, Y, X).
+    points_scale, points_translate : array-like, shape (3,)
+        The points layer's scale and translate.
+    mask_data : np.ndarray
+        3D label array.
+    mask_scale, mask_translate : array-like, shape (3,)
+        The mask layer's scale and translate.
+
+    Returns
+    -------
+    np.ndarray, shape (N,)
+        Integer label at each point (0 = background or out of bounds).
+    """
+    coords = np.asarray(coords, dtype=float)
+    if len(coords) == 0:
+        return np.zeros(0, dtype=int)
+    world = coords * np.asarray(points_scale, dtype=float) + np.asarray(points_translate, dtype=float)
+    voxel = np.round((world - np.asarray(mask_translate, dtype=float)) / np.asarray(mask_scale, dtype=float)).astype(int)
+    shape = np.asarray(mask_data.shape)
+    in_bounds = np.all((voxel >= 0) & (voxel < shape), axis=1)
+    clipped = np.clip(voxel, 0, shape - 1)
+    labels = mask_data[clipped[:, 0], clipped[:, 1], clipped[:, 2]]
+    return np.where(in_bounds, labels, 0).astype(int)
+
+
 def calculate_spot_quality(image_data, coords, radius=2, progress_callback=None,
                            progress_range=(50, 70)):
     """
@@ -223,6 +298,7 @@ def transform_puncta_to_aligned_space(raw_puncta, round_id, shift, canvas_offset
                                        bspline_transform=None, consensus_mask=None,
                                        remove_extranuclear=True,
                                        output_path=None, layer_name=None,
+                                       puncta_ids=None,
                                        progress_callback=None):
     """
     Transform raw-space puncta coordinates into aligned canvas space and
@@ -231,7 +307,9 @@ def transform_puncta_to_aligned_space(raw_puncta, round_id, shift, canvas_offset
     Parameters
     ----------
     raw_puncta : np.ndarray
-        (N, 6) array from process_puncta_detection: Z, Y, X, Nucleus_ID, Intensity, SNR.
+        (N, 6) array from process_puncta_detection: Z, Y, X, Nucleus_ID,
+        Intensity, SNR. A 7th column, if present, is treated as the stable
+        ``puncta_id`` and carried through (takes precedence over ``puncta_ids``).
     round_id : str
         "R1" or "R2".
     shift : np.ndarray
@@ -246,26 +324,40 @@ def transform_puncta_to_aligned_space(raw_puncta, round_id, shift, canvas_offset
         If provided, saves the transformed puncta CSV.
     layer_name : str, optional
         Session key for the saved file.
+    puncta_ids : array-like, optional
+        Stable per-punctum identifiers aligned 1:1 with ``raw_puncta`` rows.
+        Used when ``raw_puncta`` has no 7th id column. If neither is supplied
+        (or the length does not match), a positional ``arange`` is assigned.
+        The same keep-mask used for extranuclear filtering is applied to the
+        ids, so surviving puncta retain their original identity.
     progress_callback : callable, optional
         ``callback(pct, msg)``
 
     Returns
     -------
     np.ndarray
-        (M, 6) array: Z, Y, X, Nucleus_ID, Intensity, SNR in aligned space.
+        (M, 7) array: Z, Y, X, Nucleus_ID, Intensity, SNR, puncta_id in aligned space.
     """
-    from . import session
-
     if progress_callback:
         progress_callback(0, "Transforming puncta coordinates...")
 
     if len(raw_puncta) == 0:
         if progress_callback:
             progress_callback(100, "No puncta to transform.")
-        return np.empty((0, 6))
+        return np.empty((0, 7))
 
     coords = raw_puncta[:, :3].copy()  # Z, Y, X
     quality = raw_puncta[:, 4:6].copy()  # Intensity, SNR (keep from raw detection)
+
+    # Stable puncta_id: prefer a 7th column on raw_puncta, else the explicit
+    # puncta_ids arg, else a positional fallback. Carried through filtering so a
+    # surviving punctum keeps the identity it was assigned at detection.
+    if raw_puncta.shape[1] >= 7:
+        ids = raw_puncta[:, 6].astype(float).copy()
+    elif puncta_ids is not None and len(puncta_ids) == len(raw_puncta):
+        ids = np.asarray(puncta_ids, dtype=float).copy()
+    else:
+        ids = np.arange(len(raw_puncta), dtype=float)
 
     # Apply rigid transform to canvas space
     shift = np.asarray(shift, dtype=float)
@@ -314,29 +406,21 @@ def transform_puncta_to_aligned_space(raw_puncta, round_id, shift, canvas_offset
             aligned_coords = aligned_coords[keep]
             nucleus_ids = nucleus_ids[keep]
             quality = quality[keep]
+            ids = ids[keep]
 
         if len(aligned_coords) == 0:
             if progress_callback:
                 progress_callback(100, "No puncta in consensus nuclei.")
-            return np.empty((0, 6))
+            return np.empty((0, 7))
     else:
         nucleus_ids = np.zeros(len(aligned_coords))
 
-    final_data = np.column_stack([aligned_coords, nucleus_ids, quality])
+    final_data = np.column_stack([aligned_coords, nucleus_ids, quality, ids])
 
     if output_path:
         if progress_callback:
             progress_callback(90, "Saving transformed puncta...")
-        import pandas as pd
-        df = pd.DataFrame(final_data, columns=['Z', 'Y', 'X', 'Nucleus_ID', 'Intensity', 'SNR'])
-        df['Source'] = 'auto'
-        df.to_csv(output_path, index=False)
-
-        session_key = layer_name if layer_name else Path(output_path).stem
-        session.set_processed_file(
-            session_key, str(output_path), "points",
-            metadata={'format': 'csv', 'subtype': 'puncta_csv'}
-        )
+        _save_puncta_csv(final_data, output_path, layer_name)
 
     if progress_callback:
         progress_callback(100, f"Done. {len(final_data)} puncta in aligned space.")
@@ -345,7 +429,6 @@ def transform_puncta_to_aligned_space(raw_puncta, round_id, shift, canvas_offset
 
 def process_puncta_detection(image_data, mask_data=None, voxels=None, params=None, output_path=None, progress_callback=None, layer_name=None):
     """Orchestrates detection, quality mapping, and session persistence with CSV tags."""
-    from . import session
     params = params or {}
 
     if 'z_scale' not in params and voxels is not None:
@@ -357,7 +440,12 @@ def process_puncta_detection(image_data, mask_data=None, voxels=None, params=Non
     if progress_callback: progress_callback(45, f"Detection complete. Found {len(coords)} candidates.")
     if len(coords) == 0:
         if progress_callback: progress_callback(100, "No spots found.")
-        return np.empty((0, 6))
+        return np.empty((0, 7))
+
+    # Assign a stable puncta_id once, at detection, BEFORE any extranuclear
+    # filtering. Surviving puncta keep this identity through filtering, the
+    # world-space transform, and reloads (the id is persisted in every CSV).
+    puncta_ids = np.arange(len(coords), dtype=float)
 
     if progress_callback: progress_callback(50, f"Computing quality metrics for {len(coords)} spots...")
     quality_metrics = calculate_spot_quality(image_data, coords,
@@ -380,33 +468,17 @@ def process_puncta_detection(image_data, mask_data=None, voxels=None, params=Non
         coords = coords[keep]
         nucleus_ids = nucleus_ids[keep]
         quality_metrics = quality_metrics[keep]
+        puncta_ids = puncta_ids[keep]
         if len(coords) == 0:
             if progress_callback: progress_callback(100, "No nuclear puncta found.")
-            return np.empty((0, 6))
+            return np.empty((0, 7))
 
-    # Combined Data: Z, Y, X, Nucleus_ID, Intensity, SNR
-    final_data = np.column_stack([coords, nucleus_ids, quality_metrics])
+    # Combined Data: Z, Y, X, Nucleus_ID, Intensity, SNR, puncta_id
+    final_data = np.column_stack([coords, nucleus_ids, quality_metrics, puncta_ids])
 
     if output_path:
         if progress_callback: progress_callback(90, "Saving results...")
-        # Save detected puncta as CSV: Z, Y, X, Nucleus_ID, Intensity, SNR, Source.
-        # Use pandas so the Source column (string) coexists with numeric columns.
-        import pandas as pd
-        df = pd.DataFrame(final_data, columns=['Z', 'Y', 'X', 'Nucleus_ID', 'Intensity', 'SNR'])
-        df['Source'] = 'auto'
-        df.to_csv(output_path, index=False)
-
-        # Use explicit layer_name if provided, otherwise derive from file stem
-        session_key = layer_name if layer_name else Path(output_path).stem
-        session.set_processed_file(
-            session_key,
-            str(output_path),
-            "points",
-            metadata={
-                'format': 'csv',
-                'subtype': 'puncta_csv'
-            }
-        )
+        _save_puncta_csv(final_data, output_path, layer_name)
 
     if progress_callback: progress_callback(100, f"Done. Found {len(final_data)} spots.")
     return final_data
