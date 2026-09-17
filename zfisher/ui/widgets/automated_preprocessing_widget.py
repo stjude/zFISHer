@@ -29,7 +29,7 @@ def _get_qt_parent(viewer):
     call_button="Run Automated Registration && Warping",
     r1_dapi_layer={"label": "Round 1 Nuclei Layer", "tooltip": "Select the Round 1 nuclear stain layer for registration."},
     r2_dapi_layer={"label": "Round 2 Nuclei Layer", "tooltip": "Select the Round 2 nuclear stain layer for registration."},
-    max_distance={"label": "Max RANSAC Distance, px (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum distance in pixels for matching centroid pairs between rounds. 0 = auto-detect."},
+    max_distance={"label": "Max RANSAC Distance, µm (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum distance in micrometres for matching centroid pairs between rounds. 0 = auto-detect."},
     apply_warp={"label": "Apply B-spline Warp", "value": True, "tooltip": "Apply elastic warping for better alignment (recommended). Disable for rigid rotation/translation only."},
     match_nuclei={"label": "Create Consensus Nuclei Mask", "tooltip": "Create a merged nuclei mask by matching R1 and R2 nuclei after alignment."},
     overlap_method={"label": "Overlap Method", "widget_type": "RadioButtons", "choices": ["Intersection", "Union"], "orientation": "horizontal", "tooltip": "Intersection: Keep only overlapping pixels. Union: Keep all pixels from both rounds."},

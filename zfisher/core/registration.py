@@ -44,6 +44,9 @@ def calculate_session_registration(r1_centroids, r2_centroids, voxels=None, max_
     """
     Headless Orchestrator for Step 3.
     Calculates the shift and updates the global session data.
+
+    ``max_distance`` is the maximum centroid-pair separation, in micrometres when
+    ``voxels`` is given (pixels otherwise); 0 or None uses the built-in default.
     """
     logger.info("Registration: R1 centroids=%s, R2 centroids=%s",
                 r1_centroids.shape if r1_centroids is not None else None,
@@ -238,6 +241,16 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, voxel
         (N, 3) array of centroids from the reference image (e.g., Round 1).
     moving_points : np.ndarray
         (M, 3) array of centroids from the image to be aligned (e.g., Round 2).
+    max_distance : float or None, optional
+        Maximum separation for a fixed/moving centroid pair to be considered a
+        match after the rough shift, in micrometres when ``voxels`` is given
+        (pixels otherwise). None or 0 uses ``constants.RANSAC_SEARCH_RADIUS``.
+        Note that RANSAC's own inlier threshold
+        (``constants.RANSAC_RESIDUAL_THRESHOLD``) is still applied in pixel
+        space on the matched pairs; this parameter only bounds the search.
+    voxels : tuple or None, optional
+        (dz, dy, dx) voxel size in micrometres. When given, pair matching is
+        done in physical space so anisotropic voxels do not bias the search.
     progress_callback : callable, optional
         A function to report progress, e.g., `lambda p, m: print(f"{p}%: {m}")`.
 
@@ -252,10 +265,19 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, voxel
     if progress_callback: progress_callback(10, "Finding rough alignment...")
     logger.debug("Starting registration alignment")
     rough_shift = _find_rough_shift_vector_voting(fixed_points, moving_points)
-    
+
     # 2. Refine using Nearest Neighbors
     if progress_callback: progress_callback(40, "Matching nearest neighbors...")
-    src, dst = _get_nearest_neighbor_pairs(fixed_points, moving_points, rough_shift, voxels=voxels)
+    search_radius = (
+        float(max_distance) if max_distance is not None and max_distance > 0
+        else constants.RANSAC_SEARCH_RADIUS
+    )
+    logger.debug("Pair search radius: %s (%s)", search_radius,
+                 "um" if voxels is not None else "px")
+    src, dst = _get_nearest_neighbor_pairs(
+        fixed_points, moving_points, rough_shift,
+        search_radius=search_radius, voxels=voxels,
+    )
     
     if len(src) < 3:
         logger.debug("Rough shift calculated: %s", rough_shift)

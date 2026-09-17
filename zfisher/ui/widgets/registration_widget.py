@@ -10,7 +10,7 @@ from ._shared import make_divider as _make_divider, make_section_header as _make
     call_button="Calculate Alignment",
     r1_points={"label": "R1 Centroids", "tooltip": "Centroid points layer from Round 1 nuclei segmentation."},
     r2_points={"label": "R2 Centroids", "tooltip": "Centroid points layer from Round 2 nuclei segmentation."},
-    max_distance={"label": "Max Pair Distance, px (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum distance in pixels for matching centroid pairs between rounds. 0 = auto-detect."},
+    max_distance={"label": "Max Pair Distance, µm (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum distance in micrometres for matching centroid pairs between rounds. 0 = auto-detect."},
 )
 @require_active_session("Please start or load a session before running registration.")
 @error_handler("Registration Failed")
@@ -43,10 +43,14 @@ def _registration_widget(
     with popups.ProgressDialog(viewer.window._qt_window, title="Calculating Registration (RANSAC)...") as dialog:
         
         # Call the Refactored Core Orchestrator
-        # We pass .data (NumPy) so the core remains headless-compatible
+        # We pass .data (NumPy) so the core remains headless-compatible.
+        # Centroid layers carry the image voxel size as their scale; passing it
+        # makes pair matching physical (µm), the same as the automated widget
+        # and the batch pipeline, so max_distance means the same everywhere.
         shift, rmsd = registration.calculate_session_registration(
             r1_points.data,
             r2_points.data,
+            voxels=tuple(float(s) for s in r1_points.scale),
             max_distance=max_distance,
             progress_callback=dialog.update_progress
         )

@@ -88,7 +88,7 @@ This step aligns both rounds into a common coordinate space and builds consensus
 #### Automated Preprocessing
 Runs the full alignment pipeline end-to-end with configurable parameters:
 
-- **Max RANSAC Distance, px (0=auto)** — Controls centroid pair matching strictness.
+- **Max RANSAC Distance, µm (0=auto)** — Controls centroid pair matching strictness.
 - **Apply B-spline Warp** — Enable elastic warping for tissue deformation correction. Disable for rigid-only alignment.
 - **Create Consensus Nuclei Mask** — Toggle consensus mask generation.
 - **Overlap Method** — Intersection (conservative) or Union (permissive).
