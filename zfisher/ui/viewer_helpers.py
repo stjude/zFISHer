@@ -27,18 +27,56 @@ def clear_points_index_cache(layer):
     layer._Points__indices_view = np.empty(0, int)
 
 
-def set_points_data(layer, data):
-    """Assign ``data`` to a napari Points layer, clearing its cached
-    ``_Points__indices_view`` FIRST.
+def set_points_data(layer, data, features=None):
+    """Assign ``data`` (and optionally ``features``) to a napari Points layer,
+    clearing its cached ``_Points__indices_view`` FIRST.
 
     Load-bearing napari-private workaround: when a Points layer's point count
     changes while a stale view-index cache is still live, vispy raises an
     IndexError / corrupts the GL buffer. Clearing the cache immediately before
     reassigning ``data`` avoids it. The clear-before-assign order is REQUIRED —
     do not reorder or split.
+
+    When ``features`` is given it is assigned AFTER ``data``. napari resizes the
+    feature table itself whenever the point count changes (truncating to the
+    first N rows on a shrink, broadcasting the last row on a grow), so a feature
+    table computed for the new points must be written after the data, never
+    before. Callers must build ``features`` from the layer's current table
+    BEFORE calling this; see ``subset_points_layer``.
     """
     clear_points_index_cache(layer)
     layer.data = data
+    if features is not None:
+        layer.features = features
+
+
+def subset_points_layer(layer, keep):
+    """Keep only the points of ``layer`` where ``keep`` is True, carrying each
+    surviving point's feature row with it. Returns the number of points removed.
+
+    This is the one safe way to shrink a puncta layer. The feature rows are
+    selected from the layer's current table before the data is shrunk, because
+    napari truncates ``layer.features`` to the first N rows the moment ``data``
+    shrinks: subsetting the features afterwards either does nothing (the length
+    check fails) or reads an already-mangled table. Doing it after was the cause
+    of the Refilter Puncta bug in which surviving puncta inherited the
+    ``puncta_id``/``Nucleus_ID``/``Source`` of whichever puncta used to sit at
+    their new row index.
+    """
+    keep = np.asarray(keep, dtype=bool)
+    data = np.asarray(layer.data)
+    n_before = len(data)
+    if keep.shape != (n_before,):
+        raise ValueError(
+            f"keep mask has shape {keep.shape}, expected ({n_before},) to match the layer's points"
+        )
+    feats = getattr(layer, "features", None)
+    if feats is not None and len(feats) == n_before and n_before > 0:
+        feats = feats.iloc[keep].reset_index(drop=True)
+    else:
+        feats = None
+    set_points_data(layer, data[keep], feats)
+    return int(n_before - keep.sum())
 
 
 def add_image_session_to_viewer(viewer: napari.Viewer, image_session, prefix: str):

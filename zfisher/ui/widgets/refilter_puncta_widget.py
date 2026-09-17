@@ -34,9 +34,9 @@ class _RefilterUndoStack:
             return False
         snapshot = self._stack.pop()
         for layer, data, features in snapshot:
-            layer.data = data
-            if features is not None:
-                layer.features = features
+            # Route through set_points_data so the GL index cache is cleared
+            # before the point count changes, and features land after data.
+            viewer_helpers.set_points_data(layer, data, features)
         return True
 
     def clear(self):
@@ -152,12 +152,10 @@ def _refilter_widget(
             coords, layer.scale, layer.translate,
             mask_data, mask_layer.scale, mask_layer.translate,
         )
-        inside = labels > 0
-        n_before = len(coords)
-        viewer_helpers.set_points_data(layer, coords[inside])
-        if layer.features is not None and len(layer.features) == n_before:
-            layer.features = layer.features.iloc[inside].reset_index(drop=True)
-        total_removed += n_before - inside.sum()
+        # subset_points_layer selects the surviving feature rows BEFORE shrinking
+        # the data. Shrinking first lets napari truncate the feature table to the
+        # first N rows, which silently re-labels every surviving punctum.
+        total_removed += viewer_helpers.subset_points_layer(layer, labels > 0)
 
     viewer.status = f"Removed {total_removed} extranuclear puncta across {len(target_layers)} layer(s)."
 
