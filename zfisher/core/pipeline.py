@@ -408,8 +408,10 @@ def run_full_zfisher_pipeline(
         # labels are non-contiguous (gaps from remove_small_objects or mask edits).
         if merged_mask is not None:
             unique_ids = np.unique(merged_mask)
-            total_nuclei = int((unique_ids > 0).sum())
+            nucleus_ids = unique_ids[unique_ids > 0]
+            total_nuclei = int(len(nucleus_ids))
         else:
+            nucleus_ids = None
             total_nuclei = None
 
         report_filename = f"zFISHer_Report{constants.EXCEL_SUFFIX}"
@@ -423,6 +425,7 @@ def run_full_zfisher_pipeline(
                 output_dir=str(reports_dir),
                 tri_rules=resolved_tri if resolved_tri else None,
                 total_nuclei=total_nuclei,
+                nucleus_ids=nucleus_ids,
             )
             _update(95, "Colocalization report saved.")
         except Exception as exc:

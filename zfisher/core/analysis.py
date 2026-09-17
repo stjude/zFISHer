@@ -360,7 +360,51 @@ def calculate_tri_colocalization(points_layers_data, tri_rules):
     return df_tri, meta_entries
 
 
-def calculate_per_nucleus_counts(points_layers_data):
+def _puncta_layer_skip_patterns():
+    """Name fragments identifying layers that are not puncta (nuclear stain,
+    centroid and consensus layers)."""
+    return [
+        session.get_nuclear_channel().upper(),
+        constants.CENTROIDS_SUFFIX.upper(),
+        constants.CONSENSUS_MASKS_NAME.upper(),
+    ]
+
+
+def _iter_puncta_layers_with_ids(points_layers_data):
+    """Yield ``(name, nucleus_ids)`` for every puncta layer carrying nucleus IDs."""
+    skip = _puncta_layer_skip_patterns()
+    for layer in points_layers_data:
+        nucleus_ids = layer.get('nucleus_ids')
+        if nucleus_ids is None:
+            continue
+        name = layer['name']
+        if any(pat in name.upper() for pat in skip):
+            continue
+        yield name, np.asarray(nucleus_ids)
+
+
+def extranuclear_counts(points_layers_data):
+    """
+    Counts, per channel, the puncta that carry ``Nucleus_ID`` 0.
+
+    These are puncta outside every nucleus in the consensus mask (kept when
+    "remove extranuclear" is off) or whose nucleus was deleted in the mask
+    editor. They are excluded from the per-nucleus table but stay in the
+    Distances and Colocalization sheets, so this count is what makes the
+    sheet totals reconcile.
+
+    Returns
+    -------
+    dict[str, int]
+        ``{channel_name: count}`` for every puncta layer with nucleus IDs.
+    """
+    counts = {}
+    for name, nucleus_ids in _iter_puncta_layers_with_ids(points_layers_data):
+        counts[name] = int((nucleus_ids.astype(int) == 0).sum())
+    return counts
+
+
+def calculate_per_nucleus_counts(points_layers_data, nucleus_ids=None):
     """
     Counts the number of puncta per nucleus for each channel.
 
@@ -371,47 +415,64 @@ def calculate_per_nucleus_counts(points_layers_data):
     ----------
     points_layers_data : list[dict]
         Layer dicts with 'name', 'data', and optionally 'nucleus_ids'.
+    nucleus_ids : array-like of int, optional
+        The nonzero label values present in the consensus mask. When given,
+        the table has exactly one row per mask nucleus (zero-count nuclei
+        included), and puncta whose ``Nucleus_ID`` is not in the mask are
+        dropped with a warning: they carry an assignment from a mask that has
+        since been edited. When omitted, rows exist only for nuclei that have
+        at least one punctum.
 
     Returns
     -------
     pd.DataFrame
         Pivot table with Nuclei_ID as rows and channel names as columns.
-        Nucleus ID 0 (background) is excluded.
+        Nucleus ID 0 (background) is excluded; see ``extranuclear_counts``.
     """
-    SKIP_PATTERNS = [
-        session.get_nuclear_channel().upper(),
-        constants.CENTROIDS_SUFFIX.upper(),
-        constants.CONSENSUS_MASKS_NAME.upper(),
-    ]
-
     records = []
-    for layer in points_layers_data:
-        name = layer['name']
-        nucleus_ids = layer.get('nucleus_ids')
-        if nucleus_ids is None:
-            continue
+    stale = {}
+    valid = None
+    if nucleus_ids is not None:
+        valid = set(int(n) for n in np.asarray(nucleus_ids).ravel() if int(n) != 0)
 
-        # Skip non-puncta layers
-        name_upper = name.upper()
-        if any(pat in name_upper for pat in SKIP_PATTERNS):
-            continue
-
-        for nid in nucleus_ids:
+    for name, ids in _iter_puncta_layers_with_ids(points_layers_data):
+        for nid in ids:
             nid_int = int(nid)
             if nid_int == 0:
                 continue
+            if valid is not None and nid_int not in valid:
+                stale[name] = stale.get(name, 0) + 1
+                continue
             records.append({'Nuclei_ID': nid_int, 'Channel': name})
 
-    if not records:
+    for name, n in stale.items():
+        logger.warning(
+            "calculate_per_nucleus_counts[%s]: %d puncta carry a Nucleus_ID that "
+            "is not in the consensus mask (mask edited after assignment?); "
+            "they are left out of the per-nucleus table.", name, n,
+        )
+
+    if not records and valid is None:
         return pd.DataFrame()
 
-    df = pd.DataFrame(records)
-    pivot = df.groupby(['Nuclei_ID', 'Channel']).size().unstack(fill_value=0)
-    pivot = pivot.reset_index().sort_values('Nuclei_ID')
+    if records:
+        df = pd.DataFrame(records)
+        pivot = df.groupby(['Nuclei_ID', 'Channel']).size().unstack(fill_value=0)
+    else:
+        pivot = pd.DataFrame(index=pd.Index([], name='Nuclei_ID'))
+
+    if valid is not None:
+        pivot = pivot.reindex(sorted(valid), fill_value=0)
+        pivot.index.name = 'Nuclei_ID'
+        if pivot.shape[1] == 0:
+            return pd.DataFrame()
+
+    pivot.columns.name = None
+    pivot = pivot.reset_index().sort_values('Nuclei_ID').reset_index(drop=True)
     return pivot
 
 
-def calculate_stats(per_nucleus_df, total_nuclei=None):
+def calculate_stats(per_nucleus_df, total_nuclei=None, extranuclear=None):
     """
     Computes per-channel summary statistics from the per-nucleus counts table.
 
@@ -423,16 +484,23 @@ def calculate_stats(per_nucleus_df, total_nuclei=None):
     total_nuclei : int, optional
         Actual number of nuclei in the consensus mask. If None, falls back to
         counting unique IDs in the dataframe.
+    extranuclear : dict[str, int], optional
+        Per-channel count of ``Nucleus_ID`` 0 puncta from ``extranuclear_counts``.
+        Missing channels count as 0.
 
     Returns
     -------
     pd.DataFrame
         Rows: one per channel. Columns: Channel, Total_Nuclei, Raw_Sum,
-        Mean_per_Nucleus, StdDev_per_Nucleus, CV_pct.
+        Extranuclear_Puncta, Total_Puncta, Mean_per_Nucleus,
+        StdDev_per_Nucleus, CV_pct. ``Raw_Sum`` counts puncta inside nuclei;
+        ``Total_Puncta`` adds the extranuclear ones and equals the number of
+        rows that channel contributes as a source in the Distances sheet.
     """
     if per_nucleus_df.empty:
         return pd.DataFrame()
 
+    extranuclear = extranuclear or {}
     channels = [c for c in per_nucleus_df.columns if c != 'Nuclei_ID']
     if total_nuclei is None:
         total_nuclei = int(per_nucleus_df['Nuclei_ID'].nunique())
@@ -452,8 +520,10 @@ def calculate_stats(per_nucleus_df, total_nuclei=None):
             )
 
         # Mean and std are reported against the consensus mask's nucleus count.
-        # All puncta count toward Raw_Sum, even those orphaned by mask edits.
+        # Raw_Sum is the in-nucleus total; Nucleus_ID 0 puncta are reported
+        # separately so Total_Puncta accounts for every punctum in the layer.
         raw_sum = int(present.sum())
+        extra = int(extranuclear.get(ch, 0))
         if len(present) < total_nuclei:
             all_counts = np.concatenate([present, np.zeros(total_nuclei - len(present))])
         else:
@@ -467,6 +537,8 @@ def calculate_stats(per_nucleus_df, total_nuclei=None):
             'Channel': ch,
             'Total_Nuclei': total_nuclei,
             'Raw_Sum': raw_sum,
+            'Extranuclear_Puncta': extra,
+            'Total_Puncta': raw_sum + extra,
             'Mean_per_Nucleus': round(mean, 4),
             'StdDev_per_Nucleus': round(std, 4),
             'CV_pct': round(cv, 2),
@@ -490,9 +562,9 @@ def calculate_distribution(per_nucleus_df, total_nuclei=None):
     Returns
     -------
     pd.DataFrame
-        Rows: one per channel. Columns: Channel, Nuclei_0_puncta,
+        Rows: one per channel. Columns: Channel, Total_Nuclei, Nuclei_0_puncta,
         Nuclei_1_puncta, Nuclei_2_puncta, Nuclei_3to10_puncta,
-        Nuclei_gt10_puncta.
+        Nuclei_gt10_puncta. The five bins sum to Total_Nuclei.
     """
     if per_nucleus_df.empty:
         return pd.DataFrame()
@@ -521,6 +593,7 @@ def calculate_distribution(per_nucleus_df, total_nuclei=None):
 
         rows.append({
             'Channel': ch,
+            'Total_Nuclei': int(total_nuclei),
             'Nuclei_0_puncta': n0,
             'Nuclei_1_puncta': n1,
             'Nuclei_2_puncta': n2,
@@ -535,11 +608,22 @@ def calculate_distribution(per_nucleus_df, total_nuclei=None):
 # Orchestrator
 # =====================================================================
 
-def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, output_dir, tri_rules=None, total_nuclei=None):
+def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, output_dir,
+                                tri_rules=None, total_nuclei=None, nucleus_ids=None):
     """
     Core Orchestrator for Step 7 & 8.
     Processes puncta distances and exports the master report.
+
+    ``nucleus_ids`` is the list of nonzero label values in the consensus mask.
+    When given, the per-nucleus table has a row for every mask nucleus and
+    ``total_nuclei`` defaults to its length.
     """
+    if nucleus_ids is not None:
+        nucleus_ids = np.asarray(nucleus_ids).ravel()
+        nucleus_ids = nucleus_ids[nucleus_ids != 0]
+        if total_nuclei is None:
+            total_nuclei = int(len(nucleus_ids))
+
     logger.info("Analysis: %d layers, %d rules, %d tri-rules, filename=%s, total_nuclei=%s",
                 len(layers_data), len(rules), len(tri_rules or []), filename, total_nuclei)
 
@@ -563,8 +647,9 @@ def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, 
         tri_coloc_df, tri_coloc_meta = calculate_tri_colocalization(layers_data, tri_rules)
 
     # 4. Per-nucleus puncta counts + derived stats
-    per_nucleus_df = calculate_per_nucleus_counts(layers_data)
-    stats_df = calculate_stats(per_nucleus_df, total_nuclei=total_nuclei)
+    per_nucleus_df = calculate_per_nucleus_counts(layers_data, nucleus_ids=nucleus_ids)
+    extra = extranuclear_counts(layers_data)
+    stats_df = calculate_stats(per_nucleus_df, total_nuclei=total_nuclei, extranuclear=extra)
     distribution_df = calculate_distribution(per_nucleus_df, total_nuclei=total_nuclei)
 
     # 5. Build parameters sheet from session puncta_params

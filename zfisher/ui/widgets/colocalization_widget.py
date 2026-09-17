@@ -9,7 +9,7 @@ from qtpy.QtWidgets import QFrame
 
 from ...core import session, analysis
 from ._shared import make_divider as _make_divider, make_section_header as _make_section_header, make_section_desc as _make_section_desc, make_spacer as _make_spacer
-from .. import popups
+from .. import popups, viewer_helpers
 from ..decorators import require_active_session, error_handler
 from ... import constants
 
@@ -193,6 +193,12 @@ def _on_export():
         raise ValueError("At least two puncta layers are required for nearest-neighbor analysis.")
 
     with popups.ProgressDialog(viewer.window._qt_window, "Generating Master Report...") as dialog:
+        # Nucleus_ID on a punctum is a cache. Re-derive it from the consensus
+        # mask on screen before counting anything, so the report reflects the
+        # mask as edited, whichever edit path was used.
+        dialog.update_progress(5, "Reconciling puncta with the consensus mask...")
+        viewer_helpers.reconcile_puncta_with_consensus(viewer)
+
         points_data = []
         for l in points_layers:
             d = {'name': l.name, 'data': l.data, 'scale': l.scale, 'translate': l.translate}
@@ -202,13 +208,16 @@ def _on_export():
                 d['puncta_id'] = l.features['puncta_id'].values
             points_data.append(d)
 
-        # Count actual nuclei from the consensus mask layer
+        # The consensus mask's nucleus labels: the per-nucleus sheet gets one
+        # row per label (zero-count nuclei included) and the stats divide by
+        # their number.
         total_nuclei = None
-        for l in viewer.layers:
-            if isinstance(l, napari.layers.Labels) and constants.CONSENSUS_MASKS_NAME in l.name:
-                unique_ids = np.unique(l.data)
-                total_nuclei = int((unique_ids > 0).sum())
-                break
+        nucleus_ids = None
+        consensus = viewer_helpers.find_consensus_layer(viewer)
+        if consensus is not None:
+            unique_ids = np.unique(consensus.data)
+            nucleus_ids = unique_ids[unique_ids > 0]
+            total_nuclei = int(len(nucleus_ids))
 
         out_dir = Path(session.get_data("output_dir")) / constants.REPORTS_DIR
         out_dir.mkdir(exist_ok=True, parents=True)
@@ -221,7 +230,8 @@ def _on_export():
             r1_path=session.get_data("r1_path"),
             r2_path=session.get_data("r2_path"),
             output_dir=out_dir,
-            total_nuclei=total_nuclei
+            total_nuclei=total_nuclei,
+            nucleus_ids=nucleus_ids,
         )
 
         popups.show_info_popup(

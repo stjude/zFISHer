@@ -5,7 +5,7 @@ import tifffile
 from pathlib import Path
 import pandas as pd
 from packaging.version import parse as parse_version
-from ..core import session, segmentation
+from ..core import session, segmentation, puncta as _puncta
 
 from .. import constants
 from . import style
@@ -824,61 +824,72 @@ def resync_puncta_nucleus_ids(
         If True and ``output_dir`` is set in the session, re-save each puncta
         layer's CSV in the reports directory.
 
+    Only aligned/warped puncta layers are touched: the consensus mask lives in
+    aligned space, and raw-space puncta (which exist only before registration)
+    would be looked up at the wrong place. Layers whose IDs do not change are
+    left alone entirely (no layer write, no CSV, no session write), so calling
+    this after every edit is cheap.
+
     Returns
     -------
     dict
-        ``{'updated_layers': N, 'removed_total': M}``.
+        ``{'updated_layers': N, 'removed_total': M, 'changed_total': K}`` where
+        ``changed_total`` is the number of puncta whose ``Nucleus_ID`` changed.
     """
-    if mask_layer is None:
-        return {'updated_layers': 0, 'removed_total': 0}
+    empty = {'updated_layers': 0, 'removed_total': 0, 'changed_total': 0}
+    if mask_layer is None or viewer is None:
+        return empty
 
     mask_data = mask_layer.data
-    mask_scale = np.array(mask_layer.scale)
-    mask_translate = np.array(mask_layer.translate)
-    mask_shape = np.array(mask_data.shape)
 
     puncta_layers = [
         l for l in list(viewer.layers)
-        if isinstance(l, napari.layers.Points) and constants.PUNCTA_SUFFIX in l.name
+        if isinstance(l, napari.layers.Points)
+        and constants.PUNCTA_SUFFIX in l.name
+        and (constants.ALIGNED_PREFIX.upper() in l.name.upper()
+             or constants.WARPED_PREFIX.upper() in l.name.upper())
     ]
 
     updated = 0
     removed_total = 0
+    changed_total = 0
     for pts_layer in puncta_layers:
         coords = np.array(pts_layer.data)
         if len(coords) == 0:
             continue
 
-        pts_scale = np.array(pts_layer.scale)
-        pts_translate = np.array(pts_layer.translate)
-        world_coords = coords * pts_scale + pts_translate
-        voxel_coords = np.round((world_coords - mask_translate) / mask_scale).astype(int)
-
-        in_bounds = np.all((voxel_coords >= 0) & (voxel_coords < mask_shape), axis=1)
-        clipped = np.clip(voxel_coords, 0, mask_shape - 1)
-        new_ids = mask_data[clipped[:, 0], clipped[:, 1], clipped[:, 2]]
-        new_ids[~in_bounds] = 0
+        new_ids = _puncta.lookup_label_ids(
+            coords, pts_layer.scale, pts_layer.translate,
+            mask_data, mask_layer.scale, mask_layer.translate,
+        )
 
         features = (
             pts_layer.features.copy()
             if hasattr(pts_layer, 'features') and not pts_layer.features.empty
             else pd.DataFrame()
         )
-        if not features.empty and 'Nucleus_ID' in features.columns:
-            features['Nucleus_ID'] = new_ids
+        if features.empty or 'Nucleus_ID' not in features.columns or len(features) != len(coords):
+            # Nothing to reconcile against; leave legacy / malformed layers alone.
+            continue
+
+        old_ids = pd.to_numeric(features['Nucleus_ID'], errors='coerce').fillna(-1).to_numpy()
+        changed = int((old_ids.astype(np.int64) != new_ids.astype(np.int64)).sum())
+        n_removed = int((new_ids <= 0).sum()) if remove_extranuclear else 0
+        if changed == 0 and n_removed == 0:
+            continue
+
+        features['Nucleus_ID'] = new_ids
+        changed_total += changed
 
         if remove_extranuclear:
             inside = new_ids > 0
-            n_removed = int((~inside).sum())
             removed_total += n_removed
             coords = coords[inside]
-            if not features.empty:
-                features = features[inside].reset_index(drop=True)
-
-        # Update the napari layer (clear the indices_view cache to avoid GL crashes
-        # when the point count changes).
-        set_points_data(pts_layer, coords)
-        if not features.empty:
+            features = features[inside].reset_index(drop=True)
+            # Point count changes: go through the GL-safe path, features after data.
+            set_points_data(pts_layer, coords, features)
+        else:
+            # Same points, new feature values: no data write, so no data event fires.
             pts_layer.features = features
 
         if save_csv:
@@ -889,7 +900,9 @@ def resync_puncta_nucleus_ids(
                 csv_path = constants.puncta_csv_path(reports_dir, pts_layer.name)
                 coords_df = pd.DataFrame(coords, columns=['Z', 'Y', 'X'])
                 full_df = pd.concat([features.reset_index(drop=True), coords_df], axis=1)
-                full_df.to_csv(csv_path, index=False)
+                ordered = [c for c in constants.PUNCTA_CSV_COLUMNS if c in full_df.columns]
+                ordered += [c for c in full_df.columns if c not in ordered]
+                full_df[ordered].to_csv(csv_path, index=False)
                 # Re-register so the session points at the freshly-resynced file
                 # (previously omitted, which left the registry on a stale path).
                 session.set_processed_file(
@@ -899,4 +912,39 @@ def resync_puncta_nucleus_ids(
 
         updated += 1
 
-    return {'updated_layers': updated, 'removed_total': removed_total}
+    return {'updated_layers': updated, 'removed_total': removed_total, 'changed_total': changed_total}
+
+
+def find_consensus_layer(viewer):
+    """Return the consensus nuclei Labels layer, or None."""
+    if viewer is None:
+        return None
+    for layer in viewer.layers:
+        if isinstance(layer, napari.layers.Labels) and constants.CONSENSUS_MASKS_NAME in layer.name:
+            return layer
+    return None
+
+
+def reconcile_puncta_with_consensus(viewer, *, save_csv=True):
+    """Re-derive every aligned/warped punctum's ``Nucleus_ID`` from the consensus
+    mask currently in the viewer.
+
+    ``Nucleus_ID`` on a punctum is a cache of "which nucleus is under this
+    point". Call this before anything that reports per-nucleus numbers (export)
+    and after anything that could have left the cache behind (session load), so
+    the report never depends on which edit path was used.
+
+    Returns the ``resync_puncta_nucleus_ids`` dict, or None when the viewer has
+    no consensus layer.
+    """
+    consensus = find_consensus_layer(viewer)
+    if consensus is None:
+        return None
+    result = resync_puncta_nucleus_ids(
+        viewer, consensus, remove_extranuclear=False, save_csv=save_csv,
+    )
+    logger.info(
+        "Reconciled puncta with '%s': %d layer(s) updated, %d nucleus ID(s) changed.",
+        consensus.name, result['updated_layers'], result['changed_total'],
+    )
+    return result

@@ -332,21 +332,87 @@ def _schedule_save(layer):
     _save_pending_layer = layer
     _save_timer.start(500)
 
+def _write_mask_to_disk(layer):
+    """Write ``layer.data`` to ``segmentation/<name>.tif`` and register it in the
+    session. The one mask writer in this module."""
+    out_dir = session.get_data("output_dir")
+    if not (out_dir and layer is not None and layer.name):
+        return None
+    seg_dir = Path(out_dir) / constants.SEGMENTATION_DIR
+    seg_dir.mkdir(exist_ok=True, parents=True)
+    mask_path = seg_dir / f"{layer.name}.tif"
+    tifffile.imwrite(mask_path, layer.data)
+    session.set_processed_file(layer.name, str(mask_path), layer_type='labels', metadata={'subtype': 'edited_mask'})
+    return mask_path
+
 def _do_save():
     global _save_pending_layer
     layer = _save_pending_layer
-    if layer is None:
-        return
-    out_dir = session.get_data("output_dir")
-    if out_dir and layer.name:
-        seg_dir = Path(out_dir) / constants.SEGMENTATION_DIR
-        seg_dir.mkdir(exist_ok=True, parents=True)
-        mask_path = seg_dir / f"{layer.name}.tif"
-        tifffile.imwrite(mask_path, layer.data)
-        session.set_processed_file(layer.name, str(mask_path), layer_type='labels', metadata={'subtype': 'edited_mask'})
     _save_pending_layer = None
+    _write_mask_to_disk(layer)
 
 _save_timer.timeout.connect(_do_save)
+
+
+# --- After-edit cascade -----------------------------------------------------
+#
+# napari fires ``layer.events.data`` only when the whole array is assigned.
+# Brush, eraser and fill strokes commit through the layer's undo history and
+# fire ``layer.events.paint`` instead. Both must end in the same three steps:
+# persist the mask, refresh its ID overlay, and re-derive puncta Nucleus_IDs
+# (consensus mask only). Strokes are frequent and the overlay refresh scans the
+# whole volume, so strokes only mark the layer dirty; the flush runs after an
+# idle period or when the tool is released.
+
+_dirty_masks = {}           # id(layer) -> layer with unsaved voxel edits
+_flush_timer = QTimer()
+_flush_timer.setSingleShot(True)
+_EDIT_FLUSH_MS = 800        # after a whole-array assignment (events.data)
+_STROKE_FLUSH_MS = 3000     # idle time after the last brush/erase/fill stroke
+
+_TOOL_MODES = ('paint', 'erase', 'fill')
+
+
+def _after_mask_edit(layer, viewer=None, refresh_ids=True):
+    """Persist ``layer``, optionally refresh its ID overlay, and cascade the edit
+    into puncta ``Nucleus_ID`` (no-op unless ``layer`` is the consensus mask)."""
+    if layer is None:
+        return
+    _dirty_masks.pop(id(layer), None)
+    _write_mask_to_disk(layer)
+    viewer = viewer or napari.current_viewer()
+    if viewer is None:
+        return
+    if refresh_ids:
+        ids_name = f"{layer.name}_IDs"
+        if ids_name in viewer.layers:
+            viewer_helpers.add_or_update_label_ids(viewer, layer)
+    _resync_puncta_for_layer(viewer, layer)
+
+
+def _mark_mask_dirty(layer, delay_ms=_EDIT_FLUSH_MS):
+    """Record an unsaved edit on ``layer`` and (re)start the flush timer."""
+    if layer is None:
+        return
+    _dirty_masks[id(layer)] = layer
+    _flush_timer.start(delay_ms)
+
+
+def _flush_mask_edits(layer=None, refresh_ids=None):
+    """Run the after-edit cascade for ``layer`` (or every dirty layer) if it has
+    unsaved edits. ``refresh_ids=None`` refreshes the overlay unless the layer is
+    still in a painting tool, in which case the refresh waits for tool release."""
+    targets = [layer] if layer is not None else list(_dirty_masks.values())
+    for lyr in targets:
+        if id(lyr) not in _dirty_masks:
+            continue
+        do_refresh = refresh_ids
+        if do_refresh is None:
+            do_refresh = str(getattr(lyr, 'mode', '')) not in _TOOL_MODES
+        _after_mask_edit(lyr, refresh_ids=do_refresh)
+
+
+_flush_timer.timeout.connect(lambda: _flush_mask_edits())
 
 def delete_mask_under_mouse(viewer):
     """Deletes the mask label currently under the mouse cursor."""
@@ -562,6 +628,9 @@ def _on_paint_toggle(checked):
     else:
         _mask_undo.end(layer.data)  # store diff of entire paint session
         layer.mode = 'pan_zoom'
+        # Persist the strokes and cascade into puncta now; the mode-change
+        # handler does the same on the way out, and the second call is a no-op.
+        _flush_mask_edits(layer, refresh_ids=False)
         # Refresh IDs after painting so new/modified labels get their centroid label
         viewer = napari.current_viewer()
         if viewer:
@@ -683,8 +752,8 @@ _paint_brush_slider.changed.connect(_on_paint_brush_changed)
 _refresh_ids_btn = QPushButton("Refresh IDs")
 _refresh_ids_btn.setToolTip(
     "Recompute centroids, refresh the ID labels overlay, and re-sync puncta "
-    "Nucleus_IDs from the current mask. Use this if puncta nucleus assignments "
-    "appear stale after mask editing."
+    "Nucleus_IDs from the current mask. Edits do this automatically; use this "
+    "to force it."
 )
 
 def _on_refresh_ids(_checked=False):
@@ -758,6 +827,8 @@ def _on_erase_toggle(checked):
         _mask_undo.end(layer.data)  # store diff of entire erase session
         layer.mode = 'pan_zoom'
         viewer = napari.current_viewer()
+        # Persist the erased voxels (strokes never fire events.data) and cascade.
+        _flush_mask_edits(layer, refresh_ids=False)
         _resync_puncta_for_layer(viewer, layer)
 
 _erase_toggle_btn.clicked.connect(_on_erase_toggle)
@@ -1107,9 +1178,13 @@ def _sync_erase_from_layer_mode(event):
         elif is_erase and not _was_erasing and _mask_undo._pre_edit is None:
             _mask_undo.begin(layer.data)
 
-    # If we just left paint or erase mode, refresh IDs and ensure visibility
+    # If we just left paint or erase mode (widget toggle or napari's own
+    # controls): persist the strokes and cascade into puncta now, then refresh
+    # IDs and ensure visibility. Brush/erase strokes never fire events.data, so
+    # this is where their edits reach disk.
     if (_was_painting and not is_paint) or (_was_erasing and not is_erase):
         if layer:
+            _flush_mask_edits(layer, refresh_ids=False)
             viewer = napari.current_viewer()
             if viewer:
                 ids_name = f"{layer.name}_IDs"
@@ -1409,54 +1484,48 @@ QTimer.singleShot(500, _connect_layer_selection_sync)
 
 # --- Auto-saving for selected mask layer ---
 
-# Store a reference to the layer and the callback to allow disconnection
+# Store a reference to the layer and its callbacks to allow disconnection
 _mask_editor_widget._current_layer = None
-_mask_editor_widget._current_callback = None
+_mask_editor_widget._current_callbacks = None
 
-def _create_save_callback(layer):
-    """Factory to create a save callback for a specific layer."""
-    _refresh_timer = QTimer()
-    _refresh_timer.setSingleShot(True)
+def _create_edit_callbacks(layer):
+    """Return ``(on_data, on_paint)`` callbacks that mark ``layer`` dirty.
 
-    def _refresh_ids():
-        viewer = napari.current_viewer()
-        if viewer:
-            ids_name = f"{layer.name}_IDs"
-            if ids_name in viewer.layers:
-                viewer_helpers.add_or_update_label_ids(viewer, layer)
+    ``events.data`` fires on whole-array assignment (merge, delete, extrude,
+    undo): flush soon. ``events.paint`` fires once per committed brush, eraser
+    or fill stroke: flush after an idle period, or on tool release via
+    ``_sync_erase_from_layer_mode``.
+    """
+    def _on_data(event=None):
+        _mark_mask_dirty(layer, _EDIT_FLUSH_MS)
 
-    _refresh_timer.timeout.connect(_refresh_ids)
+    def _on_paint(event=None):
+        _mark_mask_dirty(layer, _STROKE_FLUSH_MS)
 
-    def _save_mask_data(event=None):
-        out_dir = session.get_data("output_dir")
-        if out_dir and layer and layer.name:
-            seg_dir = Path(out_dir) / constants.SEGMENTATION_DIR
-            seg_dir.mkdir(exist_ok=True, parents=True)
-            mask_path = seg_dir / f"{layer.name}.tif"
-            tifffile.imwrite(mask_path, layer.data)
-            session.set_processed_file(layer.name, str(mask_path), layer_type='labels', metadata={'subtype': 'edited_mask'})
-        # Debounced refresh: update existing ID layer 800 ms after the last edit
-        _refresh_timer.start(800)
-
-    return _save_mask_data
+    return _on_data, _on_paint
 
 @_mask_editor_widget.mask_layer.changed.connect
 def _on_mask_layer_changed(new_layer: "napari.layers.Labels"):
-    """Disconnects the old listener and connects a new one to the selected layer."""
+    """Disconnects the old listeners and connects new ones to the selected layer."""
     old_layer = _mask_editor_widget._current_layer
-    old_callback = _mask_editor_widget._current_callback
+    old_callbacks = _mask_editor_widget._current_callbacks
 
-    if old_layer and old_callback and old_callback in old_layer.events.data.callbacks:
-        old_layer.events.data.disconnect(old_callback)
+    if old_layer is not None and old_callbacks:
+        # Do not leave the previous layer's edits unsaved.
+        _flush_mask_edits(old_layer)
+        for emitter, cb in zip((old_layer.events.data, old_layer.events.paint), old_callbacks):
+            if cb in emitter.callbacks:
+                emitter.disconnect(cb)
 
     if new_layer:
-        new_callback = _create_save_callback(new_layer)
-        new_layer.events.data.connect(new_callback)
+        on_data, on_paint = _create_edit_callbacks(new_layer)
+        new_layer.events.data.connect(on_data)
+        new_layer.events.paint.connect(on_paint)
         _mask_editor_widget._current_layer = new_layer
-        _mask_editor_widget._current_callback = new_callback
+        _mask_editor_widget._current_callbacks = (on_data, on_paint)
     else:
         _mask_editor_widget._current_layer = None
-        _mask_editor_widget._current_callback = None
+        _mask_editor_widget._current_callbacks = None
 
 # --- Public API ---
 # Expose the magicgui widget directly as mask_editor_widget (no wrapper Container).

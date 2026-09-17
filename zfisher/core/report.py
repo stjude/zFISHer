@@ -9,7 +9,21 @@ from . import session
 logger = logging.getLogger(__name__)
 
 
-def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None, coloc_df=None, coloc_meta=None, tri_coloc_df=None, tri_coloc_meta=None, per_nucleus_df=None, stats_df=None, distribution_df=None, params_df=None):
+def next_free_path(path):
+    """Return ``path`` if it does not exist, else the first ``<stem>_<n><suffix>``
+    (n from 2) that does not exist."""
+    path = Path(path)
+    if not path.exists():
+        return path
+    n = 2
+    while True:
+        candidate = path.with_name(f"{path.stem}_{n}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+        n += 1
+
+
+def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None, coloc_df=None, coloc_meta=None, tri_coloc_df=None, tri_coloc_meta=None, per_nucleus_df=None, stats_df=None, distribution_df=None, params_df=None, on_exists="version"):
     """
     Exports pre-computed analysis DataFrames to an Excel file with multiple sheets.
 
@@ -35,6 +49,11 @@ def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None, co
         Pre-computed tri-colocalization hits from `calculate_tri_colocalization`.
     tri_coloc_meta : list[dict], optional
         Metadata entries from `calculate_tri_colocalization`.
+    on_exists : {"version", "overwrite", "error"}, optional
+        What to do when ``save_path`` already exists. ``"version"`` (default)
+        writes ``<stem>_2.xlsx``, ``<stem>_3.xlsx``, ... so no report is ever
+        lost and batch re-runs succeed; ``"overwrite"`` replaces the file;
+        ``"error"`` raises ``FileExistsError``.
 
     Returns
     -------
@@ -42,17 +61,23 @@ def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None, co
         The final path of the saved report file.
     """
     save_path = Path(save_path)
+    if on_exists not in ("version", "overwrite", "error"):
+        raise ValueError(f"on_exists must be 'version', 'overwrite' or 'error', got {on_exists!r}")
 
     try:
         if not str(save_path).endswith(constants.EXCEL_SUFFIX):
             save_path = save_path.with_suffix(constants.EXCEL_SUFFIX)
 
-        # Never overwrite an existing report
         if save_path.exists():
-            raise FileExistsError(
-                f"A report named '{save_path.name}' already exists.\n"
-                "Please choose a different name before exporting."
-            )
+            if on_exists == "error":
+                raise FileExistsError(
+                    f"A report named '{save_path.name}' already exists.\n"
+                    "Please choose a different name before exporting."
+                )
+            if on_exists == "version":
+                versioned = next_free_path(save_path)
+                logger.info("Report '%s' exists; writing '%s' instead.", save_path.name, versioned.name)
+                save_path = versioned
 
         logger.info("Exporting report to %s", save_path)
 
