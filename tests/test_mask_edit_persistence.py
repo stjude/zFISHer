@@ -148,3 +148,61 @@ def test_flush_defers_id_refresh_while_tool_active(me, monkeypatch):
     me._mark_mask_dirty(layer)
     me._flush_mask_edits(layer)
     assert len(refreshed) == 1
+
+
+# --- The save itself: compressed, swapped into place, and never failing silently ---
+
+def test_saved_mask_is_compressed_and_identical(me):
+    import tifffile
+    layer = _labels(_consensus_name())
+    layer.data[0, 2:20, 2:20] = 7
+    me._mark_mask_dirty(layer)
+    me._flush_mask_edits(layer, refresh_ids=False)
+    path = _tif(me, layer)
+    with tifffile.TiffFile(path) as tif:
+        assert int(tif.pages[0].compression) != 1          # 1 means uncompressed
+    back = tifffile.imread(path)
+    assert back.dtype == layer.data.dtype and np.array_equal(back, layer.data)
+    assert not path.with_name(path.name + ".tmp").exists()
+
+
+def test_failed_save_keeps_layer_unsaved_and_tells_the_user(me, monkeypatch):
+    from zfisher.core import io as zio
+    layer = _labels(_consensus_name())
+
+    class _V:
+        layers = []
+        status = ""
+    viewer = _V()
+    me.napari.current_viewer = lambda: viewer
+    working_writer = zio.write_label_tif
+
+    def _disk_full(path, data, **kwargs):
+        raise OSError("disk full")
+    monkeypatch.setattr(zio, "write_label_tif", _disk_full)
+
+    me._mark_mask_dirty(layer)
+    me._flush_mask_edits(layer, refresh_ids=False)         # must not raise
+    assert id(layer) in me._dirty_masks                    # still unsaved, so the next flush retries
+    assert "Could not save mask" in viewer.status and "disk full" in viewer.status
+    assert not _tif(me, layer).exists()
+    assert len(me._resync_calls) == 1                      # puncta still follow the mask on screen
+
+    monkeypatch.setattr(zio, "write_label_tif", working_writer)
+    me._flush_mask_edits(layer, refresh_ids=False)         # the retry
+    assert id(layer) not in me._dirty_masks
+    assert _tif(me, layer).exists()
+
+
+def test_debounced_save_failure_is_not_silent_either(me, monkeypatch):
+    from zfisher.core import io as zio
+    layer = _labels("R1 - DAPI_masks")
+
+    def _disk_full(path, data, **kwargs):
+        raise OSError("disk full")
+    monkeypatch.setattr(zio, "write_label_tif", _disk_full)
+
+    me._save_pending_layer = layer
+    me._do_save()                                          # the 500 ms timer's slot; must not raise
+    assert id(layer) in me._dirty_masks
+    assert me._save_pending_layer is None

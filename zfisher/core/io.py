@@ -1,4 +1,5 @@
 import logging
+import os
 import nd2
 import numpy as np
 from dataclasses import dataclass
@@ -384,4 +385,38 @@ def convert_nd2_to_ome(
 
     except Exception as e:
         logger.error("Failed to convert ND2 to OME-TIFF: %s", e)
+
+
+def write_label_tif(path, data):
+    """
+    Write a label mask as a compressed TIFF without ever truncating the file
+    that is already there.
+
+    The mask goes to ``<name>.tmp`` first and is then swapped into place, so a
+    write that dies halfway leaves the previous file intact. Windows refuses
+    the swap while another program holds the file open; the file is then
+    overwritten in place and a warning is logged. If that fails as well, the
+    complete ``.tmp`` copy is left beside it.
+
+    Returns ``"atomic"`` or ``"direct"``, whichever path wrote the file.
+    """
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    # zlib level 1 turns a 1.2 GB mask into a few MB and, even on one core, is
+    # faster than writing it uncompressed. minisblack: without it tifffile
+    # stores a stack of exactly 3 or 4 slices as the planes of a colour image.
+    options = dict(compression='zlib', compressionargs={'level': 1}, photometric='minisblack')
+    try:
+        tifffile.imwrite(tmp, data, **options)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    try:
+        os.replace(tmp, path)
+        return "atomic"
+    except OSError as e:
+        logger.warning("Could not swap %s into place (%s); overwriting it directly.", path.name, e)
+    tifffile.imwrite(path, data, **options)
+    tmp.unlink(missing_ok=True)
+    return "direct"
 

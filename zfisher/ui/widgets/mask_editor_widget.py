@@ -3,12 +3,12 @@ import napari
 import numpy as np
 from collections import deque
 from magicgui import magicgui, widgets
-import tifffile
 from pathlib import Path
 from qtpy.QtCore import QTimer, Qt
 from qtpy.QtWidgets import QFrame
 
 from ...core import session
+from ...core import io
 from .. import popups, viewer_helpers
 from ..decorators import require_active_session
 from ...core import segmentation
@@ -334,14 +334,27 @@ def _schedule_save(layer):
 
 def _write_mask_to_disk(layer):
     """Write ``layer.data`` to ``segmentation/<name>.tif`` and register it in the
-    session. The one mask writer in this module."""
+    session. The one mask writer in this module.
+
+    Never raises. A failed save puts the layer back into ``_dirty_masks`` so the
+    next flush retries it (every save writes the whole current mask), and is
+    logged and shown in the status bar instead of vanishing."""
     out_dir = session.get_data("output_dir")
     if not (out_dir and layer is not None and layer.name):
         return None
     seg_dir = Path(out_dir) / constants.SEGMENTATION_DIR
-    seg_dir.mkdir(exist_ok=True, parents=True)
     mask_path = seg_dir / f"{layer.name}.tif"
-    tifffile.imwrite(mask_path, layer.data)
+    try:
+        seg_dir.mkdir(exist_ok=True, parents=True)
+        io.write_label_tif(mask_path, layer.data)
+    except Exception as exc:
+        _dirty_masks[id(layer)] = layer
+        logger.error("Could not save mask '%s': %s", layer.name, exc, exc_info=True)
+        viewer = napari.current_viewer()
+        if viewer is not None:
+            viewer.status = (f"Could not save mask '{layer.name}': {str(exc).rstrip('.')}. "
+                             f"It stays unsaved and will be retried on the next edit.")
+        return None
     session.set_processed_file(layer.name, str(mask_path), layer_type='labels', metadata={'subtype': 'edited_mask'})
     return mask_path
 
