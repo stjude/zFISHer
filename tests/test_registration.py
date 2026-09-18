@@ -91,6 +91,39 @@ def test_max_distance_zero_or_none_uses_default():
         assert rmsd == ref_rmsd
 
 
+def test_failed_aligned_save_is_raised_not_dropped():
+    # The two per-channel saves run in a thread pool. An exception raised inside
+    # a submitted task stays in its future, so while nobody read the futures a
+    # failed write vanished and the run carried on without the file.
+    import tempfile
+    from pathlib import Path
+
+    real_imwrite, real_register = reg.tifffile.imwrite, reg.set_processed_file
+    registered = []
+
+    def _disk_full_for_r2(path, data, **kwargs):
+        if "_R2_" in str(path):
+            raise OSError(28, "No space left on device", str(path))
+        return real_imwrite(path, data, **kwargs)
+
+    reg.tifffile.imwrite = _disk_full_for_r2
+    reg.set_processed_file = lambda name, path, **kwargs: registered.append(name)
+    try:
+        with tempfile.TemporaryDirectory() as out:
+            vol = np.zeros((3, 8, 8), np.uint16)
+            pair = {"r1_data": vol, "r2_data": vol, "is_label": False, "r1_meta": {}, "r2_meta": {}}
+            try:
+                reg._process_channel_pair("FITC", pair, None, Path(out))
+            except OSError as exc:
+                assert "No space left" in str(exc)
+            else:
+                raise AssertionError("a failed save was swallowed")
+            assert registered == ["Aligned R1 - FITC"]          # the good save still completed
+            assert (Path(out) / "Aligned_R1_FITC.tif").exists()
+    finally:
+        reg.tifffile.imwrite, reg.set_processed_file = real_imwrite, real_register
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

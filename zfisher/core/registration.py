@@ -771,8 +771,15 @@ def _process_channel_pair(channel_name, pair_data, transform, output_dir):
 
     # Save both layers in parallel (zlib compression is CPU-bound)
     with ThreadPoolExecutor(max_workers=2) as save_executor:
-        save_executor.submit(_save_aligned_layer, r1_data, constants.ALIGNED_PREFIX, "R1", channel_name, output_dir, is_label)
-        save_executor.submit(_save_aligned_layer, final_r2, r2_prefix, "R2", channel_name, output_dir, is_label)
+        saves = [
+            save_executor.submit(_save_aligned_layer, r1_data, constants.ALIGNED_PREFIX, "R1", channel_name, output_dir, is_label),
+            save_executor.submit(_save_aligned_layer, final_r2, r2_prefix, "R2", channel_name, output_dir, is_label),
+        ]
+    # An exception raised inside a submitted task stays in its future until it
+    # is read. Unread, a failed write (full disk, permissions) would vanish and
+    # the run would carry on without the file.
+    for save in saves:
+        save.result()
 
     r1_result = {'data': r1_data, 'name': f"{constants.ALIGNED_PREFIX} R1 - {channel_name}", 'meta': pair_data['r1_meta'], 'type': 'labels' if is_label else 'image'}
     r2_result = {'data': final_r2, 'name': f"{r2_prefix} R2 - {channel_name}", 'meta': pair_data['r2_meta'], 'type': 'labels' if is_label else 'image'}
