@@ -46,6 +46,8 @@ dependencies = [
     "packaging==26.0",
     "qtpy==2.4.3",
     "Pillow==12.0.0",
+    # Memory figures in the session log's STAGE and ENV lines.
+    "psutil==7.2.2",
 ]
 
 [project.optional-dependencies]

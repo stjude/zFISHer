@@ -16,10 +16,12 @@ from pathlib import Path
 import tifffile
 
 from .. import constants
+from .timing import timed_stage, add_stage_fields
 
 logger = logging.getLogger(__name__)
 
 
+@timed_stage("consensus_nuclei", fields=lambda a: {"method": a["method"]})
 def process_consensus_nuclei(mask1, mask2, output_dir, threshold=None, method="Union", progress_callback=None):
     """
     Updated Core Orchestrator to support Union vs Intersection and 3D coordinate integrity.
@@ -281,6 +283,7 @@ def _merge_oversegmented_labels(labels, progress_callback=None):
     return merged, centroids
 
 
+@timed_stage("segment_nuclei:classical", fields=lambda a: {"shape": "x".join(map(str, a["image_data"].shape))})
 def segment_nuclei_classical(image_data, voxel_spacing=None, merge_splits=True, progress_callback=None):
     """
     Segment 3D nuclei using a classical image processing workflow.
@@ -381,6 +384,7 @@ def segment_nuclei_classical(image_data, voxel_spacing=None, merge_splits=True, 
     if progress_callback: progress_callback(100, "Done.")
     return labels, centroids
 
+@timed_stage("segment_nuclei:cellpose", fields=lambda a: {"shape": "x".join(map(str, a["image_data"].shape))})
 def segment_nuclei_cellpose(image_data, gpu=True, merge_splits=True, progress_callback=None):
     """
     Segment 3D nuclei using Cellpose in 2D-per-slice mode with cross-slice stitching.
@@ -421,6 +425,9 @@ def segment_nuclei_cellpose(image_data, gpu=True, merge_splits=True, progress_ca
     if progress_callback: progress_callback(10, "Loading Cellpose model...")
     use_gpu = core.use_gpu() if gpu else False
     model = models.CellposeModel(gpu=use_gpu)
+    device = str(getattr(model, "device", "cuda" if use_gpu else "cpu"))
+    logger.info("Cellpose model loaded: requested_gpu=%s use_gpu=%s device=%s", gpu, use_gpu, device)
+    add_stage_fields(device=device)
 
     # 3. Run 2D eval with stitching
     if progress_callback: progress_callback(15, "Running Cellpose (2D + stitch)...")
@@ -646,6 +653,7 @@ def delete_label(mask_data, label_id):
     return new_data
 
 
+@timed_stage("segmentation_session", fields=lambda a: {"method": a["method"]})
 def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callback=None, method="classical", merge_splits=True, voxel_spacing=None):
     """
     Core Orchestrator: Runs segmentation on one or both rounds and saves results.

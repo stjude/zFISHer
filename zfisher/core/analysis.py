@@ -10,6 +10,7 @@ from scipy.spatial import cKDTree
 from .report import export_report
 from . import session
 from .. import constants
+from .timing import timed_stage
 
 logger = logging.getLogger(__name__)
 
@@ -608,6 +609,9 @@ def calculate_distribution(per_nucleus_df, total_nuclei=None):
 # Orchestrator
 # =====================================================================
 
+@timed_stage("colocalization",
+             fields=lambda a: {"n_layers": len(a["layers_data"]), "n_rules": len(a["rules"] or []),
+                               "n_tri_rules": len(a["tri_rules"] or [])})
 def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, output_dir,
                                 tri_rules=None, total_nuclei=None, nucleus_ids=None):
     """

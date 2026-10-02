@@ -8,6 +8,7 @@ import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from .. import constants
+from .timing import timed_stage
 
 logger = logging.getLogger(__name__)
 
@@ -267,6 +268,7 @@ def peek_z_depth(path):
         return None
 
 
+@timed_stage("load_image", fields=lambda a: {"file": Path(a["path"]).name})
 def load_image_session(path: Path):
     """
     Loads an image file (ND2 or TIFF) and returns a session object.
@@ -323,6 +325,7 @@ def get_channel_data(session, target_name=constants.DAPI_CHANNEL_NAME):
         logger.warning("Channel '%s' not found. Defaulting to index 0.", target_name)
         return session.data[:, 0, :, :]
     
+@timed_stage("convert_nd2_to_ome", fields=lambda a: {"round": a["prefix"]})
 def convert_nd2_to_ome(
     nd2_session: FISHSession,
     output_dir: Path,

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from qtpy.QtCore import QTimer
-from ..core import session
+from ..core import session, timing
 from .. import constants
 
 logger = logging.getLogger(__name__)
@@ -75,6 +75,7 @@ def reset_events_state():
     _attached_listeners.clear()
 
 
+@timing.timed_action("puncta_save", fields=lambda a: {"layer": a["layer"].name, "n": len(a["layer"].data)})
 def save_puncta_layer(layer):
     """Write a puncta layer's current data + features to its canonical CSV and
     register it in the session.

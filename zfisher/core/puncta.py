@@ -5,6 +5,7 @@ from skimage.feature import peak_local_max, blob_log, blob_dog
 from skimage.filters import gaussian
 from skimage.morphology import white_tophat, disk
 from .. import constants
+from .timing import timed_stage, n_rows
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +295,9 @@ def detect_spots_3d(image_data, method="Local Maxima", progress_callback=None, *
                                  kwargs.get('sigma', 1.0), z_scale=kwargs.get('z_scale', 1.0))
     return np.empty((0, 3))
 
+@timed_stage("puncta_transform",
+             fields=lambda a: {"round": a["round_id"], "layer": a["layer_name"]},
+             result_fields=n_rows)
 def transform_puncta_to_aligned_space(raw_puncta, round_id, shift, canvas_offset,
                                        bspline_transform=None, consensus_mask=None,
                                        remove_extranuclear=True,
@@ -427,6 +431,9 @@ def transform_puncta_to_aligned_space(raw_puncta, round_id, shift, canvas_offset
     return final_data
 
 
+@timed_stage("puncta_detection",
+             fields=lambda a: {"layer": a["layer_name"], "method": (a["params"] or {}).get("method")},
+             result_fields=n_rows)
 def process_puncta_detection(image_data, mask_data=None, voxels=None, params=None, output_path=None, progress_callback=None, layer_name=None):
     """Orchestrates detection, quality mapping, and session persistence with CSV tags."""
     params = params or {}

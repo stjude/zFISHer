@@ -7,6 +7,7 @@ import numpy as np
 
 from .. import constants
 from .log_config import attach_session_log, detach_session_log
+from .timing import timed_stage
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +253,7 @@ def clear_session():
             "puncta_params": {},
         })
 
+@timed_stage("session_init")
 def initialize_new_session(output_dir, r1_path, r2_path, progress_callback=None):
     """
     Core Logic: Initializes directories and prepares files for processing.

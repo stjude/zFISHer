@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .. import constants
+from . import timing
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,8 @@ def attach_session_log(output_dir, session_filename=None):
     logger.info("Output directory: %s", output_dir)
     if session_filename:
         logger.info("Session file: %s", session_filename)
+    # Machine and storage the timing lines in this log were measured on.
+    timing.log_environment(output_dir)
 
 
 def detach_session_log():

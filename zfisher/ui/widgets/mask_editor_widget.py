@@ -1,4 +1,5 @@
 import logging
+import time
 import napari
 import numpy as np
 from collections import deque
@@ -7,7 +8,7 @@ from pathlib import Path
 from qtpy.QtCore import QTimer, Qt
 from qtpy.QtWidgets import QFrame
 
-from ...core import session
+from ...core import session, timing
 from ...core import io
 from .. import popups, viewer_helpers
 from ..decorators import require_active_session
@@ -55,6 +56,12 @@ class _MaskUndoStack:
 
 
 _mask_undo = _MaskUndoStack()
+
+
+def _selected_mask_fields(_args=None):
+    """Timing fields for handlers that act on the editor's selected layer."""
+    layer = _mask_editor_widget.mask_layer.value
+    return {"layer": layer.name} if layer is not None else {}
 
 
 def _resync_puncta_for_layer(viewer, layer):
@@ -211,6 +218,15 @@ class MaskHighlighter:
     # ---- mouse callback ----------------------------------------------------
 
     def on_mouse_move(self, viewer, event):
+        # Runs on every mouse move: timed in aggregate, one line per 5 s window
+        # and only when a call in that window took over 20 ms.
+        t0 = time.perf_counter()
+        try:
+            self._handle_mouse_move(viewer, event)
+        finally:
+            _hover_timing.add(time.perf_counter() - t0)
+
+    def _handle_mouse_move(self, viewer, event):
         if not self.active:
             return
 
@@ -242,6 +258,7 @@ class MaskHighlighter:
 
 # Global instance
 _highlighter = None
+_hover_timing = timing.HoverAggregate("mask_hover")
 
 @magicgui(
     call_button="Merge Nuclei",
@@ -250,6 +267,8 @@ _highlighter = None
     target_id={"label": "Target ID", "tooltip": "ID of the nucleus to merge into. Source will be absorbed into Target."}
 )
 @require_active_session("Please start or load a session before editing masks.")
+@timing.timed_action("mask_merge", fields=lambda a: {
+    "layer": getattr(a["mask_layer"], "name", None), "source": a["source_id"], "target": a["target_id"]})
 def _mask_editor_widget(
     mask_layer: "napari.layers.Labels",
     source_id: int = 0,
@@ -284,6 +303,7 @@ def _mask_editor_widget(
 
     viewer.status = f"Merged ID {source_id} into {target_id} ({count} pixels)."
 
+@timing.timed_action("mask_delete", fields=lambda a: {"layer": a["layer"].name, "label": a["label_id"]})
 def _delete_label_inplace(layer, label_id, reset_mode=False):
     """Delete a label in-place and refresh without triggering a full data reassignment."""
     viewer = napari.current_viewer()
@@ -301,6 +321,7 @@ def _delete_label_inplace(layer, label_id, reset_mode=False):
     ids_name = f"{layer.name}_IDs"
     centroids_name = layer.name.replace(constants.MASKS_SUFFIX, constants.CENTROIDS_SUFFIX)
 
+    @timing.timed_action("mask_deferred_refresh", fields=lambda _a: {"trigger": "delete"})
     def _deferred_updates():
         layer.refresh()
         # Full IDs refresh — rebuilds data+text from scratch, avoids stale cache
@@ -332,6 +353,9 @@ def _schedule_save(layer):
     _save_pending_layer = layer
     _save_timer.start(500)
 
+@timing.timed_action(
+    "mask_save", fields=lambda a: {"layer": getattr(a["layer"], "name", None)},
+    result_fields=lambda path: {"bytes": path.stat().st_size} if path else {"saved": False})
 def _write_mask_to_disk(layer):
     """Write ``layer.data`` to ``segmentation/<name>.tif`` and register it in the
     session. The one mask writer in this module.
@@ -386,6 +410,8 @@ _STROKE_FLUSH_MS = 3000     # idle time after the last brush/erase/fill stroke
 _TOOL_MODES = ('paint', 'erase', 'fill')
 
 
+@timing.timed_action("mask_after_edit", fields=lambda a: {
+    "layer": getattr(a["layer"], "name", None), "refresh_ids": a["refresh_ids"]})
 def _after_mask_edit(layer, viewer=None, refresh_ids=True):
     """Persist ``layer``, optionally refresh its ID overlay, and cascade the edit
     into puncta ``Nucleus_ID`` (no-op unless ``layer`` is the consensus mask)."""
@@ -619,6 +645,7 @@ if _paint_icon_path.exists():
 else:
     _paint_toggle_btn.setText("Paint")
 
+@timing.timed_action("mask_paint_toggle", fields=lambda a: {**_selected_mask_fields(), "on": a["checked"]})
 def _on_paint_toggle(checked):
     layer = _mask_editor_widget.mask_layer.value
     if not layer:
@@ -652,7 +679,9 @@ def _on_paint_toggle(checked):
                 QTimer.singleShot(100, lambda: viewer_helpers.add_or_update_label_ids(viewer, layer))
         _resync_puncta_for_layer(viewer, layer)
 
-_paint_toggle_btn.clicked.connect(_on_paint_toggle)
+# PySide6 passes a slot as many arguments as its own code object declares, so
+# the timing wrapper (*args) would receive no `checked`; the lambda forwards it.
+_paint_toggle_btn.clicked.connect(lambda checked: _on_paint_toggle(checked))
 
 # Paint eyedropper button — pick mode to select a nucleus ID
 _paint_pick_btn = QPushButton()
@@ -713,6 +742,7 @@ _layout.addWidget(_paint_btn_row)
 _paint_new_btn = QPushButton("Paint New ID")
 _paint_new_btn.setToolTip("Start painting with the next available nucleus ID (max + 1).")
 
+@timing.timed_action("mask_paint_new", fields=_selected_mask_fields)
 def _on_paint_new(_checked=False):
     layer = _mask_editor_widget.mask_layer.value
     if not layer:
@@ -769,6 +799,7 @@ _refresh_ids_btn.setToolTip(
     "to force it."
 )
 
+@timing.timed_action("mask_refresh_ids", fields=_selected_mask_fields)
 def _on_refresh_ids(_checked=False):
     viewer = napari.current_viewer()
     layer = _mask_editor_widget.mask_layer.value
@@ -821,6 +852,7 @@ if _erase_icon_path.exists():
 else:
     _erase_toggle_btn.setText("Erase")
 
+@timing.timed_action("mask_erase_toggle", fields=lambda a: {**_selected_mask_fields(), "on": a["checked"]})
 def _on_erase_toggle(checked):
     layer = _mask_editor_widget.mask_layer.value
     if not layer:
@@ -844,7 +876,7 @@ def _on_erase_toggle(checked):
         _flush_mask_edits(layer, refresh_ids=False)
         _resync_puncta_for_layer(viewer, layer)
 
-_erase_toggle_btn.clicked.connect(_on_erase_toggle)
+_erase_toggle_btn.clicked.connect(lambda checked: _on_erase_toggle(checked))  # see paint toggle
 
 # Erase eyedropper button — pick mode to select ID for delete
 _erase_pick_btn = QPushButton()
@@ -966,6 +998,7 @@ def _on_erase(value: bool):
             viewer.status = "Erase Mode Off."
 
 @require_active_session("Please start or load a session before editing masks.")
+@timing.timed_action("mask_extrude", fields=_selected_mask_fields)
 def _on_extrude(_checked=False):
     viewer = napari.current_viewer()
     layer = _mask_editor_widget.mask_layer.value
@@ -1008,6 +1041,7 @@ def _on_extrude(_checked=False):
     viewer.status = f"Extruded ID {label_id} through all Z slices."
 
 @require_active_session("Please start or load a session before editing masks.")
+@timing.timed_action("mask_delete_button", fields=_selected_mask_fields)
 def _on_delete():
     viewer = napari.current_viewer()
     layer = _mask_editor_widget.mask_layer.value
@@ -1040,7 +1074,7 @@ def _on_hover_mode(value: bool):
         viewer.status = "Hover Edit Mode OFF."
 
 @require_active_session("Please start or load a session before refreshing IDs.")
-
+@timing.timed_action("mask_undo", fields=_selected_mask_fields)
 def _on_mask_undo():
     viewer = napari.current_viewer()
     layer = _mask_editor_widget.mask_layer.value
@@ -1062,6 +1096,7 @@ def _on_mask_undo():
             _mask_undo.begin(layer.data)
         # Refresh IDs and centroids to match reverted mask data
         centroids_name = layer.name.replace(constants.MASKS_SUFFIX, constants.CENTROIDS_SUFFIX)
+        @timing.timed_action("mask_deferred_refresh", fields=lambda _a: {"trigger": "undo"})
         def _deferred_undo_refresh():
             viewer_helpers.add_or_update_label_ids(viewer, layer)
             # Rebuild centroids from the reverted mask
@@ -1085,6 +1120,7 @@ def _on_mask_undo():
             _mask_undo.begin(layer.data)
         viewer.status = "Nothing to undo."
 
+@timing.timed_action("mask_delete_id", fields=_selected_mask_fields)
 def _on_delete_id():
     viewer = napari.current_viewer()
     layer = _mask_editor_widget.mask_layer.value
@@ -1103,6 +1139,7 @@ def _on_delete_id():
     logger.info("MASK EDIT: Deleted nucleus ID %d on layer '%s'", label_id, layer.name)
     viewer.status = f"Deleted Nucleus ID {label_id}."
 
+@timing.timed_action("mask_erase_all", fields=_selected_mask_fields)
 def _on_erase_all():
     from qtpy.QtWidgets import QMessageBox
     viewer = napari.current_viewer()
@@ -1116,13 +1153,14 @@ def _on_erase_all():
             viewer.status = "Mask is already empty."
         return
     n_ids = int(layer.data.max())
-    reply = QMessageBox.warning(
-        _mask_editor_widget.native,
-        "Erase All Masks",
-        f"This will erase all {n_ids} nuclei from '{layer.name}'.\n\nAre you sure?",
-        QMessageBox.Yes | QMessageBox.Cancel,
-        QMessageBox.Cancel,
-    )
+    with timing.user_wait():
+        reply = QMessageBox.warning(
+            _mask_editor_widget.native,
+            "Erase All Masks",
+            f"This will erase all {n_ids} nuclei from '{layer.name}'.\n\nAre you sure?",
+            QMessageBox.Yes | QMessageBox.Cancel,
+            QMessageBox.Cancel,
+        )
     if reply != QMessageBox.Yes:
         return
     if hasattr(layer, 'mode'):
@@ -1133,6 +1171,7 @@ def _on_erase_all():
     ids_name = f"{layer.name}_IDs"
     centroids_name = layer.name.replace(constants.MASKS_SUFFIX, constants.CENTROIDS_SUFFIX)
 
+    @timing.timed_action("mask_deferred_refresh", fields=lambda _a: {"trigger": "erase_all"})
     def _deferred_updates():
         layer.refresh()
         viewer_helpers.add_or_update_label_ids(viewer, layer)
@@ -1169,6 +1208,8 @@ _syncing_brush = False  # guard against recursive sync
 _was_painting = False  # track paint mode to refresh IDs on exit
 _was_erasing = False   # track erase mode for undo snapshots
 
+@timing.timed_action("mask_mode_change", fields=lambda a: {
+    "mode": getattr(a["event"], "mode", getattr(a["event"], "value", None))})
 def _sync_erase_from_layer_mode(event):
     """Keep paint/erase buttons and checkbox in sync when mode changes via layer controls."""
     global _was_painting, _was_erasing

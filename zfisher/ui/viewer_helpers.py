@@ -5,7 +5,7 @@ import tifffile
 from pathlib import Path
 import pandas as pd
 from packaging.version import parse as parse_version
-from ..core import session, segmentation, puncta as _puncta
+from ..core import session, segmentation, timing, puncta as _puncta
 
 from .. import constants
 from . import style
@@ -404,7 +404,8 @@ def ask_replace_or_merge(parent, layer_name, n_existing):
         overlay.raise_()
     dlg.show()
     dlg.raise_()
-    dlg.exec_()
+    with timing.user_wait():
+        dlg.exec_()
     if overlay:
         overlay.close()
         overlay.deleteLater()
@@ -764,6 +765,7 @@ def add_consensus_nuclei_to_viewer(viewer: napari.Viewer, r1_mask_layer: napari.
             scale=r1_mask_layer.scale, translate=r1_mask_layer.translate,
         )
 
+@timing.timed_action("mask_ids_refresh", fields=lambda a: {"layer": a["labels_layer"].name})
 def add_or_update_label_ids(viewer: napari.Viewer, labels_layer: napari.layers.Labels):
     """
     Calculates centroids for a labels layer and displays them as text.
@@ -796,6 +798,8 @@ def add_or_update_label_ids(viewer: napari.Viewer, labels_layer: napari.layers.L
         session.set_processed_file(name, "", layer_type='points', metadata={'subtype': 'computed_ids'})
 
 
+@timing.timed_action("puncta_resync", fields=lambda a: {"mask": a["mask_layer"].name},
+                     result_fields=lambda r: {"changed": r.get("changed_total"), "removed": r.get("removed_total")})
 def resync_puncta_nucleus_ids(
     viewer: napari.Viewer,
     mask_layer: napari.layers.Labels,

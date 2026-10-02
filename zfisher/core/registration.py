@@ -37,9 +37,13 @@ from .session import set_processed_file
 
 from . import session
 from .. import constants
+from .timing import timed_stage, stage_timer
 
 logger = logging.getLogger(__name__)
 
+@timed_stage("registration_ransac",
+             fields=lambda a: {"n_r1": len(a["r1_centroids"]), "n_r2": len(a["r2_centroids"])},
+             result_fields=lambda r: {"rmsd": r[1]})
 def calculate_session_registration(r1_centroids, r2_centroids, voxels=None, max_distance=None, progress_callback=None):
     """
     Headless Orchestrator for Step 3.
@@ -651,6 +655,7 @@ def transform_points_inverse_bspline(points_zyx, bspline_transform, max_iter=20,
         results[i] = p[::-1]  # Back to ZYX
     return results
 
+@timed_stage("canvas_total", fields=lambda a: {"apply_warp": a["apply_warp"]})
 def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, apply_warp=True, progress_callback=None):
     """
     Core Orchestrator: Aligns, warps, and saves all channels.
@@ -687,7 +692,8 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
             r2 = next((l for l in r2_layers_data if channel_name in l['name']), None)
             if r2:
                 is_label = r1.get('is_label', False)
-                aligned_r1, aligned_r2, canvas_offset_pixels = align_and_pad_images(r1['data'], r2['data'], shift, is_label=is_label)
+                with stage_timer("canvas:rigid_align", channel=channel_name):
+                    aligned_r1, aligned_r2, canvas_offset_pixels = align_and_pad_images(r1['data'], r2['data'], shift, is_label=is_label)
                 logger.debug("generate_canvas: channel '%s' canvas_offset_pixels: %s", channel_name, canvas_offset_pixels.tolist())
                 if not canvas_offset_saved:
                     logger.debug("generate_canvas: saving canvas_offset_pixels to session: %s", canvas_offset_pixels.tolist())
@@ -707,20 +713,23 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
     if apply_warp and has_nuc:
         update(20, f"Calculating deformable registration on {nuc_ch}...")
         dapi_pair = aligned_pairs[nuc_ch]
-        transform = calculate_deformable_transform(dapi_pair['r1_data'], dapi_pair['r2_data'], use_mask=True)
+        with stage_timer("canvas:bspline_fit_masked", channel=nuc_ch):
+            transform = calculate_deformable_transform(dapi_pair['r1_data'], dapi_pair['r2_data'], use_mask=True)
         update(50, "Deformable registration complete.")
 
         # --- DEFORMATION VISUALIZATION ---
         # Separate unmasked transform for visualization so the checkerboard
         # shows full Z-varying deformation (the mask weakens Z-deformation).
         update(52, "Computing visualization transform...")
-        viz_transform = calculate_deformable_transform(dapi_pair['r1_data'], dapi_pair['r2_data'], use_mask=False)
+        with stage_timer("canvas:bspline_fit_viz", channel=nuc_ch):
+            viz_transform = calculate_deformable_transform(dapi_pair['r1_data'], dapi_pair['r2_data'], use_mask=False)
 
         update(55, "Generating deformation field...")
-        deformation_vectors = create_deformation_field(dapi_pair['r1_data'].shape, viz_transform, grid_spacing=constants.DEFORMATION_GRID_SPACING)
-        vector_layer_name = constants.DEFORMATION_FIELD_NAME
-        vector_path = output_dir / f"{vector_layer_name}.npy"
-        np.save(vector_path, deformation_vectors)
+        with stage_timer("canvas:deformation_field"):
+            deformation_vectors = create_deformation_field(dapi_pair['r1_data'].shape, viz_transform, grid_spacing=constants.DEFORMATION_GRID_SPACING)
+            vector_layer_name = constants.DEFORMATION_FIELD_NAME
+            vector_path = output_dir / f"{vector_layer_name}.npy"
+            np.save(vector_path, deformation_vectors)
         set_processed_file(vector_layer_name, str(vector_path), layer_type='vectors')
 
         vector_meta = {'scale': dapi_pair['r1_meta']['scale']}
@@ -729,12 +738,13 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
         })
 
         update(60, "Generating warped checkerboard...")
-        checkerboard_img = create_checkerboard_image(dapi_pair['r1_data'].shape, box_size=constants.DEFORMATION_GRID_SPACING)
-        warped_checkerboard = apply_deformable_transform(checkerboard_img, viz_transform, dapi_pair['r1_data'], is_label=False)
-        
-        checker_layer_name = constants.WARPED_CHECKERBOARD_NAME
-        checker_path = output_dir / f"{checker_layer_name}.tif"
-        tifffile.imwrite(checker_path, warped_checkerboard, compression='zlib')
+        with stage_timer("canvas:checkerboard_warp"):
+            checkerboard_img = create_checkerboard_image(dapi_pair['r1_data'].shape, box_size=constants.DEFORMATION_GRID_SPACING)
+            warped_checkerboard = apply_deformable_transform(checkerboard_img, viz_transform, dapi_pair['r1_data'], is_label=False)
+
+            checker_layer_name = constants.WARPED_CHECKERBOARD_NAME
+            checker_path = output_dir / f"{checker_layer_name}.tif"
+            tifffile.imwrite(checker_path, warped_checkerboard, compression='zlib')
         set_processed_file(checker_layer_name, str(checker_path), layer_type='image')
 
         checker_meta = {'scale': dapi_pair['r1_meta']['scale'], 'colormap': 'gray', 'blending': 'translucent', 'opacity': 0.3}
@@ -750,7 +760,8 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
         for i, (channel_name, pair_data) in enumerate(aligned_pairs.items()):
             prog = start_progress + int(((i + 1) / num_channels) * (100 - start_progress))
             update(prog, f"Applying warp to {channel_name}...")
-            result_pair = _process_channel_pair(channel_name, pair_data, transform, output_dir)
+            with stage_timer("canvas:warp_and_save", channel=channel_name, warped=transform is not None):
+                result_pair = _process_channel_pair(channel_name, pair_data, transform, output_dir)
             results.extend(result_pair)
             gc.collect()
 

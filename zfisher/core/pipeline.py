@@ -6,10 +6,14 @@ import logging
 
 from . import io, registration, segmentation, puncta, analysis, session
 from .. import constants
+from .timing import timed_stage
 
 logger = logging.getLogger(__name__)
 
 
+@timed_stage("pipeline_total",
+             fields=lambda a: {"dataset": Path(a["output_dir"]).name, "seg_method": a["seg_method"],
+                               "apply_warp": a["apply_warp"]})
 def run_full_zfisher_pipeline(
     r1_path, r2_path, output_dir,
     seg_method="Classical", merge_splits=True,
