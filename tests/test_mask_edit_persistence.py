@@ -50,7 +50,11 @@ def me(_qapp, monkeypatch):
     me_mod._dirty_masks.clear()
     me_mod._tmp = Path(tmp)
     me_mod._resync_calls = calls
-    return me_mod
+    yield me_mod
+    # A layer left dirty would flush from a real timer during a later test.
+    me_mod._flush_timer.stop()
+    me_mod._save_timer.stop()
+    me_mod._dirty_masks.clear()
 
 
 def _labels(name):

@@ -60,6 +60,14 @@ class LabelBoxes:
             self._lo[label] = lo
             self._hi[label] = hi
 
+    def labels_overlapping(self, region):
+        """Labels whose box overlaps ``region``: every label with a voxel in
+        ``region``, and possibly more."""
+        lo = np.array([s.start for s in region])
+        hi = np.array([s.stop for s in region])
+        return [label for label, box_lo in self._lo.items()
+                if np.all(box_lo < hi) and np.all(self._hi[label] > lo)]
+
     def extend_values(self, indices, values):
         """Grow the boxes of every label in ``values`` to cover ``indices``.
 
@@ -108,3 +116,45 @@ def replace_label(data, boxes, old, new):
     indices = tuple(ix + s.start for ix, s in zip(local, region))
     boxes.extend(new, index_extent(indices))
     return indices
+
+
+def label_centroids(data, boxes, labels):
+    """Centroids of ``labels``, each measured inside its box only.
+
+    Returns ``{label: centroid tuple, or None if the label has no voxels}``.
+    The values equal ``skimage.measure.regionprops(data)`` centroids exactly:
+    a box lists the same voxels in the same raster order as the label's own
+    bounding box, and the arithmetic is regionprops' own.
+    """
+    ndim = data.ndim
+    spacing, offset0 = np.ones(ndim), np.zeros(ndim)
+    out = {}
+    for label in labels:
+        label = int(label)
+        if label <= 0:
+            continue
+        region, _ = _search_region(data, boxes, label)
+        idx = np.argwhere(data[region] == label)
+        if len(idx) == 0:
+            out[label] = None
+            continue
+        offset = np.array([s.start for s in region])
+        out[label] = tuple(((offset + idx) * spacing + offset0).mean(axis=0))
+    return out
+
+
+def update_centroid_table(coords, labels, changed, ndim):
+    """A ``(coords, labels)`` centroid table with the labels in ``changed``
+    replaced: a label mapped to None is removed, any other gets its new
+    centroid, added if it was not there. Rows come back sorted by label, as
+    regionprops returns them; the rows of other labels are kept as they are.
+    """
+    coords = np.asarray(coords, dtype=float).reshape(-1, ndim)
+    labels = np.asarray(labels, dtype=np.int64).reshape(-1)
+    keep = ~np.isin(labels, np.fromiter(changed, dtype=np.int64, count=len(changed)))
+    new_labels = np.array([l for l, c in changed.items() if c is not None], dtype=np.int64)
+    new_coords = np.array([changed[l] for l in new_labels], dtype=float).reshape(-1, ndim)
+    out_labels = np.concatenate([labels[keep], new_labels])
+    out_coords = np.concatenate([coords[keep], new_coords])
+    order = np.argsort(out_labels, kind="stable")
+    return out_coords[order], out_labels[order]

@@ -1,11 +1,12 @@
 import logging
+import weakref
 import napari
 import numpy as np
 import tifffile
 from pathlib import Path
 import pandas as pd
 from packaging.version import parse as parse_version
-from ..core import session, segmentation, timing, puncta as _puncta
+from ..core import session, segmentation, timing, label_edits, puncta as _puncta
 
 from .. import constants
 from . import style
@@ -796,6 +797,147 @@ def add_or_update_label_ids(viewer: napari.Viewer, labels_layer: napari.layers.L
     # Register in session so this IDs layer is recreated on next session load.
     if not session.is_loading():
         session.set_processed_file(name, "", layer_type='points', metadata={'subtype': 'computed_ids'})
+
+    # The overlay now matches the mask exactly; track changes from here on.
+    _start_ids_tracking(labels_layer)
+
+
+# --- Incremental ID overlay updates ------------------------------------------
+#
+# A full ID refresh re-measures every nucleus (regionprops over the whole mask,
+# about 1 s on a typical volume). After an edit only the labels it touched can
+# have moved, appeared or gone, so ``refresh_label_ids`` re-measures just those
+# and keeps every other row. Tracking starts with a full refresh: from then on
+# every change to the mask marks the labels it touched. Mask editor edits mark
+# them directly (``mark_label_ids_dirty``), brush, eraser and fill strokes
+# through ``events.paint``, and napari's own undo and redo, which fire no event,
+# are read from napari's history at the next update. napari's history does not
+# know about the editor's in-place edits, so its undo can overwrite labels it
+# never recorded (paint 9, merge 9 into 2, napari undo: label 2 loses voxels).
+# For an undone or redone item every label whose box overlaps the item is
+# therefore marked too; boxes only grow, so that covers every label that had a
+# voxel there. A whole-array assignment ends tracking, and the next update is a
+# full refresh again.
+
+class _IdsTracking:
+    """Labels whose overlay row may be out of date, for one mask array."""
+
+    def __init__(self, layer, on_freed):
+        self.data_ref = weakref.ref(layer.data, on_freed)
+        self.dirty = set()
+        self.seen = _napari_history_items(layer)
+
+
+_ids_tracking = {}  # id(labels_layer) -> _IdsTracking
+
+
+def _napari_history_items(layer):
+    """napari's undo and redo items, keyed by id. The items are held, so no
+    other object can take one of these ids while the dict lives."""
+    items = (*getattr(layer, '_undo_history', ()), *getattr(layer, '_redo_history', ()))
+    return {id(item): item for item in items}
+
+
+def _atom_labels(atom):
+    _indices, old_values, new_values = atom
+    return (*np.unique(np.asarray(old_values)).tolist(),
+            *np.unique(np.asarray(new_values)).tolist())
+
+
+def _ids_tracking_for(layer):
+    tracking = _ids_tracking.get(id(layer))
+    if tracking is not None and tracking.data_ref() is layer.data:
+        return tracking
+    return None
+
+
+def _start_ids_tracking(layer):
+    key = id(layer)
+
+    def _freed(ref):
+        tracking = _ids_tracking.get(key)
+        if tracking is not None and tracking.data_ref is ref:
+            _ids_tracking.pop(key, None)
+
+    _ids_tracking[key] = _IdsTracking(layer, _freed)
+    if _mark_ids_on_paint not in layer.events.paint.callbacks:
+        layer.events.paint.connect(_mark_ids_on_paint)
+    if _stop_ids_on_data not in layer.events.data.callbacks:
+        layer.events.data.connect(_stop_ids_on_data)
+
+
+def _mark_ids_on_paint(event):
+    """Brush, eraser and fill strokes, from napari's ``events.paint``. The
+    stroke's history item is recorded as seen, so the next update does not
+    treat it as a napari undo or redo."""
+    tracking = _ids_tracking_for(event.source)
+    if tracking is None:
+        return
+    tracking.seen[id(event.value)] = event.value
+    for atom in event.value:
+        tracking.dirty.update(int(label) for label in _atom_labels(atom) if label)
+
+
+def _stop_ids_on_data(event):
+    """The whole array was assigned: the next update is a full refresh."""
+    invalidate_label_ids(event.source)
+
+
+def mark_label_ids_dirty(labels_layer, labels):
+    """Record that ``labels`` may have changed in ``labels_layer``."""
+    tracking = _ids_tracking_for(labels_layer)
+    if tracking is not None:
+        tracking.dirty.update(int(label) for label in labels if label)
+
+
+def invalidate_label_ids(labels_layer):
+    """Make the next ``refresh_label_ids`` of ``labels_layer`` a full refresh."""
+    _ids_tracking.pop(id(labels_layer), None)
+
+
+def reset_label_ids_tracking():
+    _ids_tracking.clear()
+
+
+@timing.timed_action("mask_ids_update", fields=lambda a: {"layer": a["labels_layer"].name})
+def refresh_label_ids(viewer, labels_layer, boxes):
+    """Bring the ``_IDs`` overlay of ``labels_layer`` up to date, re-measuring
+    only the labels changed since the last update.
+
+    ``boxes`` is a callable returning the ``label_edits.LabelBoxes`` of
+    ``labels_layer.data``. Falls back to ``add_or_update_label_ids``, which
+    creates the overlay if missing, when nothing is tracked for the layer.
+    """
+    name = f"{labels_layer.name}_IDs"
+    tracking = _ids_tracking_for(labels_layer)
+    if tracking is None or name not in viewer.layers:
+        add_or_update_label_ids(viewer, labels_layer)
+        return
+    current = _napari_history_items(labels_layer)
+    for key, item in current.items():
+        if key not in tracking.seen:          # napari undo or redo
+            regions = []
+            for atom in item:
+                tracking.dirty.update(int(label) for label in _atom_labels(atom) if label)
+                regions.append(label_edits.index_extent(atom[0]))
+            regions = [r for r in regions if r is not None]
+            if regions:
+                lo = np.min([[s.start for s in r] for r in regions], axis=0)
+                hi = np.max([[s.stop for s in r] for r in regions], axis=0)
+                region = tuple(slice(int(a), int(b)) for a, b in zip(lo, hi))
+                tracking.dirty.update(boxes().labels_overlapping(region))
+    tracking.seen = current
+    if not tracking.dirty:
+        return
+    ids_layer = viewer.layers[name]
+    changed = label_edits.label_centroids(labels_layer.data, boxes(), tracking.dirty)
+    coords, labels = label_edits.update_centroid_table(
+        ids_layer.data, ids_layer.properties.get('label', ()), changed, labels_layer.ndim)
+    _add_or_replace_ids_layer(
+        viewer, name, coords, labels,
+        scale=labels_layer.scale, translate=labels_layer.translate,
+    )
+    tracking.dirty = set()
 
 
 @timing.timed_action("puncta_resync", fields=lambda a: {"mask": a["mask_layer"].name},

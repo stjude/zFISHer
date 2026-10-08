@@ -82,14 +82,21 @@ class _MaskUndoStack:
         self._session = None
 
     def undo(self, data):
-        """Apply the last record in reverse. Returns ``(pieces, whole)``, or None
-        if there was nothing to undo."""
+        """Apply the last record in reverse. Returns ``(pieces, whole, touched)``,
+        or None if there was nothing to undo. ``touched`` holds every label the
+        undo removed or put back, or is None for a whole-volume record."""
         if not self._stack:
             return None
         pieces, whole = self._stack.pop()
+        touched = None if whole else set()
         for indices, old_values in reversed(pieces):
+            if touched is not None:
+                touched.update(np.unique(data[indices]).tolist())
+                touched.update(np.unique(np.asarray(old_values)).tolist())
             data[indices] = old_values
-        return pieces, whole
+        if touched is not None:
+            touched.discard(0)
+        return pieces, whole, touched
 
     def clear(self):
         self._stack.clear()
@@ -174,7 +181,7 @@ def _drop_boxes_on_data(event):
 def _update_boxes_after_undo(layer, record):
     """Undo put old values back: grow their boxes, or drop the boxes if the
     record was a whole-volume diff."""
-    pieces, whole = record
+    pieces, whole, _touched = record
     if whole:
         _label_boxes.pop(id(layer), None)
         return
@@ -182,6 +189,12 @@ def _update_boxes_after_undo(layer, record):
     if boxes is not None:
         for indices, old_values in pieces:
             boxes.extend_values(indices, old_values)
+
+
+def _refresh_ids(viewer, layer):
+    """Update the ID overlay of ``layer`` for the labels edited since the last
+    update; a full refresh when the overlay is not tracked yet."""
+    viewer_helpers.refresh_label_ids(viewer, layer, lambda: _boxes_for(layer))
 
 
 
@@ -418,12 +431,12 @@ def _mask_editor_widget(
         return
     count = indices[0].size
     _undo_for(mask_layer).push(indices, mask_layer.data.dtype.type(source_id))
+    viewer_helpers.mark_label_ids_dirty(mask_layer, (source_id, target_id))
 
     logger.info("MASK EDIT: Merge ID %d into %d (%d pixels) on layer '%s'", source_id, target_id, count, mask_layer.name)
     mask_layer.refresh()
     _schedule_save(mask_layer)
-    # Refresh IDs layer from scratch — more reliable than incremental removal
-    QTimer.singleShot(50, lambda: viewer_helpers.add_or_update_label_ids(viewer, mask_layer))
+    QTimer.singleShot(50, lambda: _refresh_ids(viewer, mask_layer))
     _resync_puncta_for_layer(viewer, mask_layer)
 
     viewer.status = f"Merged ID {source_id} into {target_id} ({count} pixels)."
@@ -440,6 +453,7 @@ def _delete_label_inplace(layer, label_id, reset_mode=False):
     indices = label_edits.replace_label(layer.data, _boxes_for(layer), label_id, 0)
     if indices is not None:
         _undo_for(layer).push(indices, layer.data.dtype.type(label_id))
+        viewer_helpers.mark_label_ids_dirty(layer, (label_id,))
 
     # Defer all visual updates to next event loop iteration so vispy
     # finishes any in-progress GL draw before buffers are modified.
@@ -449,8 +463,7 @@ def _delete_label_inplace(layer, label_id, reset_mode=False):
     @timing.timed_action("mask_deferred_refresh", fields=lambda _a: {"trigger": "delete"})
     def _deferred_updates():
         layer.refresh()
-        # Full IDs refresh — rebuilds data+text from scratch, avoids stale cache
-        viewer_helpers.add_or_update_label_ids(viewer, layer)
+        _refresh_ids(viewer, layer)
         # Re-show the IDs layer (look up fresh reference in case it was recreated)
         if ids_name in viewer.layers:
             viewer.layers[ids_name].visible = True
@@ -550,7 +563,7 @@ def _after_mask_edit(layer, viewer=None, refresh_ids=True):
     if refresh_ids:
         ids_name = f"{layer.name}_IDs"
         if ids_name in viewer.layers:
-            viewer_helpers.add_or_update_label_ids(viewer, layer)
+            _refresh_ids(viewer, layer)
     _resync_puncta_for_layer(viewer, layer)
 
 
@@ -801,7 +814,7 @@ def _on_paint_toggle(checked):
         if viewer:
             ids_name = f"{layer.name}_IDs"
             if ids_name in viewer.layers:
-                QTimer.singleShot(100, lambda: viewer_helpers.add_or_update_label_ids(viewer, layer))
+                QTimer.singleShot(100, lambda: _refresh_ids(viewer, layer))
         _resync_puncta_for_layer(viewer, layer)
 
 # PySide6 passes a slot as many arguments as its own code object declares, so
@@ -1216,6 +1229,11 @@ def _on_mask_undo():
     record = undo.undo(layer.data)
     if record:
         _update_boxes_after_undo(layer, record)
+        touched = record[2]
+        if touched is None:
+            viewer_helpers.invalidate_label_ids(layer)
+        else:
+            viewer_helpers.mark_label_ids_dirty(layer, touched)
         layer.refresh()
         # Restart a session if still in edit mode so future strokes are tracked
         if in_edit_mode:
@@ -1224,14 +1242,20 @@ def _on_mask_undo():
         centroids_name = layer.name.replace(constants.MASKS_SUFFIX, constants.CENTROIDS_SUFFIX)
         @timing.timed_action("mask_deferred_refresh", fields=lambda _a: {"trigger": "undo"})
         def _deferred_undo_refresh():
-            viewer_helpers.add_or_update_label_ids(viewer, layer)
-            # Rebuild centroids from the reverted mask
+            _refresh_ids(viewer, layer)
+            # Update the centroids of the labels the undo touched; after a
+            # whole-volume undo, rebuild them all from the reverted mask
             if centroids_name in viewer.layers:
-                from ...core.segmentation import get_mask_centroids
-                pts_data = get_mask_centroids(layer.data)
                 pts = viewer.layers[centroids_name]
-                coords = np.array([p['coord'] for p in pts_data]) if pts_data else np.empty((0, layer.ndim))
-                ids = np.array([p['label'] for p in pts_data]) if pts_data else np.empty(0)
+                if touched is None:
+                    from ...core.segmentation import get_mask_centroids
+                    pts_data = get_mask_centroids(layer.data)
+                    coords = np.array([p['coord'] for p in pts_data]) if pts_data else np.empty((0, layer.ndim))
+                    ids = np.array([p['label'] for p in pts_data]) if pts_data else np.empty(0)
+                else:
+                    changed = label_edits.label_centroids(layer.data, _boxes_for(layer), touched)
+                    coords, ids = label_edits.update_centroid_table(
+                        pts.data, pts.properties.get('id', ()), changed, layer.ndim)
                 viewer_helpers.set_points_data(pts, coords)
                 pts.properties = {'id': ids}
                 pts.refresh()
@@ -1368,7 +1392,7 @@ def _sync_erase_from_layer_mode(event):
             if viewer:
                 ids_name = f"{layer.name}_IDs"
                 def _refresh_and_show(v=viewer, l=layer, n=ids_name):
-                    viewer_helpers.add_or_update_label_ids(v, l)
+                    _refresh_ids(v, l)
                     if n in v.layers:
                         v.layers[n].visible = True
                 QTimer.singleShot(100, _refresh_and_show)
@@ -1642,6 +1666,7 @@ def reset_mask_editor_state():
     global _save_pending_layer
     _mask_undo_stacks.clear()
     _label_boxes.clear()
+    viewer_helpers.reset_label_ids_tracking()
     if _save_timer.isActive():
         _save_timer.stop()
     _save_pending_layer = None
