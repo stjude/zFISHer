@@ -100,7 +100,28 @@ class _MaskUndoStack:
         return len(self._stack)
 
 
-_mask_undo = _MaskUndoStack()
+# Undo stacks per mask layer, so an undo can only write into the array its
+# records came from. Keyed like _label_boxes: id(layer) with a weak reference to
+# the array. A stack whose array was replaced (re-segmentation, consensus
+# rebuild) is stale and replaced by an empty one; one whose array was freed is
+# dropped.
+_mask_undo_stacks = {}
+
+
+def _undo_for(layer):
+    """The undo stack of ``layer.data``, created if missing or stale."""
+    key = id(layer)
+    entry = _mask_undo_stacks.get(key)
+    if entry is not None and entry[0]() is layer.data:
+        return entry[1]
+
+    def _drop(ref):
+        if _mask_undo_stacks.get(key, (None,))[0] is ref:
+            _mask_undo_stacks.pop(key, None)
+
+    stack = _MaskUndoStack()
+    _mask_undo_stacks[key] = (weakref.ref(layer.data, _drop), stack)
+    return stack
 
 # Label bounding boxes per mask layer, so single-label edits touch only the
 # label's box (core.label_edits). Built on first use; dropped when the array is
@@ -396,7 +417,7 @@ def _mask_editor_widget(
         viewer.status = f"ID {source_id} not found."
         return
     count = indices[0].size
-    _mask_undo.push(indices, mask_layer.data.dtype.type(source_id))
+    _undo_for(mask_layer).push(indices, mask_layer.data.dtype.type(source_id))
 
     logger.info("MASK EDIT: Merge ID %d into %d (%d pixels) on layer '%s'", source_id, target_id, count, mask_layer.name)
     mask_layer.refresh()
@@ -418,7 +439,7 @@ def _delete_label_inplace(layer, label_id, reset_mode=False):
 
     indices = label_edits.replace_label(layer.data, _boxes_for(layer), label_id, 0)
     if indices is not None:
-        _mask_undo.push(indices, layer.data.dtype.type(label_id))
+        _undo_for(layer).push(indices, layer.data.dtype.type(label_id))
 
     # Defer all visual updates to next event loop iteration so vispy
     # finishes any in-progress GL draw before buffers are modified.
@@ -765,12 +786,12 @@ def _on_paint_toggle(checked):
         if viewer:
             viewer.layers.selection.active = layer
         layer.selected_label = _paint_id_spinbox.value
-        _mask_undo.begin_session()  # collect the strokes of this paint session
+        _undo_for(layer).begin_session()  # collect the strokes of this paint session
         layer.mode = 'paint'
         if viewer:
             viewer.status = f"Painting with ID {_paint_id_spinbox.value}"
     else:
-        _mask_undo.end_session()  # store the strokes of the paint session
+        _undo_for(layer).end_session()  # store the strokes of the paint session
         layer.mode = 'pan_zoom'
         # Persist the strokes and cascade into puncta now; the mode-change
         # handler does the same on the way out, and the second call is a no-op.
@@ -863,7 +884,7 @@ def _on_paint_new(_checked=False):
     if viewer:
         viewer.layers.selection.active = layer
     layer.selected_label = new_id
-    _mask_undo.begin_session()  # collect the strokes of this paint session
+    _undo_for(layer).begin_session()  # collect the strokes of this paint session
     layer.mode = 'paint'
     _paint_toggle_btn.blockSignals(True)
     _paint_toggle_btn.setChecked(True)
@@ -970,10 +991,10 @@ def _on_erase_toggle(checked):
         viewer = napari.current_viewer()
         if viewer:
             viewer.layers.selection.active = layer
-        _mask_undo.begin_session()  # collect the strokes of this erase session
+        _undo_for(layer).begin_session()  # collect the strokes of this erase session
         layer.mode = 'erase'
     else:
-        _mask_undo.end_session()  # store the strokes of the erase session
+        _undo_for(layer).end_session()  # store the strokes of the erase session
         layer.mode = 'pan_zoom'
         viewer = napari.current_viewer()
         # Persist the erased voxels (strokes never fire events.data) and cascade.
@@ -1127,14 +1148,15 @@ def _on_extrude(_checked=False):
     if hasattr(layer, 'mode') and layer.mode != 'pan_zoom':
         layer.mode = 'pan_zoom'
 
-    _mask_undo.begin(layer.data)
+    undo = _undo_for(layer)
+    undo.begin(layer.data)
     # Compute union XY footprint across all Z slices
     union_2d = np.any(layer.data == label_id, axis=0)
     # Only fill where the voxel is background (0) or already this label —
     # never overwrite other nuclei that overlap the XY footprint
     fill_mask = union_2d[np.newaxis, :, :] & ((layer.data == 0) | (layer.data == label_id))
     layer.data[fill_mask] = label_id
-    _mask_undo.end(layer.data)
+    undo.end(layer.data)
     _label_boxes.pop(id(layer), None)  # the label grew outside its box
 
     # Refresh mask visual and recompute IDs (in-place update, no hide needed)
@@ -1183,20 +1205,21 @@ def _on_mask_undo():
     if not layer:
         viewer.status = "No mask layer selected."
         return
+    undo = _undo_for(layer)  # only this layer's own edits can be undone into it
     # If currently in paint/erase mode, finalize the current session first
     in_edit_mode = False
     if hasattr(layer, 'mode'):
         mode = str(layer.mode).lower()
         if 'paint' in mode or 'erase' in mode:
             in_edit_mode = True
-            _mask_undo.end_session()
-    record = _mask_undo.undo(layer.data)
+            undo.end_session()
+    record = undo.undo(layer.data)
     if record:
         _update_boxes_after_undo(layer, record)
         layer.refresh()
         # Restart a session if still in edit mode so future strokes are tracked
         if in_edit_mode:
-            _mask_undo.begin_session()
+            undo.begin_session()
         # Refresh IDs and centroids to match reverted mask data
         centroids_name = layer.name.replace(constants.MASKS_SUFFIX, constants.CENTROIDS_SUFFIX)
         @timing.timed_action("mask_deferred_refresh", fields=lambda _a: {"trigger": "undo"})
@@ -1215,12 +1238,12 @@ def _on_mask_undo():
         QTimer.singleShot(50, _deferred_undo_refresh)
         _schedule_save(layer)
         _resync_puncta_for_layer(viewer, layer)
-        logger.info("MASK EDIT: Undo on layer '%s' (%d remaining)", layer.name, len(_mask_undo))
-        viewer.status = f"Undo ({len(_mask_undo)} remaining)."
+        logger.info("MASK EDIT: Undo on layer '%s' (%d remaining)", layer.name, len(undo))
+        viewer.status = f"Undo ({len(undo)} remaining)."
     else:
         # Restart the session if in edit mode so we don't lose future strokes
         if in_edit_mode:
-            _mask_undo.begin_session()
+            undo.begin_session()
         viewer.status = "Nothing to undo."
 
 @timing.timed_action("mask_delete_id", fields=_selected_mask_fields)
@@ -1268,9 +1291,10 @@ def _on_erase_all():
         return
     if hasattr(layer, 'mode'):
         layer.mode = 'pan_zoom'
-    _mask_undo.begin(layer.data)
+    undo = _undo_for(layer)
+    undo.begin(layer.data)
     layer.data[:] = 0
-    _mask_undo.end(layer.data)
+    undo.end(layer.data)
     ids_name = f"{layer.name}_IDs"
     centroids_name = layer.name.replace(constants.MASKS_SUFFIX, constants.CENTROIDS_SUFFIX)
 
@@ -1326,12 +1350,12 @@ def _sync_erase_from_layer_mode(event):
     # If we just left paint or erase mode, store the session's strokes
     if (_was_painting and not is_paint) or (_was_erasing and not is_erase):
         if layer:
-            _mask_undo.end_session()
+            _undo_for(layer).end_session()
 
     # If we just entered paint or erase mode (via layer controls), start a session
     if layer:
         if (is_paint and not _was_painting) or (is_erase and not _was_erasing):
-            _mask_undo.begin_session()
+            _undo_for(layer).begin_session()
 
     # If we just left paint or erase mode (widget toggle or napari's own
     # controls): persist the strokes and cascade into puncta now, then refresh
@@ -1616,7 +1640,7 @@ def reset_mask_editor_state():
     """Clear all module-level state. Called on session reset."""
     global _syncing_brush, _syncing_layer_selection, _highlighter
     global _save_pending_layer
-    _mask_undo.clear()
+    _mask_undo_stacks.clear()
     _label_boxes.clear()
     if _save_timer.isActive():
         _save_timer.stop()
@@ -1656,7 +1680,7 @@ def _create_edit_callbacks(layer):
         _mark_mask_dirty(layer, _EDIT_FLUSH_MS)
 
     def _on_paint(event=None):
-        _mask_undo.add_atoms(getattr(event, 'value', None) or ())
+        _undo_for(layer).add_atoms(getattr(event, 'value', None) or ())
         _mark_mask_dirty(layer, _STROKE_FLUSH_MS)
 
     return _on_data, _on_paint
@@ -1664,8 +1688,20 @@ def _create_edit_callbacks(layer):
 @_mask_editor_widget.mask_layer.changed.connect
 def _on_mask_layer_changed(new_layer: "napari.layers.Labels"):
     """Disconnects the old listeners and connects new ones to the selected layer."""
+    global _was_painting, _was_erasing
     old_layer = _mask_editor_widget._current_layer
     old_callbacks = _mask_editor_widget._current_callbacks
+
+    # A paint or erase session belongs to the layer it was started on: store
+    # its strokes now. The new layer gets a session if it is already in paint
+    # or erase mode, so its strokes can be undone too.
+    if old_layer is not None and old_layer is not new_layer:
+        _undo_for(old_layer).end_session()
+    mode = str(getattr(new_layer, 'mode', '')).lower() if new_layer else ''
+    _was_painting = 'paint' in mode
+    _was_erasing = 'erase' in mode
+    if _was_painting or _was_erasing:
+        _undo_for(new_layer).begin_session()
 
     if old_layer is not None and old_callbacks:
         # Do not leave the previous layer's edits unsaved.

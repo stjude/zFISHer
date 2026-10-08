@@ -174,29 +174,37 @@ def me(_qapp, monkeypatch):
     monkeypatch.setattr(me_mod.napari, "current_viewer", lambda: viewer)
     monkeypatch.setattr(me_mod, "QTimer", types.SimpleNamespace(singleShot=lambda *a, **k: None))
     monkeypatch.setattr(me_mod.viewer_helpers, "add_or_update_label_ids", lambda *a, **k: None)
-    me_mod._mask_undo.clear()
+    me_mod._mask_undo_stacks.clear()
     me_mod._label_boxes.clear()
     me_mod._dirty_masks.clear()
     yield me_mod
     me_mod._save_timer.stop()
     me_mod._flush_timer.stop()
     me_mod._dirty_masks.clear()
-    me_mod._mask_undo.clear()
+    me_mod._mask_undo_stacks.clear()
     me_mod._label_boxes.clear()
 
 
-def _layer(me, monkeypatch, data):
+def _layer(me, monkeypatch, data, name="R1 - DAPI_masks"):
     """A mask layer selected in the editor, with its paint callbacks connected."""
     from napari.layers import Labels
-    layer = Labels(data, name="R1 - DAPI_masks")
+    layer = Labels(data, name=name)
     layer.brush_size = 3
-    me._on_mask_layer_changed(layer)
     # magicgui refuses to have a widget attribute replaced, so the module's
     # reference to the editor is swapped for a stub holding the selection.
-    real = me._mask_editor_widget
-    monkeypatch.setattr(me, "_mask_editor_widget", types.SimpleNamespace(
-        mask_layer=types.SimpleNamespace(value=layer), _function=real._function))
+    if not isinstance(me._mask_editor_widget, types.SimpleNamespace):
+        real = me._mask_editor_widget
+        monkeypatch.setattr(me, "_mask_editor_widget", types.SimpleNamespace(
+            mask_layer=types.SimpleNamespace(value=None), _function=real._function,
+            _current_layer=None, _current_callbacks=None))
+    _select(me, layer)
     return layer
+
+
+def _select(me, layer):
+    """Choose ``layer`` in the editor's "Layer to Edit"."""
+    me._mask_editor_widget.mask_layer.value = layer
+    me._on_mask_layer_changed(layer)
 
 
 def _merge(me, layer, source, target):
@@ -236,12 +244,13 @@ def test_paint_session_undo_uses_napari_atoms(me, monkeypatch):
     original = _volume()
     layer = _layer(me, monkeypatch, original.copy())
     layer.mode = "paint"
-    me._mask_undo.begin_session()
+    undo = me._undo_for(layer)
+    undo.begin_session()
     layer.paint((2, 10, 10), 9)
     layer.paint((2, 11, 12), 9)        # overlaps the first stroke
     layer.paint((2, 15, 2), 0)         # erases part of label 4
-    me._mask_undo.end_session()
-    assert me._mask_undo._pre_edit is None   # no snapshot was taken
+    undo.end_session()
+    assert undo._pre_edit is None      # no snapshot was taken
     assert not np.array_equal(layer.data, original)
     me._on_mask_undo()
     np.testing.assert_array_equal(layer.data, original)
@@ -301,12 +310,13 @@ def test_edit_during_paint_session_keeps_undo_order(me, monkeypatch):
     before the merge to be undone after the merge, not before it."""
     original = _volume()
     layer = _layer(me, monkeypatch, original.copy())
-    me._mask_undo.begin_session()
+    undo = me._undo_for(layer)
+    undo.begin_session()
     layer.paint((1, 25, 25), 5)
     _merge(me, layer, 5, 6)
     layer.paint((1, 30, 40), 2)
-    me._mask_undo.end_session()
-    while len(me._mask_undo):
+    undo.end_session()
+    while len(undo):
         me._on_mask_undo()
     np.testing.assert_array_equal(layer.data, original)
 
@@ -336,11 +346,11 @@ def test_random_edits_match_old_implementation(me, monkeypatch, seed):
             old.end(ref)
         elif op in ("paint", "erase"):
             old.begin(ref)
-            me._mask_undo.begin_session()
+            me._undo_for(layer).begin_session()
             for _ in range(int(rng.integers(1, 4))):
                 coord = (int(rng.integers(0, 6)), int(rng.integers(0, 40)), int(rng.integers(0, 48)))
                 layer.paint(coord, int(rng.integers(1, 12)) if op == "paint" else 0)
-            me._mask_undo.end_session()
+            me._undo_for(layer).end_session()
             ref[...] = layer.data      # same strokes, recorded the old way
             old.end(ref)
         elif op == "undo":
@@ -348,3 +358,65 @@ def test_random_edits_match_old_implementation(me, monkeypatch, seed):
             old.undo(ref)
         np.testing.assert_array_equal(layer.data, ref)
         _assert_boxes_cover(layer.data, me._boxes_for(layer))
+
+
+def test_undo_never_writes_into_another_layer(me, monkeypatch):
+    """Edit A, select B, undo: B is untouched. A's edit is still undoable
+    once A is selected again."""
+    original_a = _volume()
+    original_b = _volume()[:, ::-1, :].copy()
+    a = _layer(me, monkeypatch, original_a.copy())
+    b = _layer(me, monkeypatch, original_b.copy(), name="R2 - DAPI_masks")
+    _select(me, a)
+    me._delete_label_inplace(a, 3)
+    deleted_a = a.data.copy()
+    _select(me, b)
+    me._on_mask_undo()
+    np.testing.assert_array_equal(b.data, original_b)
+    np.testing.assert_array_equal(a.data, deleted_a)
+    assert me.napari.current_viewer().status == "Nothing to undo."
+    _select(me, a)
+    me._on_mask_undo()
+    np.testing.assert_array_equal(a.data, original_a)
+    np.testing.assert_array_equal(b.data, original_b)
+    _assert_boxes_cover(a.data, me._boxes_for(a))
+
+
+def test_layer_change_closes_paint_session(me, monkeypatch):
+    """A paint session started on A is stored on A when B is selected, and
+    B's strokes go to B's own history."""
+    original_a = _volume()
+    original_b = _volume()[::-1].copy()
+    a = _layer(me, monkeypatch, original_a.copy())
+    b = _layer(me, monkeypatch, original_b.copy(), name="R2 - DAPI_masks")
+    b.mode = "paint"                   # B is selected later, already painting
+    _select(me, a)
+    a.mode = "paint"
+    me._undo_for(a).begin_session()
+    a.paint((2, 10, 10), 9)
+    _select(me, b)
+    assert not me._undo_for(a).in_session
+    assert len(me._undo_for(a)) == 1
+    assert me._undo_for(b).in_session
+    b.paint((3, 25, 25), 8)
+    painted_b = b.data.copy()
+    _select(me, a)
+    assert not me._undo_for(b).in_session
+    me._on_mask_undo()
+    np.testing.assert_array_equal(a.data, original_a)
+    np.testing.assert_array_equal(b.data, painted_b)
+    _select(me, b)
+    me._on_mask_undo()
+    np.testing.assert_array_equal(b.data, original_b)
+
+
+def test_undo_after_data_replaced_does_nothing(me, monkeypatch):
+    """Records index into the array they came from; once the layer holds a
+    new array (re-segmentation, consensus rebuild) they are dropped."""
+    layer = _layer(me, monkeypatch, _volume())
+    me._delete_label_inplace(layer, 3)
+    replacement = _volume()[:, :, ::-1].copy()
+    layer.data = replacement.copy()
+    me._on_mask_undo()
+    np.testing.assert_array_equal(layer.data, replacement)
+    assert me.napari.current_viewer().status == "Nothing to undo."
