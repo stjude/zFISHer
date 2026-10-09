@@ -940,6 +940,58 @@ def refresh_label_ids(viewer, labels_layer, boxes):
     tracking.dirty = set()
 
 
+@timing.timed_action("mask_redraw", fields=lambda a: {"layer": a["labels_layer"].name},
+                     result_fields=lambda partial: {"partial": partial})
+def redraw_labels_voxels(labels_layer, pieces):
+    """Redraw ``labels_layer`` after the voxels at ``pieces`` (fancy-index
+    tuples into ``labels_layer.data``) were changed in place.
+
+    ``layer.refresh()`` re-colours the whole displayed slice and uploads it
+    again; in 3D that is the whole volume (0.1 to 0.2 s of CPU on a
+    71 x 2044 x 2048 mask, then a 0.3 to 0.6 GB texture upload). This does what
+    napari's ``data_setitem`` does after a brush stroke, without writing
+    napari's history: re-colour the changed voxels in the displayed slice and
+    upload only their bounding box. Voxels outside the displayed slice need no
+    redraw. Uses napari 0.6.6 private API (pinned in pyproject.toml); falls back
+    to ``layer.refresh()`` where that path does not apply. Returns True if the
+    partial path was used.
+    """
+    from napari.utils._indexing import elements_in_slice, index_in_slice
+    pieces = [ix for ix in pieces if ix and np.size(ix[0])]
+    if not pieces:
+        return True
+    if not (isinstance(labels_layer.data, np.ndarray) and labels_layer.loaded
+            and labels_layer.contour == 0):
+        labels_layer.refresh()
+        return False
+    pt_not_disp = labels_layer._get_pt_not_disp()
+    order = labels_layer._slice.slice_input.order
+    view = labels_layer._slice.image.view
+    region = None
+    for ix in pieces:
+        visible = elements_in_slice(ix, pt_not_disp)
+        if np.ndim(visible) == 0:           # nothing sliced away (3D view)
+            shown = ix if visible else None
+        else:
+            shown = tuple(i[visible] for i in ix) if visible.any() else None
+        if shown is None:
+            continue
+        view[index_in_slice(shown, pt_not_disp, order)] = (
+            labels_layer.colormap._data_to_texture(labels_layer.data[shown]))
+        extent = label_edits.index_extent(shown)
+        region = extent if region is None else tuple(
+            slice(min(a.start, b.start), max(a.stop, b.stop)) for a, b in zip(region, extent))
+    if region is None:
+        return True
+    pending = labels_layer._updated_slice
+    if pending is not None:
+        region = tuple(slice(min(a.start, b.start), max(a.stop, b.stop))
+                       for a, b in zip(region, pending))
+    labels_layer._updated_slice = region
+    labels_layer._partial_labels_refresh()
+    return True
+
+
 @timing.timed_action("puncta_resync", fields=lambda a: {"mask": a["mask_layer"].name},
                      result_fields=lambda r: {"changed": r.get("changed_total"), "removed": r.get("removed_total")})
 def resync_puncta_nucleus_ids(

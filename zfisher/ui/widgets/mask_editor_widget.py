@@ -434,7 +434,7 @@ def _mask_editor_widget(
     viewer_helpers.mark_label_ids_dirty(mask_layer, (source_id, target_id))
 
     logger.info("MASK EDIT: Merge ID %d into %d (%d pixels) on layer '%s'", source_id, target_id, count, mask_layer.name)
-    mask_layer.refresh()
+    viewer_helpers.redraw_labels_voxels(mask_layer, [indices])
     _schedule_save(mask_layer)
     QTimer.singleShot(50, lambda: _refresh_ids(viewer, mask_layer))
     _resync_puncta_for_layer(viewer, mask_layer)
@@ -462,7 +462,7 @@ def _delete_label_inplace(layer, label_id, reset_mode=False):
 
     @timing.timed_action("mask_deferred_refresh", fields=lambda _a: {"trigger": "delete"})
     def _deferred_updates():
-        layer.refresh()
+        viewer_helpers.redraw_labels_voxels(layer, [indices])
         _refresh_ids(viewer, layer)
         # Re-show the IDs layer (look up fresh reference in case it was recreated)
         if ids_name in viewer.layers:
@@ -1234,7 +1234,10 @@ def _on_mask_undo():
             viewer_helpers.invalidate_label_ids(layer)
         else:
             viewer_helpers.mark_label_ids_dirty(layer, touched)
-        layer.refresh()
+        if touched is None:
+            layer.refresh()
+        else:
+            viewer_helpers.redraw_labels_voxels(layer, [ix for ix, _old in record[0]])
         # Restart a session if still in edit mode so future strokes are tracked
         if in_edit_mode:
             undo.begin_session()
