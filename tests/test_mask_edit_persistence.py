@@ -210,3 +210,93 @@ def test_debounced_save_failure_is_not_silent_either(me, monkeypatch):
     me._do_save()                                          # the 500 ms timer's slot; must not raise
     assert id(layer) in me._dirty_masks
     assert me._save_pending_layer is None
+
+
+# --- Pending saves when the session changes or the app quits ----------------
+#
+# Saves are debounced, so the last edits sit in memory for up to a few seconds.
+# Without a flush they were lost at quit, and after a session switch the timer
+# wrote the old session's mask into the new session's folder.
+
+@pytest.fixture
+def out_dir(me, monkeypatch):
+    """The session output folder as a mutable holder, to switch sessions."""
+    from zfisher.core import session
+    holder = {"dir": str(me._tmp)}
+    monkeypatch.setattr(session, "get_data",
+                        lambda key=None, default=None: (holder["dir"] if key == "output_dir" else default))
+    return holder
+
+
+def test_flush_writes_a_pending_delete_save_now(me, out_dir):
+    import tifffile
+    layer = _labels("R1 - DAPI_masks")
+    layer.data[0, 2:9, 2:9] = 4
+    me._schedule_save(layer)
+    assert not _tif(me, layer).exists()                    # debounced
+    me.flush_pending_mask_saves()
+    assert np.array_equal(tifffile.imread(_tif(me, layer)), layer.data)
+    assert me._save_pending_layer is None and not me._save_timer.isActive()
+
+
+def test_flush_runs_the_cascade_for_dirty_strokes(me, out_dir):
+    class _V:
+        layers = []
+    me.napari.current_viewer = lambda: _V()
+    consensus = _labels(_consensus_name())
+    me._mark_mask_dirty(consensus, delay_ms=3000)
+    me.flush_pending_mask_saves()
+    assert _tif(me, consensus).exists()
+    assert len(me._resync_calls) == 1                      # puncta Nucleus_ID follow the mask
+    assert me._dirty_masks == {} and not me._flush_timer.isActive()
+
+
+def test_layer_pending_and_dirty_is_written_once(me, out_dir, monkeypatch):
+    from zfisher.core import io as zio
+    writes = []
+    real = zio.write_label_tif
+    monkeypatch.setattr(zio, "write_label_tif", lambda path, data, **k: (writes.append(path), real(path, data, **k))[1])
+    layer = _labels(_consensus_name())
+    me._schedule_save(layer)
+    me._mark_mask_dirty(layer)
+    me.flush_pending_mask_saves()
+    assert len(writes) == 1
+
+
+def test_nothing_reaches_the_next_session_folder(me, out_dir):
+    a = _labels("R1 - DAPI_masks")
+    b = _labels(_consensus_name())
+    me._schedule_save(a)
+    me._mark_mask_dirty(b)
+    me.flush_pending_mask_saves()
+    old = me._tmp
+    new = Path(tempfile.mkdtemp())
+    out_dir["dir"] = str(new)                              # the next session is now active
+    me._do_save()                                          # what the timers would have run
+    me._flush_mask_edits()
+    from zfisher import constants
+    assert not (new / constants.SEGMENTATION_DIR).exists()
+    assert (old / constants.SEGMENTATION_DIR / f"{a.name}.tif").exists()
+    assert (old / constants.SEGMENTATION_DIR / f"{b.name}.tif").exists()
+
+
+def test_reset_saves_pending_edits_before_clearing(me, out_dir):
+    layer = _labels("R1 - DAPI_masks")
+    me._schedule_save(layer)
+    me.reset_mask_editor_state()
+    assert _tif(me, layer).exists()
+    assert me._save_pending_layer is None and me._dirty_masks == {}
+
+
+def test_failed_save_at_session_change_is_logged_and_dropped(me, out_dir, monkeypatch, caplog):
+    from zfisher.core import io as zio
+
+    def _disk_full(path, data, **kwargs):
+        raise OSError("disk full")
+    monkeypatch.setattr(zio, "write_label_tif", _disk_full)
+    layer = _labels(_consensus_name())
+    me._mark_mask_dirty(layer)
+    with caplog.at_level("ERROR"):
+        me.flush_pending_mask_saves()
+    assert me._dirty_masks == {}                           # nothing left to land in the next session
+    assert any("could not be saved before the session changed" in r.getMessage() for r in caplog.records)

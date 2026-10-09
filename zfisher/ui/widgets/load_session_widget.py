@@ -75,6 +75,11 @@ class LoadSessionWidget(Container):
             self._viewer.status = "Error: Invalid session file selected."
             return
 
+        # Edits to the current session's masks must reach its folder before
+        # the loaded session becomes the active one.
+        from .mask_editor_widget import flush_pending_mask_saves
+        flush_pending_mask_saves()
+
         with popups.ProgressDialog(self._viewer.window._qt_window, "Loading Session...") as dialog:
             session.set_loading(True)
             from .. import viewer as viewer_module

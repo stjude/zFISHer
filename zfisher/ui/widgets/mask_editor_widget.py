@@ -7,7 +7,7 @@ from collections import deque
 from magicgui import magicgui, widgets
 from pathlib import Path
 from qtpy.QtCore import QTimer, Qt
-from qtpy.QtWidgets import QFrame
+from qtpy.QtWidgets import QApplication, QFrame
 
 from ...core import session, timing
 from ...core import io
@@ -590,6 +590,36 @@ def _flush_mask_edits(layer=None, refresh_ids=None):
 
 
 _flush_timer.timeout.connect(lambda: _flush_mask_edits())
+
+
+def flush_pending_mask_saves():
+    """Write every mask edit that is not on disk yet, now, and drop the timers.
+
+    Saves are debounced (``_schedule_save``, ``_mark_mask_dirty``), so the last
+    edits sit in memory for up to a few seconds. Call this before the session
+    changes (new, load, reset) and when the app quits: otherwise they are lost
+    at quit, or the timer fires after the switch and writes the old session's
+    mask into the new session's folder. A save that fails here is logged and
+    dropped, since its layer is about to go."""
+    global _save_pending_layer
+    _save_timer.stop()
+    _flush_timer.stop()
+    pending, _save_pending_layer = _save_pending_layer, None
+    dirty = list(_dirty_masks.values())
+    _dirty_masks.clear()
+    for layer in dirty:
+        _after_mask_edit(layer, refresh_ids=False)
+    if pending is not None and all(pending is not layer for layer in dirty):
+        _write_mask_to_disk(pending)
+    for layer in list(_dirty_masks.values()):
+        logger.error("Mask '%s' could not be saved before the session changed; "
+                     "its latest edits are not on disk.", layer.name)
+    _dirty_masks.clear()
+
+
+_app = QApplication.instance()
+if _app is not None:
+    _app.aboutToQuit.connect(flush_pending_mask_saves)
 
 def delete_mask_under_mouse(viewer):
     """Deletes the mask label currently under the mouse cursor."""
@@ -1664,15 +1694,13 @@ def deactivate_hover_edit():
 
 
 def reset_mask_editor_state():
-    """Clear all module-level state. Called on session reset."""
+    """Save pending edits, then clear all module-level state. Called on
+    session reset, while the session being reset is still the active one."""
     global _syncing_brush, _syncing_layer_selection, _highlighter
-    global _save_pending_layer
+    flush_pending_mask_saves()
     _mask_undo_stacks.clear()
     _label_boxes.clear()
     viewer_helpers.reset_label_ids_tracking()
-    if _save_timer.isActive():
-        _save_timer.stop()
-    _save_pending_layer = None
     _syncing_brush = False
     _syncing_layer_selection = False
     if _highlighter is not None:
