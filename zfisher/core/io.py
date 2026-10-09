@@ -1,7 +1,9 @@
 import logging
 import os
+import zlib
 import nd2
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import tifffile
 import json
@@ -390,10 +392,161 @@ def convert_nd2_to_ome(
         logger.error("Failed to convert ND2 to OME-TIFF: %s", e)
 
 
-def write_label_tif(path, data):
+MASK_EXTENSION = ".ome.tif"
+_LEGACY_MASK_EXTENSION = ".tif"
+
+
+def mask_path(directory, name):
+    """The path a mask named ``name`` is written to in ``directory``."""
+    return Path(directory) / f"{name}{MASK_EXTENSION}"
+
+
+def find_mask(directory, name):
+    """The mask file named ``name`` in ``directory``: ``<name>.ome.tif``, or
+    ``<name>.tif`` as written before masks were OME-TIFF; None if neither exists."""
+    for ext in (MASK_EXTENSION, _LEGACY_MASK_EXTENSION):
+        path = Path(directory) / f"{name}{ext}"
+        if path.exists():
+            return path
+    return None
+
+
+class LabelTiles:
+    """The compressed tiles of one label volume, kept between saves so that a
+    save compresses again only the tiles an edit touched.
+
+    A mask is written as a tiled OME-TIFF: every plane is cut into 256 x 256
+    tiles, each compressed on its own. Compressing the whole of a typical
+    71 x 2044 x 2048 mask takes about 0.2 s on 11 cores and 0.9 s on one; one
+    nucleus touches about a hundred of its 4,544 tiles, which take a few ms.
+    The compressed tiles of such a mask take about 19 MB.
+
+    ``mark`` and ``mark_all`` record what changed since the last save. A change
+    that is not marked leaves its tiles stale in the file until a tile is
+    marked again or the whole volume is, so callers mark every in-place write.
     """
-    Write a label mask as a compressed TIFF without ever truncating the file
-    that is already there.
+
+    TILE = 256
+
+    def __init__(self, data):
+        self.shape = data.shape
+        if data.ndim != 3:
+            raise ValueError(f"A mask must be a (Z, Y, X) volume, not {data.ndim}D")
+        dtype = np.dtype(data.dtype)
+        if dtype.kind not in "iu":
+            raise ValueError(f"Labels must be integers, not {dtype}")
+        # OME has no 64-bit integers; label values fit uint32 in practice and
+        # encoding checks every tile.
+        self.dtype = np.dtype(np.uint32) if dtype.itemsize == 8 else dtype.newbyteorder("=")
+        self._ny = -(-self.shape[1] // self.TILE)
+        self._nx = -(-self.shape[2] // self.TILE)
+        self._tiles = [None] * (self.shape[0] * self._ny * self._nx)
+        self._dirty = set()
+        self._all_dirty = True
+
+    def fits(self, data):
+        """Whether these tiles describe an array of ``data``'s shape."""
+        return data.shape == self.shape
+
+    def mark(self, region):
+        """Record that the voxels in ``region`` (a tuple of slices over all
+        axes of the volume, as from ``label_edits.index_extent``) changed."""
+        if region is None or self._all_dirty:
+            return
+        rows = range(region[1].start // self.TILE, (region[1].stop - 1) // self.TILE + 1)
+        cols = range(region[2].start // self.TILE, (region[2].stop - 1) // self.TILE + 1)
+        for z in range(region[0].start, region[0].stop):
+            for ty in rows:
+                for tx in cols:
+                    self._dirty.add((z * self._ny + ty) * self._nx + tx)
+
+    def mark_all(self):
+        """Record that the whole volume changed."""
+        self._all_dirty = True
+        self._dirty.clear()
+
+    def _encode(self, data, index):
+        z, rest = divmod(index, self._ny * self._nx)
+        ty, tx = divmod(rest, self._nx)
+        tile = data[z, ty * self.TILE:(ty + 1) * self.TILE, tx * self.TILE:(tx + 1) * self.TILE]
+        if tile.dtype.itemsize == 8 and tile.size and (tile.min() < 0 or tile.max() > 0xFFFFFFFF):
+            raise ValueError("Label values do not fit in 32 bits, which OME-TIFF needs")
+        tile = np.ascontiguousarray(tile, dtype=self.dtype)
+        if tile.shape != (self.TILE, self.TILE):
+            tile = np.pad(tile, ((0, self.TILE - tile.shape[0]), (0, self.TILE - tile.shape[1])))
+        # zlib level 1: as small as the default level here and much faster.
+        return zlib.compress(tile, 1)
+
+    def update(self, data):
+        """Compress the changed tiles of ``data`` again. Returns how many."""
+        if not self.fits(data):
+            raise ValueError(f"Tiles of shape {self.shape} cannot hold data of shape {data.shape}")
+        if self._all_dirty:
+            indices = range(len(self._tiles))
+            # zlib releases the GIL, so threads compress in parallel.
+            with ThreadPoolExecutor(os.cpu_count() or 1) as pool:
+                self._tiles = list(pool.map(lambda i: self._encode(data, i), indices))
+        else:
+            indices = sorted(self._dirty)
+            for i in indices:
+                self._tiles[i] = self._encode(data, i)
+        self._all_dirty = False
+        self._dirty.clear()
+        return len(indices)
+
+    @property
+    def pending(self):
+        """How many tiles the next ``update`` compresses."""
+        return len(self._tiles) if self._all_dirty else len(self._dirty)
+
+    @property
+    def all_pending(self):
+        """Whether the next ``update`` compresses every tile."""
+        return self._all_dirty
+
+    def __iter__(self):
+        return iter(self._tiles)
+
+    @property
+    def nbytes(self):
+        return sum(len(t) for t in self._tiles if t is not None)
+
+
+def _ome_metadata(voxel_size):
+    """OME metadata for a (Z, Y, X) mask; ``voxel_size`` is (z, y, x) in µm."""
+    meta = {"axes": "ZYX"}
+    if voxel_size is not None:
+        for axis, size in zip("ZYX", voxel_size):
+            size = float(size)
+            if np.isfinite(size) and size > 0:
+                meta[f"PhysicalSize{axis}"] = size
+                meta[f"PhysicalSize{axis}Unit"] = "µm"
+    return meta
+
+
+def read_label_tif(path):
+    """Read a mask as (Z, Y, X): one written by ``write_label_tif``, or a plain
+    TIFF mask from before masks were OME-TIFF.
+
+    ``tifffile.imread`` drops axes of size 1 from an OME-TIFF, so a one-plane
+    mask would come back 2D; this keeps Z and drops only OME's T, C and S."""
+    with tifffile.TiffFile(path) as tif:
+        if not tif.is_ome:
+            return tif.asarray()
+        axes = tif.series[0].get_axes(False)
+        data = tif.asarray(squeeze=False)
+    return data[tuple(slice(None) if axis in "ZYX" else 0 for axis in axes)]
+
+
+def write_label_tif(path, data, voxel_size=None, tiles=None):
+    """
+    Write a label mask as a tiled, compressed OME-TIFF without ever truncating
+    the file that is already there.
+
+    ``voxel_size`` is (z, y, x) in µm and goes into the OME metadata, so the
+    mask opens at its true scale elsewhere (Fiji through Bio-Formats). Pass the
+    ``LabelTiles`` kept for ``data`` as ``tiles`` to compress only the tiles
+    marked since the last save; without it every tile is compressed.
 
     The mask goes to ``<name>.tmp`` first and is then swapped into place, so a
     write that dies halfway leaves the previous file intact. Windows refuses
@@ -405,12 +558,21 @@ def write_label_tif(path, data):
     """
     path = Path(path)
     tmp = path.with_name(path.name + ".tmp")
-    # zlib level 1 turns a 1.2 GB mask into a few MB and, even on one core, is
-    # faster than writing it uncompressed. minisblack: without it tifffile
-    # stores a stack of exactly 3 or 4 slices as the planes of a colour image.
-    options = dict(compression='zlib', compressionargs={'level': 1}, photometric='minisblack')
+    if tiles is None:
+        tiles = LabelTiles(data)
+    tiles.update(data)
+
+    def _write(target):
+        # minisblack: without it tifffile stores a stack of exactly 3 or 4
+        # slices as the planes of a colour image. ome=True because the
+        # temporary name does not end in .ome.tif.
+        tifffile.imwrite(target, iter(tiles), shape=tiles.shape, dtype=tiles.dtype,
+                         tile=(LabelTiles.TILE, LabelTiles.TILE), compression='zlib',
+                         photometric='minisblack', ome=True,
+                         metadata=_ome_metadata(voxel_size))
+
     try:
-        tifffile.imwrite(tmp, data, **options)
+        _write(tmp)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
@@ -419,7 +581,7 @@ def write_label_tif(path, data):
         return "atomic"
     except OSError as e:
         logger.warning("Could not swap %s into place (%s); overwriting it directly.", path.name, e)
-    tifffile.imwrite(path, data, **options)
+    _write(path)
     tmp.unlink(missing_ok=True)
     return "direct"
 

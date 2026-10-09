@@ -60,7 +60,8 @@ def _nuclei_matching_widget(
             output_dir=output_dir,
             threshold=match_threshold or None,
             method=method,
-            progress_callback=lambda p, m: dialog.update_progress(p, m)
+            progress_callback=lambda p, m: dialog.update_progress(p, m),
+            voxel_size=tuple(r1_mask_layer.scale),
         )
         
         # 4. Update the Viewer

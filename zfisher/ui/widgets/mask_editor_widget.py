@@ -191,6 +191,91 @@ def _update_boxes_after_undo(layer, record):
             boxes.extend_values(indices, old_values)
 
 
+# Compressed tiles of each saved mask (core.io.LabelTiles), so a save compresses
+# again only the tiles that changed. Keyed like _label_boxes. Built at a mask's
+# first save, which compresses every tile; dropped when the array is replaced.
+# Every in-place edit must mark its region (_mark_tiles). Brush, eraser and fill
+# strokes are marked from events.paint; napari's own undo and redo fire no event
+# and are found at the next save in napari's history. A mask saved tile by tile
+# is saved whole again at the flush points (flush_pending_mask_saves), so the
+# file is exact whenever the session ends even if an edit went unmarked.
+_label_tiles = {}
+
+
+class _TileEntry:
+    def __init__(self, layer):
+        self.layer_ref = weakref.ref(layer)
+        self.data_ref = weakref.ref(layer.data)
+        self.tiles = io.LabelTiles(layer.data)
+        self.seen = _napari_history_items(layer)
+        self.partial = False        # saved tile by tile since its last whole save
+
+
+def _napari_history_items(layer):
+    """napari's undo and redo items, keyed by id. The items are held, so no
+    other object can take one of these ids while the dict lives."""
+    items = (*getattr(layer, '_undo_history', ()), *getattr(layer, '_redo_history', ()))
+    return {id(item): item for item in items}
+
+
+def _tile_entry(layer):
+    """The tile entry of ``layer.data`` if built and current, else None."""
+    entry = _label_tiles.get(id(layer))
+    if entry is not None and entry.data_ref() is layer.data and entry.tiles.fits(layer.data):
+        return entry
+    return None
+
+
+def _tiles_for_save(layer):
+    """The tile entry for saving ``layer``: built if missing or stale, with the
+    regions of napari undo and redo since the last save marked."""
+    entry = _tile_entry(layer)
+    if entry is None:
+        entry = _TileEntry(layer)
+        _label_tiles[id(layer)] = entry
+        if _mark_tiles_on_paint not in layer.events.paint.callbacks:
+            layer.events.paint.connect(_mark_tiles_on_paint)
+        if _drop_tiles_on_data not in layer.events.data.callbacks:
+            layer.events.data.connect(_drop_tiles_on_data)
+        return entry
+    current = _napari_history_items(layer)
+    for key, item in current.items():
+        if key not in entry.seen:           # napari undo or redo
+            for atom in item:
+                entry.tiles.mark(label_edits.index_extent(atom[0]))
+    entry.seen = current
+    return entry
+
+
+def _mark_tiles(layer, indices=None, whole=False):
+    """Record an in-place edit of ``layer.data`` at ``indices`` (a fancy-index
+    tuple), or of the whole volume, for the next save."""
+    entry = _tile_entry(layer)
+    if entry is None:
+        return                  # the next save compresses everything anyway
+    if whole:
+        entry.tiles.mark_all()
+    elif indices is not None:
+        entry.tiles.mark(label_edits.index_extent(indices))
+
+
+def _mark_tiles_on_paint(event):
+    """Brush, eraser and fill strokes, from napari's ``events.paint``. The
+    stroke's history item is recorded as seen, so the next save does not take
+    it for a napari undo or redo."""
+    entry = _tile_entry(event.source)
+    if entry is None:
+        return
+    entry.seen[id(event.value)] = event.value
+    for indices, _old, _new in event.value:
+        entry.tiles.mark(label_edits.index_extent(indices))
+
+
+def _drop_tiles_on_data(event):
+    """The whole array was assigned: the tiles describe the old one."""
+    _label_tiles.pop(id(event.source), None)
+
+
 def _refresh_ids(viewer, layer):
     """Update the ID overlay of ``layer`` for the labels edited since the last
     update; a full refresh when the overlay is not tracked yet."""
@@ -431,6 +516,7 @@ def _mask_editor_widget(
         return
     count = indices[0].size
     _undo_for(mask_layer).push(indices, mask_layer.data.dtype.type(source_id))
+    _mark_tiles(mask_layer, indices)
     viewer_helpers.mark_label_ids_dirty(mask_layer, (source_id, target_id))
 
     logger.info("MASK EDIT: Merge ID %d into %d (%d pixels) on layer '%s'", source_id, target_id, count, mask_layer.name)
@@ -453,6 +539,7 @@ def _delete_label_inplace(layer, label_id, reset_mode=False):
     indices = label_edits.replace_label(layer.data, _boxes_for(layer), label_id, 0)
     if indices is not None:
         _undo_for(layer).push(indices, layer.data.dtype.type(label_id))
+        _mark_tiles(layer, indices)
         viewer_helpers.mark_label_ids_dirty(layer, (label_id,))
 
     # Defer all visual updates to next event loop iteration so vispy
@@ -491,24 +578,33 @@ def _schedule_save(layer):
     _save_pending_layer = layer
     _save_timer.start(500)
 
+_last_save = {}     # tile counts of the latest save, for its mask_save line
+
+
 @timing.timed_action(
     "mask_save", fields=lambda a: {"layer": getattr(a["layer"], "name", None)},
-    result_fields=lambda path: {"bytes": path.stat().st_size} if path else {"saved": False})
+    result_fields=lambda path: ({"bytes": path.stat().st_size, **_last_save} if path else {"saved": False}))
 def _write_mask_to_disk(layer):
-    """Write ``layer.data`` to ``segmentation/<name>.tif`` and register it in the
-    session. The one mask writer in this module.
+    """Write ``layer.data`` to ``segmentation/<name>.ome.tif`` and register it
+    in the session. The one mask writer in this module.
 
+    Compresses only the tiles marked since the last save.
     Never raises. A failed save puts the layer back into ``_dirty_masks`` so the
-    next flush retries it (every save writes the whole current mask), and is
-    logged and shown in the status bar instead of vanishing."""
+    next flush retries it (every save writes the whole file from the current
+    tiles), and is logged and shown in the status bar instead of vanishing."""
     out_dir = session.get_data("output_dir")
     if not (out_dir and layer is not None and layer.name):
         return None
     seg_dir = Path(out_dir) / constants.SEGMENTATION_DIR
-    mask_path = seg_dir / f"{layer.name}.tif"
+    mask_path = io.mask_path(seg_dir, layer.name)
     try:
         seg_dir.mkdir(exist_ok=True, parents=True)
-        io.write_label_tif(mask_path, layer.data)
+        entry = _tiles_for_save(layer)
+        full = entry.tiles.all_pending
+        _last_save.clear()
+        _last_save.update(tiles=entry.tiles.pending, all_tiles=full)
+        io.write_label_tif(mask_path, layer.data, voxel_size=tuple(layer.scale), tiles=entry.tiles)
+        entry.partial = not full
     except Exception as exc:
         _dirty_masks[id(layer)] = layer
         logger.error("Could not save mask '%s': %s", layer.name, exc, exc_info=True)
@@ -607,10 +703,19 @@ def flush_pending_mask_saves():
     pending, _save_pending_layer = _save_pending_layer, None
     dirty = list(_dirty_masks.values())
     _dirty_masks.clear()
+    # Masks saved tile by tile are compressed whole once more, so the file is
+    # exact even if some edit went unmarked.
+    to_save = [pending] if pending is not None else []
+    for entry in list(_label_tiles.values()):
+        layer = entry.layer_ref()
+        if entry.partial and layer is not None and _tile_entry(layer) is entry:
+            entry.tiles.mark_all()
+            to_save.append(layer)
     for layer in dirty:
         _after_mask_edit(layer, refresh_ids=False)
-    if pending is not None and all(pending is not layer for layer in dirty):
-        _write_mask_to_disk(pending)
+    for i, layer in enumerate(to_save):
+        if all(layer is not other for other in (*dirty, *to_save[:i])):
+            _write_mask_to_disk(layer)
     for layer in list(_dirty_masks.values()):
         logger.error("Mask '%s' could not be saved before the session changed; "
                      "its latest edits are not on disk.", layer.name)
@@ -1201,6 +1306,7 @@ def _on_extrude(_checked=False):
     layer.data[fill_mask] = label_id
     undo.end(layer.data)
     _label_boxes.pop(id(layer), None)  # the label grew outside its box
+    _mark_tiles(layer, whole=True)
 
     # Refresh mask visual and recompute IDs (in-place update, no hide needed)
     layer.refresh()
@@ -1259,6 +1365,11 @@ def _on_mask_undo():
     record = undo.undo(layer.data)
     if record:
         _update_boxes_after_undo(layer, record)
+        if record[1]:
+            _mark_tiles(layer, whole=True)
+        else:
+            for indices, _old in record[0]:
+                _mark_tiles(layer, indices)
         touched = record[2]
         if touched is None:
             viewer_helpers.invalidate_label_ids(layer)
@@ -1352,6 +1463,7 @@ def _on_erase_all():
     undo.begin(layer.data)
     layer.data[:] = 0
     undo.end(layer.data)
+    _mark_tiles(layer, whole=True)
     ids_name = f"{layer.name}_IDs"
     centroids_name = layer.name.replace(constants.MASKS_SUFFIX, constants.CENTROIDS_SUFFIX)
 
@@ -1700,6 +1812,7 @@ def reset_mask_editor_state():
     flush_pending_mask_saves()
     _mask_undo_stacks.clear()
     _label_boxes.clear()
+    _label_tiles.clear()
     viewer_helpers.reset_label_ids_tracking()
     _syncing_brush = False
     _syncing_layer_selection = False

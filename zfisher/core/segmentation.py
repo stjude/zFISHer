@@ -16,15 +16,20 @@ from pathlib import Path
 import tifffile
 
 from .. import constants
+from . import io
 from .timing import timed_stage, add_stage_fields
 
 logger = logging.getLogger(__name__)
 
 
 @timed_stage("consensus_nuclei", fields=lambda a: {"method": a["method"]})
-def process_consensus_nuclei(mask1, mask2, output_dir, threshold=None, method="Union", progress_callback=None):
+def process_consensus_nuclei(mask1, mask2, output_dir, threshold=None, method="Union", progress_callback=None,
+                             voxel_size=None):
     """
     Updated Core Orchestrator to support Union vs Intersection and 3D coordinate integrity.
+
+    ``voxel_size`` (z, y, x) in µm goes into the saved mask's OME metadata;
+    without it the session's ``canvas_scale`` is used, if set.
     """
     if progress_callback: 
         progress_callback(10, f"Matching nuclei labels ({method})...")
@@ -50,9 +55,11 @@ def process_consensus_nuclei(mask1, mask2, output_dir, threshold=None, method="U
         seg_dir = Path(output_dir) / constants.SEGMENTATION_DIR
         seg_dir.mkdir(exist_ok=True, parents=True)
         
-        # Save the .tif mask
-        mask_path = seg_dir / f"{constants.CONSENSUS_MASKS_NAME}.tif"
-        tifffile.imwrite(mask_path, merged_mask.astype(np.uint32), compression='zlib')
+        # Save the mask
+        mask_path = io.mask_path(seg_dir, constants.CONSENSUS_MASKS_NAME)
+        if voxel_size is None:
+            voxel_size = session.get_data("canvas_scale")
+        io.write_label_tif(mask_path, merged_mask.astype(np.uint32), voxel_size=voxel_size)
         session.set_processed_file(constants.CONSENSUS_MASKS_NAME, str(mask_path), 'labels')
         
         # Save the structured .npy IDs
@@ -705,8 +712,8 @@ def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callba
             mask_layer_name = f"{dapi_layer_name}{constants.MASKS_SUFFIX}"
             centroid_layer_name = f"{dapi_layer_name}{constants.CENTROIDS_SUFFIX}"
 
-            mask_path = seg_dir / f"{mask_layer_name}.tif"
-            tifffile.imwrite(mask_path, masks.astype(np.uint32), compression='zlib')
+            mask_path = io.mask_path(seg_dir, mask_layer_name)
+            io.write_label_tif(mask_path, masks.astype(np.uint32), voxel_size=voxel_spacing)
             session.set_processed_file(mask_layer_name, str(mask_path), layer_type='labels', metadata={'subtype': 'mask'})
 
             cent_path = seg_dir / f"{centroid_layer_name}.npy"

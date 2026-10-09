@@ -172,10 +172,10 @@ def run_full_zfisher_pipeline(
         ]
 
     # Load per-round nuclear masks for puncta filtering
-    r1_mask_path = seg_dir / f"R1 - {r1_nuc_ch}{constants.MASKS_SUFFIX}.tif"
-    r2_mask_path = seg_dir / f"R2 - {r2_nuc_ch}{constants.MASKS_SUFFIX}.tif"
-    r1_mask = tifffile.imread(r1_mask_path) if r1_mask_path.exists() else None
-    r2_mask = tifffile.imread(r2_mask_path) if r2_mask_path.exists() else None
+    r1_mask_path = io.find_mask(seg_dir, f"R1 - {r1_nuc_ch}{constants.MASKS_SUFFIX}")
+    r2_mask_path = io.find_mask(seg_dir, f"R2 - {r2_nuc_ch}{constants.MASKS_SUFFIX}")
+    r1_mask = io.read_label_tif(r1_mask_path) if r1_mask_path else None
+    r2_mask = io.read_label_tif(r2_mask_path) if r2_mask_path else None
 
     raw_puncta_results = {}  # {("R1", ch): ndarray, ("R2", ch): ndarray}
     channel_jobs = [(rnd, mask) for rnd, mask in [("R1", r1_mask), ("R2", r2_mask)] for _ in puncta_channels]
@@ -277,11 +277,11 @@ def run_full_zfisher_pipeline(
         ("R2", r2_sess, r2_layers, r2_nuc_ch),
     ]:
         mask_name = f"{prefix} - {round_nuc}{constants.MASKS_SUFFIX}"
-        mask_path = seg_dir / f"{mask_name}.tif"
-        if mask_path.exists():
+        mask_path = io.find_mask(seg_dir, mask_name)
+        if mask_path:
             layer_list.append({
                 'name': mask_name,
-                'data': tifffile.imread(mask_path),
+                'data': io.read_label_tif(mask_path),
                 'scale': sess_obj.voxels,
                 'is_label': True
             })
@@ -318,6 +318,7 @@ def run_full_zfisher_pipeline(
             output_dir=output_dir,
             threshold=match_threshold or None,
             method=overlap_method,
+            voxel_size=r1_sess.voxels,
             progress_callback=lambda p, t: _update(60 + int(p * 0.1), t)
         )
     except Exception as exc:

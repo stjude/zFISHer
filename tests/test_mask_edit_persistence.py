@@ -67,9 +67,14 @@ def _consensus_name():
     return constants.CONSENSUS_MASKS_NAME
 
 
+def zio_read(path):
+    from zfisher.core import io as zio
+    return zio.read_label_tif(path)
+
+
 def _tif(me, layer):
     from zfisher import constants
-    return me._tmp / constants.SEGMENTATION_DIR / f"{layer.name}.tif"
+    return me._tmp / constants.SEGMENTATION_DIR / f"{layer.name}.ome.tif"
 
 
 def test_paint_stroke_marks_dirty_and_flush_writes_tif(me):
@@ -87,7 +92,7 @@ def test_paint_stroke_marks_dirty_and_flush_writes_tif(me):
 
     me._flush_mask_edits(layer, refresh_ids=False)
     assert id(layer) not in me._dirty_masks
-    saved = tifffile.imread(_tif(me, layer))
+    saved = zio_read(_tif(me, layer))
     assert saved[0, 10, 10] == 5
     me._on_mask_layer_changed(None)
 
@@ -165,7 +170,7 @@ def test_saved_mask_is_compressed_and_identical(me):
     path = _tif(me, layer)
     with tifffile.TiffFile(path) as tif:
         assert int(tif.pages[0].compression) != 1          # 1 means uncompressed
-    back = tifffile.imread(path)
+    back = zio_read(path)
     assert back.dtype == layer.data.dtype and np.array_equal(back, layer.data)
     assert not path.with_name(path.name + ".tmp").exists()
 
@@ -235,7 +240,7 @@ def test_flush_writes_a_pending_delete_save_now(me, out_dir):
     me._schedule_save(layer)
     assert not _tif(me, layer).exists()                    # debounced
     me.flush_pending_mask_saves()
-    assert np.array_equal(tifffile.imread(_tif(me, layer)), layer.data)
+    assert np.array_equal(zio_read(_tif(me, layer)), layer.data)
     assert me._save_pending_layer is None and not me._save_timer.isActive()
 
 
@@ -276,8 +281,8 @@ def test_nothing_reaches_the_next_session_folder(me, out_dir):
     me._flush_mask_edits()
     from zfisher import constants
     assert not (new / constants.SEGMENTATION_DIR).exists()
-    assert (old / constants.SEGMENTATION_DIR / f"{a.name}.tif").exists()
-    assert (old / constants.SEGMENTATION_DIR / f"{b.name}.tif").exists()
+    assert (old / constants.SEGMENTATION_DIR / f"{a.name}.ome.tif").exists()
+    assert (old / constants.SEGMENTATION_DIR / f"{b.name}.ome.tif").exists()
 
 
 def test_reset_saves_pending_edits_before_clearing(me, out_dir):

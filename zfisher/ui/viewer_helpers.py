@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 from packaging.version import parse as parse_version
 from ..core import session, segmentation, timing, label_edits, puncta as _puncta
+from ..core import io as _io
 
 from .. import constants
 from . import style
@@ -236,7 +237,7 @@ def _load_points_layer(viewer, name, path, scale, file_info, translate):
         raise e
 
 def _load_labels_layer(viewer, name, path, scale, file_info, translate):
-    data = tifffile.imread(path)
+    data = _io.read_label_tif(path)
     layer = viewer.add_labels(data, name=name, opacity=0.3, visible=False, scale=scale, translate=translate)
     # Use iso_categorical for better 3D rendering of masks alongside points
     layer.rendering = 'iso_categorical'
@@ -678,8 +679,9 @@ def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napa
         # Use iso_categorical for better 3D rendering of masks alongside points
         layer.rendering = 'iso_categorical'
         if seg_dir:
-            mask_path = seg_dir / f"{mask_layer_name}.tif"
-            tifffile.imwrite(mask_path, masks)
+            mask_path = _io.mask_path(seg_dir, mask_layer_name)
+            seg_dir.mkdir(exist_ok=True, parents=True)
+            _io.write_label_tif(mask_path, masks, voxel_size=tuple(source_layer.scale))
             session.set_processed_file(mask_layer_name, str(mask_path), layer_type='labels', metadata={'subtype': 'mask'})
 
         # Build the _IDs text overlay directly from the centroids we already
