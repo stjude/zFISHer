@@ -209,3 +209,19 @@ def test_autosave_writes_the_canonical_table(env):
     csv = pd.read_csv(env.csv)
     assert list(csv.columns[:8]) == constants.PUNCTA_CSV_COLUMNS
     assert list(csv["Source"]) == [UNKNOWN] * 5
+
+
+@pytest.mark.parametrize("ids", [[0, 1, 2, np.nan, 8], [0, 1, 2, np.nan, np.nan]])
+def test_replace_gives_kept_manual_puncta_without_an_id_one(env, ids):
+    layer = _curated_layer(env)
+    feats = layer.features.copy()
+    feats["puncta_id"] = ids
+    layer.features = feats
+    env.helpers.add_or_update_puncta_layer(
+        env.viewer, env.source, _rows([[1, 10, 10], [1, 30, 30]], [0, 1]), existing_action="replace")
+    out = layer.features["puncta_id"]
+    assert out.notna().all() and out.is_unique and len(out) == 4
+    if not np.isnan(ids[-1]):
+        assert out[1] == 8                          # a kept id is not changed
+    assert list(layer.features["Source"]) == [MANUAL, MANUAL, AUTO, AUTO]
+    assert pd.read_csv(env.csv)["puncta_id"].notna().all()

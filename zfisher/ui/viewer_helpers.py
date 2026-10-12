@@ -509,7 +509,18 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
                 fresh = dists > 3            # the merge's min_distance
                 coords = np.vstack([kept_coords, coords[fresh]])
                 added = new_features.iloc[fresh.nonzero()[0]].reset_index(drop=True)
-                start = int(kept_features['puncta_id'].max()) + 1
+                # New ids continue after the kept ones. A kept punctum without
+                # an id gets one too, so no row is left without.
+                if 'puncta_id' in kept_features.columns:
+                    kept_ids = pd.to_numeric(kept_features['puncta_id'], errors='coerce')
+                else:
+                    kept_ids = pd.Series(np.nan, index=kept_features.index)
+                known = kept_ids.dropna()
+                start = int(known.max()) + 1 if len(known) else 0
+                missing = kept_ids.isna().to_numpy()
+                kept_ids[missing] = np.arange(start, start + missing.sum())
+                kept_features['puncta_id'] = kept_ids.astype(np.int64)
+                start += int(missing.sum())
                 added['puncta_id'] = np.arange(start, start + len(added))
                 new_features = pd.concat([kept_features, added], ignore_index=True)
                 logger.info("Replace on '%s' kept %d manual puncta", layer_name, int(kept.sum()))
