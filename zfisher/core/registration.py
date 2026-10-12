@@ -31,6 +31,7 @@ except ImportError:  # SimpleITK is only needed for B-spline deformable registra
     sitk = None
 import warnings
 import gc
+from dataclasses import dataclass
 import tifffile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .session import set_processed_file
@@ -59,12 +60,14 @@ def calculate_session_registration(r1_centroids, r2_centroids, voxels=None, max_
     if r1_centroids is None or r2_centroids is None:
         return None, 0.0
 
+    details = {}
     shift, rmsd = align_centroids_ransac(
         r1_centroids,
         r2_centroids,
         max_distance=max_distance if max_distance and max_distance > 0 else None,
         voxels=voxels,
-        progress_callback=progress_callback
+        progress_callback=progress_callback,
+        details=details,
     )
 
     if shift is None:
@@ -72,6 +75,12 @@ def calculate_session_registration(r1_centroids, r2_centroids, voxels=None, max_
 
     session.update_data("shift", shift.tolist())
     session.update_data("registration_rmsd", float(rmsd))
+    # A new shift supersedes any canvas and warp saved for the old one.
+    session.update_data("registration", {"rigid": {
+        "shift": np.asarray(shift, dtype=float).tolist(), "rmsd": float(rmsd),
+        "fallback_used": details.get("method") != "ransac", **details,
+        "max_distance": max_distance, "voxels": None if voxels is None else list(map(float, voxels)),
+    }})
 
     return shift, rmsd
 
@@ -231,7 +240,8 @@ def _refine_shift_with_ransac(src_points, dst_points, residual_threshold=constan
     
     return model, inliers
 
-def align_centroids_ransac(fixed_points, moving_points, max_distance=None, voxels=None, progress_callback=None):
+def align_centroids_ransac(fixed_points, moving_points, max_distance=None, voxels=None, progress_callback=None,
+                           details=None):
     """
     Calculates the rigid shift between two point clouds.
 
@@ -257,6 +267,11 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, voxel
         done in physical space so anisotropic voxels do not bias the search.
     progress_callback : callable, optional
         A function to report progress, e.g., `lambda p, m: print(f"{p}%: {m}")`.
+    details : dict, optional
+        Filled with how the shift was found: ``method`` (``ransac`` or
+        ``rough_shift``), ``fallback_reason`` (None, or why the RANSAC fit was
+        not used), ``n_pairs``, ``n_inliers``, ``inlier_fraction`` and
+        ``rough_shift``.
 
     Returns
     -------
@@ -265,10 +280,19 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, voxel
         - The calculated (Z, Y, X) shift vector.
         - The calculated RMSD of the inlier points.
     """
+    if details is None:
+        details = {}
+
+    def _rough(reason):
+        details.update(method="rough_shift", fallback_reason=reason)
+        return rough_shift, 0.0
+
     # 1. Brute-force Vector Voting to find rough shift
     if progress_callback: progress_callback(10, "Finding rough alignment...")
     logger.debug("Starting registration alignment")
     rough_shift = _find_rough_shift_vector_voting(fixed_points, moving_points)
+    details.update(rough_shift=np.asarray(rough_shift, dtype=float).tolist(), n_pairs=0,
+                   n_inliers=0, inlier_fraction=None)
 
     # 2. Refine using Nearest Neighbors
     if progress_callback: progress_callback(40, "Matching nearest neighbors...")
@@ -283,10 +307,11 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, voxel
         search_radius=search_radius, voxels=voxels,
     )
     
+    details["n_pairs"] = int(len(src))
     if len(src) < 3:
         logger.debug("Rough shift calculated: %s", rough_shift)
         if progress_callback: progress_callback(100, "Done (not enough matches for RANSAC).")
-        return rough_shift, 0.0
+        return _rough("too_few_pairs")
 
     # 3. Run RANSAC to refine the fit
     if progress_callback: progress_callback(70, "Running RANSAC to find best fit...")
@@ -296,8 +321,10 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, voxel
     if model is None:
         logger.warning("RANSAC failed to find a model. Reverting to rough shift.")
         if progress_callback: progress_callback(100, "Done (RANSAC failed, using rough shift).")
-        return rough_shift, 0.0
+        return _rough("ransac_failed")
 
+    details["n_inliers"] = int(np.count_nonzero(inliers))
+    details["inlier_fraction"] = details["n_inliers"] / len(src)
     rmsd = _calculate_rmsd(src, dst, model, inliers)
     refined_shift = model.translation
     
@@ -306,15 +333,16 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, voxel
     # Robustness: Check for NaN values which indicate a failed matrix inversion in RANSAC
     if np.any(np.isnan(refined_shift)):
         logger.warning("Refined shift contains NaN. Reverting to rough shift.")
-        return rough_shift, 0.0
+        return _rough("nan_shift")
 
     logger.debug("Refined shift calculated: %s (RMSD: %.4f)", refined_shift, rmsd)
     deviation = np.linalg.norm(refined_shift - rough_shift)
     if deviation > constants.RANSAC_DEVIATION_THRESHOLD:
         logger.warning("Refined shift deviates too much from rough shift (deviation: %.2f px). Reverting.", deviation)
         if progress_callback: progress_callback(100, "Done (RANSAC result invalid, reverted to rough shift).")
-        return rough_shift, 0.0
-        
+        return _rough("deviation_too_large")
+
+    details.update(method="ransac", fallback_reason=None)
     if progress_callback: progress_callback(100, "Done.")
     logger.debug("Registration complete")
     return refined_shift, rmsd
@@ -410,7 +438,8 @@ def align_and_pad_images(fixed_data, moving_data, shift_vector, is_label=False):
     
     return padded_fixed, padded_moving, canvas_offset_pixels
 
-def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=constants.DEFORMABLE_DOWNSAMPLE_FACTOR, use_mask=True):
+def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=constants.DEFORMABLE_DOWNSAMPLE_FACTOR, use_mask=True,
+                                   seed=constants.DEFORMABLE_RANDOM_SEED):
     """
     Calculates a B-Spline deformable transform using SimpleITK.
 
@@ -427,6 +456,9 @@ def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=co
     use_mask : bool, optional
         If True (default), restricts the metric to the overlap region where
         both images have signal, preventing edge artifacts from zero-padding.
+    seed : int, optional
+        Seed of the random metric sampling, so the same images give the same
+        fit.
 
     Returns
     -------
@@ -460,7 +492,7 @@ def calculate_deformable_transform(fixed_data, moving_data, downsample_factor=co
     R = sitk.ImageRegistrationMethod()
     R.SetMetricAsCorrelation()
     R.SetMetricSamplingStrategy(R.RANDOM)
-    R.SetMetricSamplingPercentage(constants.DEFORMABLE_SAMPLING_PERC)
+    R.SetMetricSamplingPercentage(constants.DEFORMABLE_SAMPLING_PERC, seed)
     if use_mask:
         # Restrict metric to the overlap region where both images have signal.
         # Prevents B-spline from fitting to zero-padded borders from align_and_pad_images.
@@ -699,7 +731,14 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
                     logger.debug("generate_canvas: saving canvas_offset_pixels to session: %s", canvas_offset_pixels.tolist())
                     session.update_data("canvas_offset_pixels", canvas_offset_pixels.tolist())
                     final_canvas_offset = canvas_offset_pixels
+                    round_shapes = {"R1": list(r1['data'].shape), "R2": list(r2['data'].shape)}
+                    canvas_shape = list(aligned_r1.shape)
                     canvas_offset_saved = True
+                elif not np.array_equal(canvas_offset_pixels, final_canvas_offset):
+                    # Channels of one round share a shape, so this would mean
+                    # the saved offset is wrong for this channel's puncta.
+                    logger.warning("Channel '%s' has canvas offset %s, not the saved %s",
+                                   channel_name, canvas_offset_pixels.tolist(), final_canvas_offset.tolist())
                 aligned_pairs[channel_name] = {
                     'r1_data': aligned_r1, 'r2_data': aligned_r2,
                     'r1_meta': r1, 'r2_meta': r2, 'is_label': is_label
@@ -752,6 +791,9 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
             'data': warped_checkerboard, 'name': checker_layer_name, 'meta': checker_meta, 'type': 'image'
         })
     
+    if canvas_offset_saved:
+        _save_registration(shift, final_canvas_offset, canvas_shape, round_shapes, transform, output_dir)
+
     # 3. Per-channel Warping and Saving (parallelized)
     num_channels = len(aligned_pairs)
     start_progress = 60 if (apply_warp and has_nuc) else 20
@@ -767,6 +809,77 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
 
     update(100, "Canvas generation complete.")
     return results, transform, final_canvas_offset
+
+def _save_registration(shift, canvas_offset, canvas_shape, round_shapes, transform, aligned_dir):
+    """Write the fitted B-spline to ``aligned/`` and record the whole registration
+    in the session, so puncta can be transformed again without registering.
+
+    The record holds, per round, the translation from raw voxel coordinates to
+    canvas coordinates (R1: ``-canvas_offset``; R2: ``shift - canvas_offset``,
+    then the inverse of the B-spline). The B-spline path is relative to the
+    output folder so the record survives the folder moving."""
+    shift = np.asarray(shift, dtype=float)
+    canvas_offset = np.asarray(canvas_offset, dtype=float)
+    bspline = None
+    if transform is not None:
+        path = Path(aligned_dir) / constants.REGISTRATION_TRANSFORM_FILE
+        sitk.WriteTransform(transform, str(path))
+        out_dir = session.get_data("output_dir")
+        try:
+            stored = str(path.resolve().relative_to(Path(out_dir).resolve())) if out_dir else str(path)
+        except ValueError:
+            stored = str(path)
+        bspline = {
+            "path": stored, "kind": transform.GetName(),
+            "direction": "canvas R1 to canvas R2 (fixed to moving)",
+            "downsample_factor": constants.DEFORMABLE_DOWNSAMPLE_FACTOR,
+            "mesh_size": constants.DEFORMABLE_MESH_SIZE,
+            "iterations": constants.DEFORMABLE_ITERATIONS,
+            "sampling_percentage": constants.DEFORMABLE_SAMPLING_PERC,
+            "seed": constants.DEFORMABLE_RANDOM_SEED,
+        }
+    record = dict(session.get_data("registration", default={}) or {})
+    record["canvas"] = {
+        "shift": shift.tolist(),
+        "canvas_offset_pixels": canvas_offset.tolist(),
+        "canvas_shape": canvas_shape,
+        "round_shapes": round_shapes,
+        "raw_to_canvas": {"R1": (-canvas_offset).tolist(), "R2": (shift - canvas_offset).tolist()},
+        "bspline": bspline,
+    }
+    session.update_data("registration", record)
+
+
+@dataclass
+class SavedRegistration:
+    """A registration read back from the session: everything
+    ``puncta.transform_puncta_to_aligned_space`` needs for either round."""
+    shift: np.ndarray
+    canvas_offset: np.ndarray
+    bspline: object          # SimpleITK transform, or None when no warp was fitted
+    record: dict
+
+
+def load_registration():
+    """The registration saved by the last canvas generation of this session.
+
+    Raises ``LookupError`` if none was saved (sessions made before it was) and
+    ``FileNotFoundError`` if the B-spline file is missing."""
+    canvas = (session.get_data("registration", default={}) or {}).get("canvas")
+    if not canvas:
+        raise LookupError("This session has no saved registration; it was made before "
+                          "registrations were saved, or the canvas was never generated.")
+    bspline = None
+    if canvas.get("bspline"):
+        path = Path(canvas["bspline"]["path"])
+        if not path.is_absolute():
+            path = Path(session.get_data("output_dir")) / path
+        if not path.exists():
+            raise FileNotFoundError(f"The saved B-spline transform {path} is missing.")
+        bspline = sitk.ReadTransform(str(path))
+    return SavedRegistration(np.asarray(canvas["shift"], dtype=float),
+                             np.asarray(canvas["canvas_offset_pixels"], dtype=float), bspline, canvas)
+
 
 def _process_channel_pair(channel_name, pair_data, transform, output_dir):
     """Applies deformable warp if needed and saves both layers in parallel."""

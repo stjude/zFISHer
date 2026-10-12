@@ -474,6 +474,35 @@ def transform_puncta_to_aligned_space(raw_puncta, round_id, shift, canvas_offset
     return final_data
 
 
+def transform_puncta_csv(csv_path, round_id, registration, consensus_mask=None,
+                         remove_extranuclear=True, output_path=None, layer_name=None):
+    """Transform the raw-space puncta in ``csv_path`` into aligned space with a
+    saved registration (``registration.load_registration()``), without
+    registering again. Returns ``(data, sources)``: the (M, 7) array of
+    ``transform_puncta_to_aligned_space`` and each row's ``Source``.
+
+    The CSV is a puncta table (``puncta_table``) in that round's raw voxel
+    coordinates; ``puncta_id`` and ``Source`` are carried to the output."""
+    import pandas as pd
+
+    df = pd.read_csv(csv_path)
+    n = len(df)
+
+    def column(name, default):
+        return df[name].to_numpy(dtype=float) if name in df.columns else np.full(n, default, dtype=float)
+
+    raw = np.column_stack([df[['Z', 'Y', 'X']].to_numpy(dtype=float).reshape(-1, 3),
+                           column('Nucleus_ID', 0), column('Intensity', 0), column('SNR', 0)])
+    ids = column('puncta_id', np.nan) if 'puncta_id' in df.columns else np.arange(n, dtype=float)
+    sources = puncta_table(raw[:, :3], df.drop(columns=['Z', 'Y', 'X']))['Source'].to_numpy(dtype=object)
+    data = transform_puncta_to_aligned_space(
+        raw, round_id, registration.shift, registration.canvas_offset,
+        bspline_transform=registration.bspline if round_id == "R2" else None,
+        consensus_mask=consensus_mask, remove_extranuclear=remove_extranuclear,
+        output_path=output_path, layer_name=layer_name, puncta_ids=ids, sources=sources)
+    return data, sources_of(data, ids, sources) if len(data) else np.empty(0, dtype=object)
+
+
 def sources_of(puncta_data, ids, sources):
     """The ``Source`` of each row of ``puncta_data`` (column 6 is ``puncta_id``),
     looked up in ``sources`` by the matching entry of ``ids``. Use it after

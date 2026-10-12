@@ -92,6 +92,12 @@ DEFORMABLE_DOWNSAMPLE_FACTOR = 16
 DEFORMABLE_MESH_SIZE = 4
 DEFORMABLE_ITERATIONS = 100
 DEFORMABLE_SAMPLING_PERC = 0.01
+# Seed of the B-spline fit's random metric sampling. Unseeded, two fits of the
+# same images differed; seeded, the fit is repeatable.
+DEFORMABLE_RANDOM_SEED = 1
+# The fitted B-spline, in the aligned/ folder; the session's "registration"
+# record points to it.
+REGISTRATION_TRANSFORM_FILE = "registration_bspline.tfm"
 DEFORMATION_GRID_SPACING = 50 # For visualization vector field
 DEFORMATION_FIELD_NAME = "Deformation_Field"
 WARPED_CHECKERBOARD_NAME = "Warped_Checkerboard"
