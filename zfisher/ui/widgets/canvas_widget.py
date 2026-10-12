@@ -155,7 +155,6 @@ def _canvas_widget(
             and constants.WARPED_PREFIX not in l.name
         ]
         if puncta_layers:
-            import pandas as pd
             base_output = Path(base_output_dir)
             reports_dir = base_output / constants.REPORTS_DIR
             reports_dir.mkdir(exist_ok=True, parents=True)
@@ -180,21 +179,11 @@ def _canvas_widget(
                 else:
                     continue
 
-                coords = np.array(pts_layer.data)
-                if len(coords) == 0:
+                if len(pts_layer.data) == 0:
                     continue
-                feats = pts_layer.features if hasattr(pts_layer, 'features') and isinstance(pts_layer.features, pd.DataFrame) and not pts_layer.features.empty else None
-                if feats is not None and len(feats) == len(coords):
-                    nuc_ids = feats['Nucleus_ID'].values if 'Nucleus_ID' in feats.columns else np.zeros(len(coords))
-                    intensity = feats['Intensity'].values if 'Intensity' in feats.columns else np.zeros(len(coords))
-                    snr = feats['SNR'].values if 'SNR' in feats.columns else np.zeros(len(coords))
-                    pid = feats['puncta_id'].values if 'puncta_id' in feats.columns else None
-                else:
-                    nuc_ids = np.zeros(len(coords))
-                    intensity = np.zeros(len(coords))
-                    snr = np.zeros(len(coords))
-                    pid = None
-                raw_puncta = np.column_stack([coords, nuc_ids, intensity, snr])
+                raw_puncta, pid, sources = viewer_helpers.raw_puncta_from_layer(pts_layer)
+                if pid is None:
+                    pid = np.arange(len(raw_puncta))
 
                 prefix_str = constants.ALIGNED_PREFIX if (round_id == "R1" or bspline_transform is None) else constants.WARPED_PREFIX
                 base_name = pts_layer.name.replace(constants.PUNCTA_SUFFIX, "")
@@ -218,6 +207,7 @@ def _canvas_widget(
                     output_path=csv_out,
                     layer_name=aligned_layer_name,
                     puncta_ids=pid,
+                    sources=sources,
                 )
 
                 if transformed is not None and len(transformed) > 0:
@@ -226,7 +216,8 @@ def _canvas_widget(
                         'scale': voxels,
                         'translate': (0,) * len(voxels),
                     })()
-                    viewer_helpers.add_or_update_puncta_layer(viewer, ref, transformed)
+                    viewer_helpers.add_or_update_puncta_layer(
+                        viewer, ref, transformed, sources=puncta.sources_of(transformed, pid, sources))
 
                 # Hide + clear the GL index cache before teardown — removing a
                 # visible 3D Points node can crash vispy natively.

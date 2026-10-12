@@ -313,7 +313,8 @@ def _on_points_data_changed(event=None):
         z, y, x = layer.data[i]
         peak, snr = _compute_quality_at_point(layer, z, y, x)
         nuc = _nucleus_id_at_point(layer, z, y, x)
-        for col, default in [('Nucleus_ID', nuc), ('Intensity', peak), ('SNR', snr), ('Source', 'manual')]:
+        for col, default in [('Nucleus_ID', nuc), ('Intensity', peak), ('SNR', snr),
+                             ('Source', constants.PUNCTA_SOURCE_MANUAL)]:
             if col not in features.columns:
                 features[col] = default
             else:
@@ -577,7 +578,7 @@ def fishing_hook_callback(layer, event):
             'Nucleus_ID': _nucleus_id_at_point(layer, z, y, x),
             'Intensity': _peak,
             'SNR': _snr,
-            'Source': 'manual',
+            'Source': constants.PUNCTA_SOURCE_MANUAL,
         }
 
         # Ensure all required columns exist

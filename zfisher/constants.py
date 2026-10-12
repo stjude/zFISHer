@@ -32,6 +32,14 @@ CONSENSUS_IDS_SUFFIX = "_IDs"
 # the same identity across reloads, re-runs, and analysis report tabs.
 PUNCTA_CSV_COLUMNS = ['puncta_id', 'Z', 'Y', 'X', 'Nucleus_ID', 'Intensity', 'SNR', 'Source']
 
+# Values of the `Source` column: how a punctum came to exist. `auto` is found by
+# a detector, `manual` placed by hand (native Add or the Fishing Hook). `unknown`
+# marks rows whose provenance was never recorded, such as CSVs written before the
+# column was kept. Every writer keeps a row's value; only a new row gets one.
+PUNCTA_SOURCE_AUTO = "auto"
+PUNCTA_SOURCE_MANUAL = "manual"
+PUNCTA_SOURCE_UNKNOWN = "unknown"
+
 
 def puncta_csv_stem(layer_name):
     """Canonical on-disk filename stem for a puncta layer's CSV.

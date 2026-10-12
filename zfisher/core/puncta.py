@@ -10,7 +10,36 @@ from .timing import timed_stage, n_rows
 logger = logging.getLogger(__name__)
 
 
-def _save_puncta_csv(final_data, output_path, layer_name):
+def puncta_table(coords, features=None):
+    """The CSV table of a puncta layer: ``constants.PUNCTA_CSV_COLUMNS`` first,
+    in that order, then any other feature columns.
+
+    ``coords`` is (N, 3) Z, Y, X; ``features`` a DataFrame with one row per
+    point. A missing ``Source`` column, or a row without a value, is written as
+    ``unknown``: nothing recorded how that punctum was made.
+    """
+    import pandas as pd
+
+    coords_df = pd.DataFrame(np.asarray(coords, dtype=float).reshape(-1, 3), columns=['Z', 'Y', 'X'])
+    if features is None or len(features.columns) == 0:
+        features = pd.DataFrame(index=range(len(coords_df)))
+    features = features.reset_index(drop=True).drop(columns=['Z', 'Y', 'X'], errors='ignore')
+    df = pd.concat([features, coords_df], axis=1)
+    if 'Source' not in df.columns:
+        df['Source'] = constants.PUNCTA_SOURCE_UNKNOWN
+    else:
+        df['Source'] = df['Source'].where(df['Source'].notna() & (df['Source'] != ''),
+                                          constants.PUNCTA_SOURCE_UNKNOWN)
+    ordered = [c for c in constants.PUNCTA_CSV_COLUMNS if c in df.columns]
+    return df[ordered + [c for c in df.columns if c not in ordered]]
+
+
+def write_puncta_csv(path, coords, features=None):
+    """Write a puncta layer's points and features to ``path`` as ``puncta_table``."""
+    puncta_table(coords, features).to_csv(path, index=False)
+
+
+def _save_puncta_csv(final_data, output_path, layer_name, sources=None):
     """Persist a puncta array to CSV in canonical column order and register it.
 
     Parameters
@@ -22,6 +51,9 @@ def _save_puncta_csv(final_data, output_path, layer_name):
     layer_name : str or None
         Layer name used to derive the session-registry key (falls back to the
         file stem when None).
+    sources : array-like of str, optional
+        The ``Source`` of each row. Without it every row is ``auto``, which is
+        right only for rows a detector just produced.
 
     Notes
     -----
@@ -35,7 +67,7 @@ def _save_puncta_csv(final_data, output_path, layer_name):
 
     df = pd.DataFrame(final_data[:, :6], columns=['Z', 'Y', 'X', 'Nucleus_ID', 'Intensity', 'SNR'])
     df['puncta_id'] = final_data[:, 6].astype(int)
-    df['Source'] = 'auto'
+    df['Source'] = constants.PUNCTA_SOURCE_AUTO if sources is None else np.asarray(sources, dtype=object)
     df = df[constants.PUNCTA_CSV_COLUMNS]
     df.to_csv(output_path, index=False)
 
@@ -302,7 +334,7 @@ def transform_puncta_to_aligned_space(raw_puncta, round_id, shift, canvas_offset
                                        bspline_transform=None, consensus_mask=None,
                                        remove_extranuclear=True,
                                        output_path=None, layer_name=None,
-                                       puncta_ids=None,
+                                       puncta_ids=None, sources=None,
                                        progress_callback=None):
     """
     Transform raw-space puncta coordinates into aligned canvas space and
@@ -334,6 +366,11 @@ def transform_puncta_to_aligned_space(raw_puncta, round_id, shift, canvas_offset
         (or the length does not match), a positional ``arange`` is assigned.
         The same keep-mask used for extranuclear filtering is applied to the
         ids, so surviving puncta retain their original identity.
+    sources : array-like of str, optional
+        The ``Source`` of each ``raw_puncta`` row, filtered with the rows and
+        written to the CSV. Without it every row is saved as ``auto``, so pass
+        it whenever the puncta may include manual ones (``sources_of`` maps
+        the returned rows back to it).
     progress_callback : callable, optional
         ``callback(pct, msg)``
 
@@ -362,6 +399,10 @@ def transform_puncta_to_aligned_space(raw_puncta, round_id, shift, canvas_offset
         ids = np.asarray(puncta_ids, dtype=float).copy()
     else:
         ids = np.arange(len(raw_puncta), dtype=float)
+    if sources is not None:
+        sources = np.asarray(sources, dtype=object)
+        if len(sources) != len(raw_puncta):
+            raise ValueError(f"{len(sources)} sources for {len(raw_puncta)} puncta")
 
     # Apply rigid transform to canvas space
     shift = np.asarray(shift, dtype=float)
@@ -411,6 +452,8 @@ def transform_puncta_to_aligned_space(raw_puncta, round_id, shift, canvas_offset
             nucleus_ids = nucleus_ids[keep]
             quality = quality[keep]
             ids = ids[keep]
+            if sources is not None:
+                sources = sources[keep]
 
         if len(aligned_coords) == 0:
             if progress_callback:
@@ -424,11 +467,20 @@ def transform_puncta_to_aligned_space(raw_puncta, round_id, shift, canvas_offset
     if output_path:
         if progress_callback:
             progress_callback(90, "Saving transformed puncta...")
-        _save_puncta_csv(final_data, output_path, layer_name)
+        _save_puncta_csv(final_data, output_path, layer_name, sources=sources)
 
     if progress_callback:
         progress_callback(100, f"Done. {len(final_data)} puncta in aligned space.")
     return final_data
+
+
+def sources_of(puncta_data, ids, sources):
+    """The ``Source`` of each row of ``puncta_data`` (column 6 is ``puncta_id``),
+    looked up in ``sources`` by the matching entry of ``ids``. Use it after
+    ``transform_puncta_to_aligned_space``, which may drop rows."""
+    by_id = dict(zip(np.asarray(ids, dtype=float), sources))
+    return np.array([by_id.get(float(pid), constants.PUNCTA_SOURCE_UNKNOWN)
+                     for pid in np.asarray(puncta_data)[:, 6]], dtype=object)
 
 
 @timed_stage("puncta_detection",

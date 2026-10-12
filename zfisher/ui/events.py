@@ -1,10 +1,10 @@
 import logging
 import napari
 import numpy as np
-import pandas as pd
 from pathlib import Path
 from qtpy.QtCore import QTimer
 from ..core import session, timing
+from ..core import puncta as _puncta
 from .. import constants
 
 logger = logging.getLogger(__name__)
@@ -96,10 +96,8 @@ def save_puncta_layer(layer):
     live_name = layer.name
     csv_path = constants.puncta_csv_path(reports_dir, live_name)
     try:
-        coords_df = pd.DataFrame(layer.data, columns=['Z', 'Y', 'X'])
-        features = layer.features.reset_index(drop=True) if hasattr(layer, 'features') and not layer.features.empty else pd.DataFrame()
-        full_df = pd.concat([features, coords_df], axis=1)
-        full_df.to_csv(csv_path, index=False)
+        features = layer.features if hasattr(layer, 'features') and not layer.features.empty else None
+        _puncta.write_puncta_csv(csv_path, layer.data, features)
     except Exception as e:
         # Fallback: save coordinates only
         logger.warning("Could not save full puncta CSV for '%s': %s. Saving coordinates only.", live_name, e)

@@ -239,7 +239,6 @@ def _automated_preprocessing_magic_widget(
             and constants.WARPED_PREFIX not in l.name
         ]
         if puncta_layers:
-            import pandas as pd
             reports_dir = output_dir / constants.REPORTS_DIR
             reports_dir.mkdir(exist_ok=True, parents=True)
             n_puncta = max(len(puncta_layers), 1)
@@ -257,21 +256,11 @@ def _automated_preprocessing_magic_widget(
                     continue
 
                 # Build raw_puncta array: Z, Y, X, Nucleus_ID, Intensity, SNR
-                coords = np.array(pts_layer.data)
-                if len(coords) == 0:
+                if len(pts_layer.data) == 0:
                     continue
-                feats = pts_layer.features if hasattr(pts_layer, 'features') and isinstance(pts_layer.features, pd.DataFrame) and not pts_layer.features.empty else None
-                if feats is not None and len(feats) == len(coords):
-                    nuc_ids = feats['Nucleus_ID'].values if 'Nucleus_ID' in feats.columns else np.zeros(len(coords))
-                    intensity = feats['Intensity'].values if 'Intensity' in feats.columns else np.zeros(len(coords))
-                    snr = feats['SNR'].values if 'SNR' in feats.columns else np.zeros(len(coords))
-                    pid = feats['puncta_id'].values if 'puncta_id' in feats.columns else None
-                else:
-                    nuc_ids = np.zeros(len(coords))
-                    intensity = np.zeros(len(coords))
-                    snr = np.zeros(len(coords))
-                    pid = None
-                raw_puncta = np.column_stack([coords, nuc_ids, intensity, snr])
+                raw_puncta, pid, sources = viewer_helpers.raw_puncta_from_layer(pts_layer)
+                if pid is None:
+                    pid = np.arange(len(raw_puncta))
 
                 prefix_str = constants.ALIGNED_PREFIX if (round_id == "R1" or bspline_transform is None) else constants.WARPED_PREFIX
                 base_name = pts_layer.name.replace(constants.PUNCTA_SUFFIX, "")
@@ -288,6 +277,7 @@ def _automated_preprocessing_magic_widget(
                     output_path=csv_out,
                     layer_name=aligned_layer_name,
                     puncta_ids=pid,
+                    sources=sources,
                 )
 
                 if transformed is not None and len(transformed) > 0:
@@ -296,7 +286,8 @@ def _automated_preprocessing_magic_widget(
                         'scale': voxels,
                         'translate': (0,) * len(voxels),
                     })()
-                    viewer_helpers.add_or_update_puncta_layer(viewer, ref, transformed)
+                    viewer_helpers.add_or_update_puncta_layer(
+                        viewer, ref, transformed, sources=puncta.sources_of(transformed, pid, sources))
 
                 # Remove the original raw puncta layer now that it's been transformed.
                 # Hide + clear the GL index cache before teardown — removing a
@@ -371,9 +362,7 @@ def _automated_preprocessing_magic_widget(
                     reports_dir = Path(out_dir) / constants.REPORTS_DIR
                     reports_dir.mkdir(exist_ok=True, parents=True)
                     csv_path = constants.puncta_csv_path(reports_dir, pts_layer.name)
-                    coords_df = pd.DataFrame(coords, columns=['Z', 'Y', 'X'])
-                    full_df = pd.concat([features.reset_index(drop=True), coords_df], axis=1)
-                    full_df.to_csv(csv_path, index=False)
+                    puncta.write_puncta_csv(csv_path, coords, features)
                     session.set_processed_file(
                         pts_layer.name, str(csv_path),
                         layer_type='points', metadata={'subtype': 'puncta_csv'}

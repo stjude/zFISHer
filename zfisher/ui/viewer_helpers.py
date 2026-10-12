@@ -174,6 +174,14 @@ def _load_points_layer(viewer, name, path, scale, file_info, translate):
                     "positional ids (not stable across edits/re-runs).", name
                 )
                 features['puncta_id'] = np.arange(len(data))
+            if 'Source' not in features.columns:
+                logger.warning(
+                    "Puncta CSV for layer '%s' has no Source column; marking its "
+                    "%d puncta as '%s'.", name, len(data), constants.PUNCTA_SOURCE_UNKNOWN
+                )
+                features['Source'] = constants.PUNCTA_SOURCE_UNKNOWN
+            else:
+                features['Source'] = features['Source'].fillna(constants.PUNCTA_SOURCE_UNKNOWN)
             
             text_params = {
                 'string': '{puncta_id:.0f}', 'size': 8, 'color': 'white',
@@ -365,8 +373,10 @@ def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, defau
             except Exception as e:
                 logger.error("Error recomputing IDs for '%s': %s", mask_name, e)
 
-def ask_replace_or_merge(parent, layer_name, n_existing):
-    """Show a popup asking Replace/Merge/Cancel. Returns 'replace', 'merge', or 'cancel'."""
+def ask_replace_or_merge(parent, layer_name, n_existing, n_manual=0):
+    """Show a popup asking Replace/Merge/Cancel. Returns 'replace', 'merge',
+    'replace_all' or 'cancel'. Replace keeps the ``n_manual`` puncta placed by
+    hand; when there are any, 'Replace All' is offered too and drops them."""
     from qtpy.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
     from qtpy.QtCore import Qt
     from .popups import _DimOverlay
@@ -386,7 +396,11 @@ def ask_replace_or_merge(parent, layer_name, n_existing):
     title.setStyleSheet("color: white; font-weight: bold; font-size: 14px;")
     title.setWordWrap(True)
     layout.addWidget(title)
-    body = QLabel("Replace existing puncta with new detection, or merge\n(skipping duplicates within min distance)?")
+    body_text = "Replace existing puncta with new detection, or merge\n(skipping duplicates within min distance)?"
+    if n_manual:
+        body_text += (f"\n\n{n_manual} of them were placed by hand. Replace keeps them; "
+                      f"Replace All deletes them too.")
+    body = QLabel(body_text)
     body.setStyleSheet("color: #c0b8c8; font-size: 12px;")
     body.setWordWrap(True)
     layout.addWidget(body)
@@ -395,7 +409,10 @@ def ask_replace_or_merge(parent, layer_name, n_existing):
         border-radius: 6px; padding: 6px 16px; font-size: 12px; }
         QPushButton:hover { background-color: #4a3f58; }"""
     btn_layout = QHBoxLayout()
-    for label, action in [("Cancel", "cancel"), ("Merge (Deduplicated)", "merge"), ("Replace", "replace")]:
+    choices = [("Cancel", "cancel"), ("Merge (Deduplicated)", "merge"), ("Replace", "replace")]
+    if n_manual:
+        choices.append(("Replace All", "replace_all"))
+    for label, action in choices:
         btn = QPushButton(label)
         btn.setStyleSheet(btn_style)
         btn.clicked.connect(lambda _=False, a=action: (setattr(dlg, '_result_action', a), dlg.accept()))
@@ -414,25 +431,60 @@ def ask_replace_or_merge(parent, layer_name, n_existing):
     return dlg._result_action
 
 
+def manual_mask(features):
+    """Which rows of a puncta feature table were placed by hand."""
+    if features is None or 'Source' not in getattr(features, 'columns', ()):
+        return np.zeros(0 if features is None else len(features), dtype=bool)
+    return (features['Source'] == constants.PUNCTA_SOURCE_MANUAL).to_numpy()
+
+
+def raw_puncta_from_layer(pts_layer):
+    """``(raw_puncta, puncta_ids, sources)`` of a puncta layer, for
+    ``puncta.transform_puncta_to_aligned_space``: an (N, 6) array of Z, Y, X,
+    Nucleus_ID, Intensity, SNR, and each point's ``puncta_id`` (None if the
+    layer has none) and ``Source``."""
+    coords = np.array(pts_layer.data)
+    n = len(coords)
+    feats = getattr(pts_layer, 'features', None)
+    if not (isinstance(feats, pd.DataFrame) and not feats.empty and len(feats) == n):
+        feats = pd.DataFrame(index=range(n))
+
+    def column(name, default):
+        return feats[name].to_numpy() if name in feats.columns else np.full(n, default)
+
+    raw = np.column_stack([coords.reshape(-1, 3), column('Nucleus_ID', 0), column('Intensity', 0),
+                           column('SNR', 0)]).astype(float)
+    pid = feats['puncta_id'].to_numpy() if 'puncta_id' in feats.columns else None
+    sources = _puncta.puncta_table(coords, feats)['Source'].to_numpy(dtype=object)
+    return raw, pid, sources
+
+
 def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layers.Image,
-                                puncta_data: np.ndarray, existing_action=None):
+                                puncta_data: np.ndarray, existing_action=None, sources=None):
     """
     Adds or updates a puncta layer with full feature support.
 
     Handles merging new data, creating unique IDs, and setting up text display.
-    existing_action: 'replace', 'merge', or None (new layer).
+    existing_action: 'replace' (keeps the puncta placed by hand), 'replace_all',
+    'merge', or None (new layer). ``puncta_data`` is (N, 7) with ``puncta_id``
+    in column 6, kept for a new layer; ``sources`` is each row's ``Source``,
+    ``auto`` if omitted.
     """
     if puncta_data is None or puncta_data.shape[0] == 0:
         return
 
     layer_name = f"{source_layer.name}{constants.PUNCTA_SUFFIX}"
     coords = puncta_data[:, :3]
+    n_new = len(puncta_data)
 
     # Create a DataFrame for the new properties
     new_features = pd.DataFrame({
+        'puncta_id': (puncta_data[:, 6] if puncta_data.shape[1] > 6 else np.arange(n_new)).astype(np.int64),
         'Nucleus_ID': puncta_data[:, 3],
         'Intensity': puncta_data[:, 4],
-        'SNR': puncta_data[:, 5]
+        'SNR': puncta_data[:, 5],
+        'Source': (np.full(n_new, constants.PUNCTA_SOURCE_AUTO, dtype=object) if sources is None
+                   else np.asarray(sources, dtype=object)),
     })
 
     text_params = {
@@ -445,9 +497,22 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
     if layer_name in viewer.layers and existing_action:
         pts_layer = viewer.layers[layer_name]
 
-        if existing_action == 'replace':
-            # Replace: clear existing, use only new data
-            new_features['puncta_id'] = np.arange(len(new_features))
+        if existing_action in ('replace', 'replace_all'):
+            # Replace the detected puncta; 'replace' keeps the ones placed by
+            # hand, and new points on top of one of them are dropped.
+            kept = manual_mask(pts_layer.features) if existing_action == 'replace' else np.zeros(0, bool)
+            if kept.any():
+                from scipy.spatial import cKDTree
+                kept_coords = np.asarray(pts_layer.data)[kept]
+                kept_features = pts_layer.features[kept].reset_index(drop=True)
+                dists, _ = cKDTree(kept_coords).query(coords)
+                fresh = dists > 3            # the merge's min_distance
+                coords = np.vstack([kept_coords, coords[fresh]])
+                added = new_features.iloc[fresh.nonzero()[0]].reset_index(drop=True)
+                start = int(kept_features['puncta_id'].max()) + 1
+                added['puncta_id'] = np.arange(start, start + len(added))
+                new_features = pd.concat([kept_features, added], ignore_index=True)
+                logger.info("Replace on '%s' kept %d manual puncta", layer_name, int(kept.sum()))
             pts_layer.visible = False
             set_points_data(pts_layer, coords)
             pts_layer.features = new_features
@@ -494,10 +559,6 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
             pts_layer.visible = True
 
     else:
-        # Create new layer
-        # Assign initial IDs
-        new_features['puncta_id'] = np.arange(len(new_features))
-
         viewer.add_points(
             coords,
             name=layer_name,
@@ -514,17 +575,12 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
     out_dir = session.get_data("output_dir")
     if out_dir:
         puncta_layer = viewer.layers[layer_name]
-        
-        # Combine coordinates and features for saving
-        coords_df = pd.DataFrame(puncta_layer.data, columns=['Z', 'Y', 'X'])
-        full_df_to_save = pd.concat([puncta_layer.features.reset_index(drop=True), coords_df.reset_index(drop=True)], axis=1)
 
         # Define path and save (one canonical file per layer)
         reports_dir = Path(out_dir) / constants.REPORTS_DIR
         reports_dir.mkdir(exist_ok=True)
         csv_path = constants.puncta_csv_path(reports_dir, layer_name)
-
-        full_df_to_save.to_csv(csv_path, index=False)
+        _puncta.write_puncta_csv(csv_path, puncta_layer.data, puncta_layer.features)
 
         # Update session file to point to this new CSV
         session.set_processed_file(layer_name, str(csv_path), layer_type='points', metadata={'subtype': 'puncta_csv'})
@@ -1098,11 +1154,7 @@ def resync_puncta_nucleus_ids(
                 reports_dir = Path(out_dir) / constants.REPORTS_DIR
                 reports_dir.mkdir(exist_ok=True, parents=True)
                 csv_path = constants.puncta_csv_path(reports_dir, pts_layer.name)
-                coords_df = pd.DataFrame(coords, columns=['Z', 'Y', 'X'])
-                full_df = pd.concat([features.reset_index(drop=True), coords_df], axis=1)
-                ordered = [c for c in constants.PUNCTA_CSV_COLUMNS if c in full_df.columns]
-                ordered += [c for c in full_df.columns if c not in ordered]
-                full_df[ordered].to_csv(csv_path, index=False)
+                _puncta.write_puncta_csv(csv_path, coords, features)
                 # Re-register so the session points at the freshly-resynced file
                 # (previously omitted, which left the registry on a stale path).
                 session.set_processed_file(
