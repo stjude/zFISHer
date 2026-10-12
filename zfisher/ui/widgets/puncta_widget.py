@@ -137,6 +137,8 @@ def _puncta_widget(
         try:
             viewer_helpers.add_or_update_puncta_layer(viewer, image_layer, results,
                                                        existing_action=_existing_action)
+            viewer_helpers.record_detection_provenance(image_layer, nuclei_layer, params,
+                                                       existing_action=_existing_action)
         finally:
             _viewer_mod._suppress_custom_controls = False
             # Re-trigger custom controls now that suppression is lifted —

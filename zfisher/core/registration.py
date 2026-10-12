@@ -850,6 +850,24 @@ def _save_registration(shift, canvas_offset, canvas_shape, round_shapes, transfo
     session.update_data("registration", record)
 
 
+def registration_fingerprint():
+    """A short hash of the saved canvas record and B-spline file, so a puncta
+    file can name the exact registration that placed it. None if none is saved."""
+    import hashlib
+    import json
+    canvas = (session.get_data("registration", default={}) or {}).get("canvas")
+    if not canvas:
+        return None
+    digest = hashlib.sha256(json.dumps(canvas, sort_keys=True).encode())
+    if canvas.get("bspline"):
+        path = Path(canvas["bspline"]["path"])
+        if not path.is_absolute():
+            path = Path(session.get_data("output_dir")) / path
+        if path.exists():
+            digest.update(path.read_bytes())
+    return digest.hexdigest()[:16]
+
+
 @dataclass
 class SavedRegistration:
     """A registration read back from the session: everything

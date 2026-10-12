@@ -227,6 +227,23 @@ def on_layer_inserted(event, widgets):
     # Use a QTimer to delay execution slightly, ensuring the layer is fully added
     QTimer.singleShot(100, update_widgets)
 
+_keep_files_of = set()   # layer names whose file stays registered when removed
+
+
+def remove_layer_keeping_file(viewer, layer):
+    """Remove ``layer`` from the viewer but keep its file and its session entry.
+
+    Removing a layer normally backs its file up to ``.bak`` and unregisters it
+    (``_remove_layer_and_file``). The canvas step removes the raw puncta layers
+    once they are transformed, but their CSVs stay part of the session: they
+    hold the raw-space detections the aligned rows came from."""
+    _keep_files_of.add(layer.name)
+    try:
+        viewer.layers.remove(layer)
+    finally:
+        _keep_files_of.discard(layer.name)
+
+
 def _remove_layer_and_file(layer_name):
     """Remove a layer's session entry and BACK UP its file on disk.
 
@@ -287,7 +304,8 @@ def on_layer_removed(event, widgets):
             _remove_layer_and_file(f"{layer.name}_centroids")
 
         elif isinstance(layer, napari.layers.Points):
-            _remove_layer_and_file(layer.name)
+            if layer.name not in _keep_files_of:
+                _remove_layer_and_file(layer.name)
             detach_puncta_listener(layer)
             # Cascade: also remove the parent mask
             if not _programmatic_removal and layer.name.endswith("_IDs"):

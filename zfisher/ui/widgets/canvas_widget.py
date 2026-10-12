@@ -218,16 +218,11 @@ def _canvas_widget(
                     })()
                     viewer_helpers.add_or_update_puncta_layer(
                         viewer, ref, transformed, sources=puncta.sources_of(transformed, pid, sources))
+                    viewer_helpers.record_aligned_puncta_provenance(aligned_layer_name, pts_layer.name)
 
-                # Hide + clear the GL index cache before teardown — removing a
-                # visible 3D Points node can crash vispy natively.
-                try:
-                    pts_layer._locked = False  # Unlock so it can be removed
-                    pts_layer.visible = False
-                    viewer_helpers.clear_points_index_cache(pts_layer)
-                    viewer.layers.remove(pts_layer)
-                except ValueError:
-                    pass
+                # Keep the raw CSV: the aligned rows share its puncta_id, and
+                # the saved registration can transform it again.
+                viewer_helpers.retire_raw_puncta_layer(viewer, pts_layer)
 
         # Lock all puncta layers after warping — no further deletion allowed
         for layer in viewer.layers:

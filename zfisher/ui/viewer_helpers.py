@@ -8,6 +8,7 @@ import pandas as pd
 from packaging.version import parse as parse_version
 from ..core import session, segmentation, timing, label_edits, puncta as _puncta
 from ..core import io as _io
+from ..core import provenance
 
 from .. import constants
 from . import style
@@ -311,6 +312,10 @@ def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, defau
         logger.debug("Applying canvas translation: %s", translate)
 
     computed_ids_names = []  # deferred: must be rebuilt after all mask layers are loaded
+    # Raw-space puncta are data for re-detection, not layers, once the session
+    # has aligned images: drawn there, raw coordinates would be misplaced.
+    has_aligned = any(constants.ALIGNED_PREFIX in key or constants.WARPED_PREFIX in key
+                      for key in processed_files)
 
     for i, (name, file_info) in enumerate(processed_files.items()):
         if progress_callback:
@@ -331,6 +336,10 @@ def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, defau
         layer_type = file_info.get('type')
 
         if layer_type == 'report': # Don't load reports as layers
+            continue
+
+        if has_aligned and isinstance(file_info, dict) and file_info.get('space') == 'raw':
+            logger.info("Keeping raw-space puncta '%s' as data, not as a layer", name)
             continue
 
         if not path_str or not layer_type:
@@ -457,6 +466,99 @@ def raw_puncta_from_layer(pts_layer):
     pid = feats['puncta_id'].to_numpy() if 'puncta_id' in feats.columns else None
     sources = _puncta.puncta_table(coords, feats)['Source'].to_numpy(dtype=object)
     return raw, pid, sources
+
+
+def _round_and_channel(layer_name):
+    """('R1', 'FITC') from a layer name such as 'Aligned R1 - FITC_puncta'."""
+    base = layer_name.replace(constants.PUNCTA_SUFFIX, "")
+    round_id = "R1" if "R1" in base.upper() else "R2" if "R2" in base.upper() else None
+    return round_id, base.split(" - ")[-1].strip()
+
+
+def _reports_csv(layer_name):
+    out_dir = session.get_data("output_dir")
+    if not out_dir:
+        return None
+    return constants.puncta_csv_path(Path(out_dir) / constants.REPORTS_DIR, layer_name)
+
+
+def retire_raw_puncta_layer(viewer, pts_layer):
+    """Remove a raw puncta layer after the canvas step has transformed it,
+    keeping its CSV as the session's raw-space record of those puncta.
+
+    The CSV is saved from the layer first, so manual edits are in it; it stays
+    registered with ``space='raw'`` and its provenance record notes the
+    space. Without an output folder the layer is just removed."""
+    from . import events
+    csv_path = _reports_csv(pts_layer.name)
+    if csv_path is not None:
+        events.save_puncta_layer(pts_layer)
+        round_id, channel = _round_and_channel(pts_layer.name)
+        session.set_processed_file(pts_layer.name, str(csv_path), layer_type='points', metadata={
+            'subtype': 'puncta_csv', 'space': 'raw', 'round': round_id})
+        _puncta.record_puncta(csv_path, "kept_raw", round=round_id, channel=channel,
+                              space=f"raw:{round_id}", run_by="gui")
+    pts_layer._locked = False  # Unlock so it can be removed
+    # Hide + clear the GL index cache before teardown — removing a visible 3D
+    # Points node can crash vispy natively.
+    pts_layer.visible = False
+    clear_points_index_cache(pts_layer)
+    try:
+        events.remove_layer_keeping_file(viewer, pts_layer)
+    except ValueError:
+        pass
+
+
+def record_aligned_puncta_provenance(aligned_layer_name, raw_layer_name, consensus_mask_name=None):
+    """Record the provenance of an aligned puncta CSV made in the GUI
+    canvas step from the raw layer ``raw_layer_name``."""
+    csv_path = _reports_csv(aligned_layer_name)
+    if csv_path is None or not csv_path.exists():
+        return
+    from ..core import registration
+    raw_csv = _reports_csv(raw_layer_name)
+    round_id, channel = _round_and_channel(aligned_layer_name)
+    consensus = None
+    if consensus_mask_name:
+        out_dir = session.get_data("output_dir")
+        consensus = provenance.file_identity(_io.find_mask(Path(out_dir) / constants.SEGMENTATION_DIR,
+                                                           consensus_mask_name))
+    _puncta.record_puncta(
+        csv_path, "transformed", round=round_id, channel=channel, space="aligned",
+        derived_from=raw_csv.name if raw_csv is not None and raw_csv.exists() else None,
+        registration=registration.registration_fingerprint(), consensus_mask=consensus,
+        run_by="gui")
+
+
+def record_detection_provenance(image_layer, nuclei_layer, params, existing_action=None):
+    """Record the provenance of the puncta CSV that GUI detection on
+    ``image_layer`` just wrote. Detection on an aligned or warped image is
+    recorded as ``detected_in='aligned'``: for R2 that is a different method
+    from detecting on the raw image and transforming."""
+    layer_name = f"{image_layer.name}{constants.PUNCTA_SUFFIX}"
+    csv_path = _reports_csv(layer_name)
+    if csv_path is None or not csv_path.exists():
+        return
+    aligned = (image_layer.name.startswith(constants.ALIGNED_PREFIX)
+               or image_layer.name.startswith(constants.WARPED_PREFIX))
+    round_id, channel = _round_and_channel(layer_name)
+    processed = session.get_data("processed_files", default={}) or {}
+
+    def registered(layer):
+        info = processed.get(layer.name) if layer is not None else None
+        return info.get('path') if isinstance(info, dict) else None
+
+    image_path = registered(image_layer) if aligned else session.get_data(
+        "r1_path" if round_id == "R1" else "r2_path")
+    _puncta.record_puncta(
+        csv_path, "detected", round=round_id, channel=channel,
+        space="aligned" if aligned else f"raw:{round_id}",
+        detected_in="aligned" if aligned else "raw",
+        source_image=provenance.file_identity(image_path) if image_path else {"layer": image_layer.name},
+        mask=(provenance.file_identity(registered(nuclei_layer)) if registered(nuclei_layer)
+              else {"layer": nuclei_layer.name}) if nuclei_layer is not None else None,
+        detection_parameters=dict(params), voxel_size=[float(v) for v in image_layer.scale],
+        existing_action=existing_action, run_by="gui")
 
 
 def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layers.Image,

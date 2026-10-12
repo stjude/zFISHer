@@ -35,8 +35,44 @@ def puncta_table(coords, features=None):
 
 
 def write_puncta_csv(path, coords, features=None):
-    """Write a puncta layer's points and features to ``path`` as ``puncta_table``."""
+    """Write a puncta layer's points and features to ``path`` as ``puncta_table``,
+    and record its new hash if the file is in the session's provenance."""
     puncta_table(coords, features).to_csv(path, index=False)
+    _record_rewrite(path)
+
+
+# --- Provenance ------------------------------------------------------------------
+#
+# Puncta CSVs are recorded in the session's provenance (core.provenance): round,
+# channel, coordinate space (raw:R1, raw:R2 or aligned), image and mask, detection
+# parameters, what the file was derived from, who ran it, and the puncta counts by
+# Source. A raw CSV and the aligned CSV made from it share puncta_id, so each
+# aligned punctum can be traced to its detection.
+
+def record_puncta(csv_path, event, **fields):
+    """Record the puncta CSV that zFISHer just wrote at ``csv_path``, with its
+    puncta counts by ``Source``; see ``provenance.record_artifact``."""
+    import pandas as pd
+    from . import provenance
+
+    counts = {}
+    try:
+        df = pd.read_csv(csv_path)
+        source = (df["Source"].fillna(constants.PUNCTA_SOURCE_UNKNOWN) if "Source" in df.columns
+                  else pd.Series([constants.PUNCTA_SOURCE_UNKNOWN] * len(df), dtype=object))
+        counts = {"n_puncta": int(len(df)),
+                  "n_by_source": {str(k): int(v) for k, v in source.value_counts().items()}}
+    except (OSError, ValueError) as exc:
+        logger.warning("Could not count puncta in %s: %s", csv_path, exc)
+    return provenance.record_artifact(csv_path, event, kind="puncta_csv", **counts, **fields)
+
+
+def _record_rewrite(csv_path):
+    """After zFISHer rewrote a recorded puncta CSV, record its new hash and
+    counts, so ``provenance.verify`` keeps meaning "changed outside zFISHer"."""
+    from . import provenance
+    if provenance.has_record(csv_path):
+        record_puncta(csv_path, "saved")
 
 
 def _save_puncta_csv(final_data, output_path, layer_name, sources=None):
@@ -70,6 +106,7 @@ def _save_puncta_csv(final_data, output_path, layer_name, sources=None):
     df['Source'] = constants.PUNCTA_SOURCE_AUTO if sources is None else np.asarray(sources, dtype=object)
     df = df[constants.PUNCTA_CSV_COLUMNS]
     df.to_csv(output_path, index=False)
+    _record_rewrite(output_path)
 
     session_key = layer_name if layer_name else Path(output_path).stem
     session.set_processed_file(

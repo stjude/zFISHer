@@ -4,7 +4,7 @@ from pathlib import Path
 import gc
 import logging
 
-from . import io, registration, segmentation, puncta, analysis, session
+from . import io, registration, segmentation, puncta, analysis, session, provenance
 from .. import constants
 from .timing import timed_stage
 
@@ -209,12 +209,20 @@ def run_full_zfisher_pipeline(
             job_base = 25 + int((job_i / job_count) * 10)
             _update(job_base, f"Detecting puncta (raw): {rnd} {ch}...")
 
+            # The raw-space puncta are kept: the aligned rows share their
+            # puncta_id, and a saved registration can transform them again.
+            raw_layer_name = f"{rnd} - {ch}{constants.PUNCTA_SUFFIX}"
+            raw_reports_dir = output_dir / constants.REPORTS_DIR
+            raw_reports_dir.mkdir(exist_ok=True, parents=True)
+            raw_csv = constants.puncta_csv_path(raw_reports_dir, raw_layer_name)
             try:
                 result = puncta.process_puncta_detection(
                     image_data=ch_data,
                     mask_data=mask_for_detection,
                     voxels=sess_obj.voxels,
                     params=ch_params,
+                    output_path=raw_csv,
+                    layer_name=raw_layer_name,
                     progress_callback=lambda p, t, _b=job_base: _update(
                         _b + int(p / 100 * 2), f"{rnd} {ch}: {t}"
                     )
@@ -225,6 +233,18 @@ def run_full_zfisher_pipeline(
                 job_i += 1
                 continue
             raw_puncta_results[(rnd, ch)] = result
+            if raw_csv.exists():
+                session.set_processed_file(raw_layer_name, str(raw_csv), "points", metadata={
+                    'format': 'csv', 'subtype': 'puncta_csv', 'space': 'raw', 'round': rnd})
+                puncta.record_puncta(
+                    raw_csv, "detected", round=rnd, channel=ch, space=f"raw:{rnd}", detected_in="raw",
+                    source_image=provenance.file_identity(r1_path if rnd == "R1" else r2_path),
+                    mask=provenance.file_identity(r1_mask_path if rnd == "R1" else r2_mask_path)
+                    if mask_for_detection is not None else None,
+                    # After detection, which fills in z_scale from the voxel size.
+                    detection_parameters=dict(ch_params, nuclei_only=nuclei_only),
+                    voxel_size=list(map(float, sess_obj.voxels)),
+                    run_by="batch")
 
             # Persist detection parameters per layer for the final report.
             # Format: {layer_key: {algorithm, sensitivity, min_distance, ...}}
@@ -356,6 +376,16 @@ def run_full_zfisher_pipeline(
                 _b + int(p / 100 * _s), f"{rnd} {ch}: {t}"
             )
         )
+
+        if csv_out.exists():
+            raw_csv = constants.puncta_csv_path(reports_dir, f"{rnd} - {ch}{constants.PUNCTA_SUFFIX}")
+            consensus_file = io.find_mask(output_dir / constants.SEGMENTATION_DIR, constants.CONSENSUS_MASKS_NAME)
+            puncta.record_puncta(
+                csv_out, "transformed", round=rnd, channel=ch, space="aligned", detected_in="raw",
+                derived_from=raw_csv.name if raw_csv.exists() else None,
+                registration=registration.registration_fingerprint(),
+                consensus_mask=provenance.file_identity(consensus_file),
+                remove_extranuclear=remove_extranuclear_puncta, run_by="batch")
 
         # Build layer data dict for colocalization analysis
         if transformed is not None and len(transformed) > 0:
