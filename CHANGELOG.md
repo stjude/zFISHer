@@ -2,6 +2,28 @@
 
 All notable changes to zFISHer. Versions follow [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Raw images
+
+- **A raw image that has moved can be found again.** When Load Session cannot
+  find a round's raw image, it asks where the file is now. The chosen file is
+  checked against what the session recorded when it was created (shape, data
+  type, channels, voxel size and file size); if anything differs, zFISHer lists
+  the differences and asks before using it. The answer is saved in the session,
+  so you are asked once, and every re-point is recorded in the session file
+  (`raw_repoints`). Before, a round whose file had moved was silently skipped.
+  Sessions made before this version record the image's identity the first time
+  the image is found.
+- **ND2 sessions reopen from their `input/` copy** instead of converting the ND2
+  file again.
+- **Each raw round is read once** when it is shown in the viewer. New Session and
+  Load Session used to read both rounds a second time just to find the nuclear
+  channel, a second full read of a multi-GB file. The nuclear channel chosen is
+  unchanged.
+- zFISHer can now read one channel of a raw image without reading the whole
+  round, which re-detecting a single channel will need.
+
 ## 2.1.0 — 2026-10-13
 
 Faster mask editing, safer saves, and a full record of how every puncta file
