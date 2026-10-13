@@ -24,6 +24,15 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 - zFISHer can now read one channel of a raw image without reading the whole
   round, which re-detecting a single channel will need.
 
+### Fixes
+
+- **Classical nuclei segmentation no longer crashes when it finds no nuclei.**
+  It failed with a numpy "shape mismatch" error. Nuclei Mapping now shows the
+  rounds where nuclei were found and a "No Nuclei Found" warning naming the
+  others; batch reports the dataset as failed with the same explanation and goes
+  on to the next one. Classical segmentation cannot find a nucleus in a stack
+  with fewer than 29 Z planes, and the warning says so when that is the cause.
+
 ## 2.1.0 — 2026-10-13
 
 Faster mask editing, safer saves, and a full record of how every puncta file

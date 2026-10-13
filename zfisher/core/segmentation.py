@@ -116,6 +116,30 @@ def compute_min_volume_threshold(all_volumes):
     return max(1, int(med - 2 * mad))
 
 
+class NoNucleiFound(ValueError):
+    """Segmentation of a round found no nuclei."""
+
+
+def min_classical_z_planes():
+    """The fewest Z planes in which classical segmentation can find a nucleus.
+
+    Nucleus centres are peaks at least ``NUC_SEG_PEAK_MIN_DIST`` voxels from
+    every edge of the downsampled stack, Z included, and the stack keeps every
+    ``NUC_SEG_Z_STEP``-th plane.
+    """
+    return 2 * constants.NUC_SEG_PEAK_MIN_DIST * constants.NUC_SEG_Z_STEP + 1
+
+
+def no_nuclei_message(name, n_planes, method="classical"):
+    """What to tell the user when segmenting ``name`` found no nuclei."""
+    text = f"No nuclei were found in {name}."
+    if method == "classical" and n_planes < min_classical_z_planes():
+        return (f"{text} It has {n_planes} Z planes, and classical segmentation "
+                f"needs at least {min_classical_z_planes()}. Try Deep Learning "
+                f"(Cellpose), which segments each plane separately.")
+    return f"{text} Check that it is the nuclear channel and that the image is not blank."
+
+
 def filter_small_labels(labels, min_vol, progress_callback=None):
     """
     Remove labels below a volume threshold and recompute centroids.
@@ -312,7 +336,8 @@ def segment_nuclei_classical(image_data, voxel_spacing=None, merge_splits=True, 
         A tuple containing:
         - labels: A (Z, Y, X) labeled integer mask of the segmented nuclei.
         - centroids: A (N, 3) array of the (Z, Y, X) centroids.
-        Returns (None, None) if the input image is empty or segmentation fails.
+        Returns (None, None) if the input image is empty or no nuclei are
+        found; ``no_nuclei_message`` says why for the user.
     """
     logger.info("Classical nuclei segmentation: shape=%s, voxel_spacing=%s, merge_splits=%s", image_data.shape, voxel_spacing, merge_splits)
 
@@ -355,7 +380,13 @@ def segment_nuclei_classical(image_data, voxel_spacing=None, merge_splits=True, 
         edt_spacing = (z_ratio, 1, 1)
     distance = ndi.distance_transform_edt(binary, sampling=edt_spacing)
     coords = peak_local_max(distance, min_distance=constants.NUC_SEG_PEAK_MIN_DIST, labels=binary)
-    
+    if len(coords) == 0:
+        # No peaks comes back as shape (0, 2) whatever the image's dimensions,
+        # which cannot index the 3D markers below.
+        logger.warning("Classical segmentation found no nuclei: shape=%s", image_data.shape)
+        if progress_callback: progress_callback(100, "No nuclei found.")
+        return None, None
+
     # Generate markers for watershed
     if progress_callback: progress_callback(80, "Expanding centers (Watershed)...")
     markers = np.zeros(distance.shape, dtype=int)
@@ -684,6 +715,12 @@ def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callba
         else:
             masks, centroids = segment_nuclei_classical(data, voxel_spacing=voxel_spacing, merge_splits=merge_splits, progress_callback=on_step_progress)
         raw_results[prefix] = (masks, centroids)
+
+    # Later steps need nuclei in every round; stop before anything is saved.
+    empty = [prefix for prefix, (masks, _) in raw_results.items() if masks is None]
+    if empty:
+        images = dict(data_map)
+        raise NoNucleiFound(" ".join(no_nuclei_message(p, images[p].shape[0], method) for p in empty))
 
     # Pass 2: Pool volumes from all rounds, compute shared threshold, filter
     if progress_callback: progress_callback(80, "Computing volume threshold...")
