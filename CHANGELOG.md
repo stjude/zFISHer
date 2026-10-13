@@ -2,7 +2,7 @@
 
 All notable changes to zFISHer. Versions follow [semantic versioning](https://semver.org/).
 
-## Unreleased
+## 2.1.1 — 2026-10-13
 
 ### Raw images
 
