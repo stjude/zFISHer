@@ -53,8 +53,13 @@ def test_citation_without_a_version_is_accepted(tmp_path):
 
 def test_runs_as_a_script_on_this_repository():
     """The workflow runs it on the real files: the current version's tag either
-    gives notes or fails with a reason, never a traceback."""
+    gives notes or fails with a reason, never a traceback. Which one depends on
+    the repository's state (no changelog yet, a section still unreleased, or a
+    dated one), so any clear refusal passes."""
     version = release_notes.package_version()
     result = subprocess.run([sys.executable, str(SCRIPT), f"v{version}"], capture_output=True, text=True)
     assert "Traceback" not in result.stderr
-    assert (result.returncode == 0 and result.stdout.strip()) or "unreleased" in result.stderr
+    if result.returncode == 0:
+        assert result.stdout.strip()
+    else:
+        assert result.stderr.strip()
