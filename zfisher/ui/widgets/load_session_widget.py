@@ -105,6 +105,11 @@ class LoadSessionWidget(Container):
                 if r1_path and r2_path and not has_aligned_data:
                     def raw_progress(p, text):
                         dialog.update_progress(10 + int(p * 0.5), f"Raw: {text}")
+                    # The input/ copy if there is one, else the stored path; if
+                    # neither exists, ask where the image is now. A round the user
+                    # does not locate is skipped, as before, after telling them.
+                    r1_path = popups.resolve_raw_path(dialog, "R1") or r1_path
+                    r2_path = popups.resolve_raw_path(dialog, "R2") or r2_path
                     load_raw_data_into_viewer(self._viewer, r1_path, r2_path, output_dir=output_dir, progress_callback=raw_progress)
                 else:
                     dialog.update_progress(60, "Skipping raw reload, jumping to aligned data...")

@@ -652,3 +652,46 @@ def show_yes_no_popup(parent, title, text):
     with timing.user_wait():
         result = dlg.exec_()
     return result == QDialog.Accepted
+
+def choose_raw_image(parent, round_id, missing_path):
+    """Ask the user where a round's raw image is now. Returns the chosen path,
+    or None if they cancel. The chooser for ``io.resolve_raw_path``."""
+    from pathlib import Path
+    from qtpy.QtWidgets import QFileDialog
+    missing = Path(missing_path) if missing_path else None
+    show_info_popup(
+        parent, f"Locate the {round_id} image",
+        f"The {round_id} raw image could not be found"
+        + (f":\n\n{missing}" if missing else ".")
+        + "\n\nChoose its new location. The session remembers it, so you are only asked once.")
+    start = str(missing.parent) if missing is not None and missing.parent.exists() else ""
+    with timing.user_wait():
+        path, _ = QFileDialog.getOpenFileName(
+            parent, f"Locate the {round_id} raw image", start,
+            "Images (*.nd2 *.tif *.tiff *.ome.tif);;All files (*)")
+    return path or None
+
+
+def confirm_raw_image(parent, round_id, path, differences):
+    """Show how a chosen raw image differs from what the session recorded, and
+    ask whether to use it anyway. The ``confirm`` for ``io.resolve_raw_path``."""
+    from pathlib import Path
+    lines = "\n".join(f"• {d}" for d in differences)
+    return show_yes_no_popup(
+        parent, f"{round_id} image differs",
+        f"{Path(path).name} does not match the {round_id} image this session was made from:\n\n"
+        f"{lines}\n\nA re-exported file can legitimately differ in size. Use this file for {round_id}?")
+
+
+def resolve_raw_path(parent, round_id):
+    """``io.resolve_raw_path`` with the dialogs above; None if the user cancels,
+    after telling them the round stays unloaded."""
+    from ..core import io
+    try:
+        return io.resolve_raw_path(
+            round_id,
+            chooser=lambda r, missing: choose_raw_image(parent, r, missing),
+            confirm=lambda r, path, diffs: confirm_raw_image(parent, r, path, diffs))
+    except io.RawImageNotFound as exc:
+        show_warning_popup(parent, f"{round_id} image not loaded", str(exc))
+        return None

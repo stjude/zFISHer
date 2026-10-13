@@ -12,6 +12,7 @@ from ._shared import make_divider as _make_divider
 from ...core.segmentation import (
     segment_nuclei_classical, segment_nuclei_cellpose,
     get_label_volumes, compute_min_volume_threshold, filter_small_labels,
+    no_nuclei_message,
 )
 from ... import constants
 
@@ -233,9 +234,13 @@ class DapiSegmentationWidget(Container):
                     masks, centroids = segment_nuclei_classical(layer.data, voxel_spacing=voxel_spacing, merge_splits=merge_splits, progress_callback=on_progress)
                 results.append((layer, masks, centroids))
 
+            method_key = "cellpose" if method == "Deep Learning (Cellpose)" else "classical"
+            empty = [no_nuclei_message(layer.name, layer.data.shape[0], method_key)
+                     for layer, masks, _ in results if masks is None]
+
             dialog.update_progress(seg_pct, "Computing volume threshold across rounds...")
-            all_volumes = np.concatenate([get_label_volumes(masks) for _, masks, _ in results if masks is not None])
-            min_vol = compute_min_volume_threshold(all_volumes)
+            volumes = [get_label_volumes(masks) for _, masks, _ in results if masks is not None]
+            min_vol = compute_min_volume_threshold(np.concatenate(volumes) if volumes else np.array([]))
 
             filtered_results = []
             for i, (layer, masks, centroids) in enumerate(results):
@@ -262,6 +267,10 @@ class DapiSegmentationWidget(Container):
                 viewer_module._suppress_custom_controls = False
 
             dialog.update_progress(100, "Complete.")
+
+        if empty:
+            viewer.status = "No nuclei found."
+            popups.show_warning_popup(viewer.window._qt_window, "No Nuclei Found", "\n\n".join(empty))
 
 
 # Public instance — matches the old API expected by viewer.py, events.py, nuclei_segmentation_widget.py

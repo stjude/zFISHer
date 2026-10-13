@@ -107,8 +107,124 @@ def test_match_threshold_none_and_zero_both_auto_detect():
     assert np.array_equal(out_none, out_zero)                          # 0 == None == auto
 
 
+
+# --- no nuclei found --------------------------------------------------------
+# peak_local_max returns its empty result as shape (0, 2) for a 3D image, which
+# used to crash the classical watershed with a numpy broadcasting error.
+
+def _disk_stack(n_planes, size=256, radius=40):
+    """One bright cylinder through every plane of an (n_planes, size, size) stack."""
+    img = np.zeros((n_planes, size, size), dtype=np.uint16)
+    yy, xx = np.mgrid[:size, :size]
+    img[:, (yy - size // 2) ** 2 + (xx - size // 2) ** 2 < radius ** 2] = 1000
+    return img
+
+
+def test_classical_blank_stack_returns_empty_result():
+    steps = []
+    labels, centroids = seg.segment_nuclei_classical(
+        np.zeros((10, 64, 64), dtype=np.uint16), voxel_spacing=(0.5, 0.1, 0.1),
+        progress_callback=lambda p, text: steps.append((p, text)))
+    assert labels is None and centroids is None
+    assert steps[-1] == (100, "No nuclei found.")
+
+
+def test_classical_needs_min_z_planes():
+    # The planes kept after Z downsampling must leave room for a peak away from
+    # the top and bottom edges: 29 planes with the default constants.
+    n = seg.min_classical_z_planes()
+    assert n == 29
+    labels, _ = seg.segment_nuclei_classical(_disk_stack(n - 1), voxel_spacing=(0.5, 0.1, 0.1))
+    assert labels is None
+    labels, centroids = seg.segment_nuclei_classical(_disk_stack(n), voxel_spacing=(0.5, 0.1, 0.1))
+    assert labels.max() == 1 and centroids.shape == (1, 3)
+
+
+def test_no_nuclei_message_explains_too_few_planes():
+    short = seg.no_nuclei_message("R2 - DAPI", 12, "classical")
+    assert short.startswith("No nuclei were found in R2 - DAPI.")
+    assert "12 Z planes" in short and "at least 29" in short and "Cellpose" in short
+    for text in (seg.no_nuclei_message("R2 - DAPI", 40, "classical"),
+                 seg.no_nuclei_message("R2 - DAPI", 12, "cellpose")):
+        assert "Z planes" not in text and "nuclear channel" in text
+
+
+def test_session_segmentation_names_the_round_and_saves_nothing():
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as out:
+        try:
+            seg.process_session_dapi(_disk_stack(40), np.zeros((12, 64, 64), dtype=np.uint16),
+                                     output_dir=out, voxel_spacing=(0.5, 0.1, 0.1))
+        except seg.NoNucleiFound as exc:
+            message = str(exc)
+        else:
+            raise AssertionError("expected NoNucleiFound")
+        assert message.startswith("No nuclei were found in R2.") and "R1" not in message
+        assert "12 Z planes" in message
+        assert not (Path(out) / "segmentation").exists()
+
+
+def test_widget_warns_and_keeps_the_round_with_nuclei(monkeypatch, tmp_path):
+    """The GUI shows the other round's result and a warning, not an error."""
+    import types
+    import pytest
+    pytest.importorskip("napari")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from qtpy.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    import contextlib
+    import napari
+    from napari.components import ViewerModel
+    from zfisher.core import session
+    from zfisher.ui import popups
+    from zfisher.ui.widgets import dapi_segmentation_widget as mod
+
+    data = {"output_dir": str(tmp_path)}
+    monkeypatch.setattr(session, "get_data", lambda key=None, default=None: data.get(key, default) if key else data)
+    monkeypatch.setattr(session, "set_processed_file", lambda *a, **k: None)
+    model = ViewerModel()
+
+    class _Viewer:
+        window = types.SimpleNamespace(_qt_window=None)
+
+        def __getattr__(self, name):
+            return getattr(model, name)
+
+    viewer = _Viewer()
+    monkeypatch.setattr(napari, "current_viewer", lambda: viewer)
+    shown = []
+    monkeypatch.setattr(popups, "show_warning_popup", lambda parent, title, text: shown.append(("warning", title, text)))
+    monkeypatch.setattr(popups, "show_error_popup", lambda parent, title, text: shown.append(("error", title, text)))
+
+    class _Dialog(contextlib.nullcontext):
+        def __init__(self, *a, **k):
+            super().__init__(self)
+
+        def update_progress(self, *a):
+            pass
+
+        def freeze_canvas(self):
+            pass
+
+    monkeypatch.setattr(popups, "ProgressDialog", _Dialog)
+
+    r1 = model.add_image(_disk_stack(40), name="R1 - DAPI", scale=(0.5, 0.1, 0.1))
+    r2 = model.add_image(np.zeros((12, 64, 64), dtype=np.uint16), name="R2 - DAPI", scale=(0.5, 0.1, 0.1))
+    widget = mod.DapiSegmentationWidget()
+    widget.r1_layer = types.SimpleNamespace(value=r1)
+    widget.r2_layer = types.SimpleNamespace(value=r2)
+    widget._on_run()
+
+    assert [s[:2] for s in shown] == [("warning", "No Nuclei Found")]
+    assert shown[0][2].startswith("No nuclei were found in R2 - DAPI.") and "12 Z planes" in shown[0][2]
+    assert "R1 - DAPI_masks" in [layer.name for layer in model.layers]
+    assert "R2 - DAPI_masks" not in [layer.name for layer in model.layers]
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    fns = [fn for fn in fns if not fn.__code__.co_argcount]   # pytest fixtures: run under pytest
     for fn in fns:
         fn()
         print(f"PASS {fn.__name__}")
