@@ -280,6 +280,10 @@ def initialize_new_session(output_dir, r1_path, r2_path, progress_callback=None)
     update_data("r2_path", str(r2_path))
     from .provenance import software_version
     update_data("created_with_zfisher", software_version())
+    # What each round's image is, so a file pointed to later can be checked.
+    from .io import record_raw_identity
+    record_raw_identity("R1", r1_path)
+    record_raw_identity("R2", r2_path)
 
     logger.info("New session created: output_dir=%s, r1=%s, r2=%s", output_dir, r1_path, r2_path)
 

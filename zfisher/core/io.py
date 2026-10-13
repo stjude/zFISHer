@@ -25,84 +25,93 @@ class FISHSession:
     path: str
     metadata: dict = None # Store raw metadata
 
+_OME_NS = {'ome': 'http://www.openmicroscopy.org/Schemas/OME/2016-06'}
+
+
+def _tiff_default_metadata(tif, n_channels, path):
+    """Channel names and voxel size from ImageJ metadata, or generic names and
+    1.0 µm when there is none."""
+    try:
+        ij_meta = tif.imagej_metadata
+        if ij_meta and 'Labels' in ij_meta:
+            channels = ij_meta['Labels'][:n_channels]
+            logger.info("Metadata fallback: loaded channel names %s from ImageJ Labels.", channels)
+            voxels = (float(ij_meta['spacing']), 1.0, 1.0) if 'spacing' in ij_meta else (1.0, 1.0, 1.0)
+            return channels, voxels
+    except Exception as e:
+        logger.warning("Could not parse ImageJ metadata from %s: %s", path, e)
+    channels = [f"Ch{i+1}" for i in range(n_channels)]
+    logger.warning("No channel metadata found for %s. Using generic names: %s. Voxel size defaulting to 1.0 µm — physical measurements may be inaccurate.", path, channels)
+    return channels, (1.0, 1.0, 1.0)
+
+
+def _tiff_metadata(tif, n_channels, path):
+    """``(channels, voxels)`` of an open TIFF holding ``n_channels`` channels:
+    from OME-XML when present, else ImageJ metadata, else defaults. The one
+    reading of TIFF metadata, shared by the full loader and ``read_channel``
+    so a channel name means the same channel in both."""
+    if not tif.ome_metadata:
+        return _tiff_default_metadata(tif, n_channels, path)
+    try:
+        root = ET.fromstring(tif.ome_metadata)
+        found = root.findall('.//ome:Channel', _OME_NS)
+        if found:
+            channels = [ch.get('Name', f"Ch{i}") for i, ch in enumerate(found)][:n_channels]
+            voxels = (1.0, 1.0, 1.0)
+        else:
+            channels, voxels = _tiff_default_metadata(tif, n_channels, path)
+        pixels_element = root.find('.//ome:Pixels', _OME_NS)
+        if pixels_element is not None:
+            raw_voxels = tuple(float(pixels_element.get(f'PhysicalSize{a}', 1.0)) for a in "ZYX")
+            voxels = tuple(
+                s if isinstance(s, (int, float)) and not np.isnan(s) and s > 0 else 1.0
+                for s in raw_voxels
+            )
+            if voxels != raw_voxels:
+                logger.warning("Some voxel sizes were invalid in OME metadata (raw: %s), defaulting to 1.0 µm where needed.", raw_voxels)
+        return channels, voxels
+    except Exception as e:
+        logger.warning("Could not parse OME-XML from %s: %s", path, e)
+        return _tiff_default_metadata(tif, n_channels, path)
+
+
+def _tiff_layout(tif):
+    """Where the channels are in a TIFF round: ``(lead_shape, channel_axis, n_channels)``.
+
+    ``lead_shape`` is the series shape before Y and X. A 3D stack has one channel
+    (``channel_axis`` None). For 4D the channel axis is the smaller of the first
+    two, the same rule the full loader applies to the array."""
+    shape = tif.series[0].shape
+    if len(shape) == 2:
+        raise ValueError(
+            "zFISHer requires 3D volumetric data (Z-stacks). "
+            "The loaded file is a 2D image (e.g., MIP or EDF). "
+            "Please provide the original Z-stack instead."
+        )
+    lead = tuple(shape[:-2])
+    if len(lead) == 1:
+        return lead, None, 1
+    if len(lead) == 2:
+        c_axis = 0 if lead[0] < lead[1] else 1
+        return lead, c_axis, lead[c_axis]
+    raise ValueError(f"Cannot read channels from a TIFF of shape {shape}")
+
+
 class TiffSession:
     """
     A helper class to wrap TIFF data with an interface similar to FISHSession.
     """
     def __init__(self, path: Path):
         self.path = str(path)
-        self.ome_metadata = None
         self.data = self._load_data(self.path)
-
-        # First attempt to parse OME-XML
-        if self.ome_metadata:
-            try:
-                self._parse_ome_metadata()
-            except Exception as e:
-                logger.warning("Could not parse OME-XML from %s: %s", path, e)
-                self._set_default_metadata()
-        else:
-            self._set_default_metadata()
-
-    def _set_default_metadata(self):
-        """
-        Sets default metadata and looks for 'Labels' in ImageJ metadata as a fallback.
-        """
-        self.voxels = (1.0, 1.0, 1.0)
-        
-        # ImageJ metadata fallback: Some TIFF files store channel names
-        # in ImageJ 'Labels' metadata instead of OME-XML.
-        try:
-            with tifffile.TiffFile(self.path) as tif:
-                ij_meta = tif.imagej_metadata
-                if ij_meta and 'Labels' in ij_meta:
-                    # 'Labels' is a list of channel names
-                    self.channels = ij_meta['Labels'][:self.data.shape[1]]
-                    logger.info("Metadata fallback: loaded channel names %s from ImageJ Labels.", self.channels)
-                    
-                    # Try to extract Z-spacing if available
-                    if 'spacing' in ij_meta:
-                        self.voxels = (float(ij_meta['spacing']), 1.0, 1.0)
-                    return
-        except Exception as e:
-            logger.warning("Could not parse ImageJ metadata from %s: %s", self.path, e)
-
-        # Final fallback to generic naming if no labels are found
-        self.channels = [f"Ch{i+1}" for i in range(self.data.shape[1])]
-        logger.warning("No channel metadata found for %s. Using generic names: %s. Voxel size defaulting to 1.0 µm — physical measurements may be inaccurate.", self.path, self.channels)
-
-    def _parse_ome_metadata(self):
-        """Parses channel names and voxel sizes from OME-XML string."""
-        root = ET.fromstring(self.ome_metadata)
-        ns = {'ome': 'http://www.openmicroscopy.org/Schemas/OME/2016-06'}
-
-        # Extract Channel Names
-        channels = root.findall('.//ome:Channel', ns)
-        if channels:
-            num_ch_data = self.data.shape[1]
-            self.channels = [ch.get('Name', f"Ch{i}") for i, ch in enumerate(channels)][:num_ch_data]
-        else:
-            self._set_default_metadata()
-
-        # Extract Voxel Sizes
-        pixels_element = root.find('.//ome:Pixels', ns)
-        if pixels_element is not None:
-            dz = float(pixels_element.get('PhysicalSizeZ', 1.0))
-            dy = float(pixels_element.get('PhysicalSizeY', 1.0))
-            dx = float(pixels_element.get('PhysicalSizeX', 1.0))
-            raw_voxels = (dz, dy, dx)
-            self.voxels = tuple(
-                s if isinstance(s, (int, float)) and not np.isnan(s) and s > 0 else 1.0
-                for s in raw_voxels
-            )
-            if self.voxels != raw_voxels:
-                logger.warning("Some voxel sizes were invalid in OME metadata (raw: %s), defaulting to 1.0 µm where needed.", raw_voxels)
+        with tifffile.TiffFile(self.path) as tif:
+            self.ome_metadata = tif.ome_metadata
+            self.channels, self.voxels = _tiff_metadata(tif, self.data.shape[1], self.path)
 
     def _load_data(self, path_str: str):
         """Loads image data and normalizes dimensions to (Z, C, Y, X)."""
         with tifffile.TiffFile(path_str) as tif:
             data = tif.asarray()
-            self.ome_metadata = tif.ome_metadata
 
         # Normalize to (Z, C, Y, X) format:
         # - 2D (Y, X) → (1, 1, Y, X): single slice, single channel
@@ -326,6 +335,205 @@ def get_channel_data(session, target_name=constants.DAPI_CHANNEL_NAME):
     except ValueError:
         logger.warning("Channel '%s' not found. Defaulting to index 0.", target_name)
         return session.data[:, 0, :, :]
+
+
+# --- One channel from a round image, and finding a round image again --------
+#
+# Re-detecting one channel of a reopened session needs that channel's raw image,
+# not the whole round. read_channel reads one channel without loading the
+# others. resolve_raw_path finds the round's image: the input/ copy written for
+# ND2 inputs, then the path stored in the session, then a file the user points
+# to, checked against what the session recorded about the image when it was
+# created.
+
+def _channel_index(channel, names):
+    if isinstance(channel, (int, np.integer)):
+        if not 0 <= int(channel) < len(names):
+            raise IndexError(f"Channel {channel} out of range; the image has {len(names)} channels")
+        return int(channel)
+    if channel in names:
+        return names.index(channel)
+    raise KeyError(f"No channel named {channel!r}; the image has {names}")
+
+
+def _nd2_layout(f):
+    """Axis order of an open ND2 file and its channel names, refusing what the
+    full loader also refuses."""
+    sizes = dict(f.sizes)
+    if 'Z' not in sizes:
+        raise ValueError(
+            "zFISHer requires 3D volumetric data (Z-stacks). "
+            "The loaded ND2 file has no Z axis (e.g., MIP or EDF). "
+            "Please provide the original Z-stack instead."
+        )
+    extra = {ax: n for ax, n in sizes.items() if ax not in "ZCYX" and n != 1}
+    if extra:
+        raise ValueError(f"Cannot read channels from an ND2 file with axes {sizes}")
+    try:
+        names = [c.channel.name for c in f.metadata.channels]
+    except (AttributeError, TypeError):
+        names = [f"Channel_{i+1}" for i in range(sizes.get('C', 1))]
+    return sizes, names
+
+
+def read_channel(path, channel):
+    """One channel of a round image as a (Z, Y, X) array, read without loading
+    the round's other channels.
+
+    ``channel`` is a channel name, or an index. The result equals that channel
+    of ``load_image_session(path)``; an unknown name raises ``KeyError`` rather
+    than falling back to the first channel.
+    """
+    path = Path(path)
+    if path.suffix.lower() == '.nd2':
+        with nd2.ND2File(str(path)) as f:
+            sizes, names = _nd2_layout(f)
+            idx = _channel_index(channel, names)
+            key = tuple(idx if ax == 'C' else slice(None) if ax in "ZYX" else 0 for ax in sizes)
+            data = np.asarray(f.to_dask()[key])
+            kept = [ax for ax in sizes if ax in "ZYX"]
+            return np.transpose(data, [kept.index(ax) for ax in "ZYX"])
+
+    with tifffile.TiffFile(str(path)) as tif:
+        lead, c_axis, n_channels = _tiff_layout(tif)
+        names, _voxels = _tiff_metadata(tif, n_channels, str(path))
+        idx = _channel_index(channel, names)
+        series = tif.series[0]
+        if c_axis is None:
+            return series.asarray()
+        n_z = lead[1 - c_axis]
+        if tuple(series.keyframe.shape) == tuple(series.shape[-2:]):
+            # One page per (Z, C) plane: read this channel's pages only.
+            pages = [int(np.ravel_multi_index((idx, z) if c_axis == 0 else (z, idx), lead))
+                     for z in range(n_z)]
+            return tif.asarray(key=pages, series=0).reshape((n_z,) + tuple(series.shape[-2:]))
+        logger.warning("%s does not store one plane per page; reading the whole round "
+                       "to take channel %r", path.name, channel)
+        data = series.asarray()
+        return np.take(data, idx, axis=c_axis)
+
+
+def image_identity(path):
+    """What a round image is, read from its metadata: file name and size, shape
+    (Z, C, Y, X), dtype, channel names and voxel size. Recorded when a session
+    is created, so a file pointed to later can be checked against it."""
+    path = Path(path)
+    if path.suffix.lower() == '.nd2':
+        with nd2.ND2File(str(path)) as f:
+            sizes, names = _nd2_layout(f)
+            shape = [sizes['Z'], sizes.get('C', 1), sizes['Y'], sizes['X']]
+            dtype = str(np.dtype(f.dtype))
+            vs = f.voxel_size()
+            voxels = [float(v) if v and v > 0 else 1.0 for v in (vs.z, vs.y, vs.x)]
+    else:
+        with tifffile.TiffFile(str(path)) as tif:
+            lead, c_axis, n_channels = _tiff_layout(tif)
+            names, voxels = _tiff_metadata(tif, n_channels, str(path))
+            z = lead[0] if c_axis is None else lead[1 - c_axis]
+            shape = [z, n_channels] + list(tif.series[0].shape[-2:])
+            dtype = str(tif.series[0].dtype)
+            voxels = [float(v) for v in voxels]
+    return {"file": path.name, "size_bytes": path.stat().st_size, "shape_zcyx": [int(v) for v in shape],
+            "dtype": dtype, "channels": list(names), "voxels": voxels}
+
+
+def identity_differences(recorded, found):
+    """How ``found`` differs from the ``recorded`` identity of a round image,
+    as readable lines; empty if they agree. A different file size alone is
+    listed but expected for a re-exported file."""
+    labels = {"shape_zcyx": "shape (Z, C, Y, X)", "dtype": "data type", "channels": "channels",
+              "voxels": "voxel size (µm)", "size_bytes": "file size (bytes)"}
+    out = []
+    for key, label in labels.items():
+        a, b = recorded.get(key), found.get(key)
+        if key == "voxels" and a is not None and b is not None:
+            same = np.allclose(a, b, rtol=1e-6)
+        else:
+            same = a == b
+        if a is not None and not same:
+            out.append(f"{label}: recorded {a}, this file has {b}")
+    return out
+
+
+class RawImageNotFound(FileNotFoundError):
+    """A round's raw image could not be found and nobody was asked for it."""
+
+
+def _input_copy(round_id):
+    from . import session
+    out = session.get_data("output_dir")
+    if not out:
+        return None
+    path = Path(out) / constants.INPUT_DIR / f"{round_id}_converted.ome.tif"
+    return path if path.exists() else None
+
+
+def record_raw_identity(round_id, path):
+    """Store ``image_identity(path)`` as the session's record of ``round_id``'s
+    raw image, unless one is already stored. Never raises: a file whose
+    metadata cannot be read is simply not recorded."""
+    from . import session
+    identities = dict(session.get_data("raw_identity", default={}) or {})
+    if round_id in identities:
+        return
+    try:
+        identities[round_id] = image_identity(path)
+    except Exception as exc:
+        logger.warning("Could not record the identity of %s image %s: %s", round_id, path, exc)
+        return
+    session.update_data("raw_identity", identities)
+
+
+def resolve_raw_path(round_id, chooser=None, confirm=None):
+    """The raw image of ``round_id`` ('R1' or 'R2') for this session.
+
+    Tried in order: the ``input/`` copy written for ND2 inputs, the path stored
+    in the session, then ``chooser(round_id, missing_path)``, which returns a
+    path or None (the GUI passes a file dialog). A chosen file is compared with
+    the identity recorded when the session was created; if they differ,
+    ``confirm(round_id, path, differences)`` decides whether to use it (default:
+    use it). An accepted file is stored in the session, so the user is asked
+    once, and the re-point is recorded. Without a chooser, or if the user
+    cancels, raises ``RawImageNotFound`` naming the round and the file.
+    """
+    from . import session
+    key = "r1_path" if round_id == "R1" else "r2_path"
+    stored = session.get_data(key)
+    if stored and Path(stored).exists():
+        record_raw_identity(round_id, stored)      # sessions made before identities were kept
+    copy = _input_copy(round_id)
+    if copy is not None:
+        return copy
+    if stored and Path(stored).exists():
+        return Path(stored)
+    if chooser is None:
+        raise RawImageNotFound(
+            f"The {round_id} raw image {stored or '(none recorded)'} cannot be found. "
+            f"Give the image's new location for {round_id}.")
+    chosen = chooser(round_id, stored)
+    if not chosen:
+        raise RawImageNotFound(f"No file was chosen for the {round_id} raw image {stored}.")
+    chosen = Path(chosen)
+    recorded = (session.get_data("raw_identity", default={}) or {}).get(round_id)
+    differences = []
+    if recorded:
+        try:
+            differences = identity_differences(recorded, image_identity(chosen))
+        except Exception as exc:
+            differences = [f"could not read the file's metadata: {exc}"]
+    else:
+        logger.info("No recorded identity for %s; %s is used without a check", round_id, chosen.name)
+    if differences and confirm is not None and not confirm(round_id, chosen, differences):
+        raise RawImageNotFound(f"The file chosen for {round_id}, {chosen}, was not accepted.")
+    import datetime
+    repoints = list(session.get_data("raw_repoints", default=[]) or [])
+    repoints.append({"round": round_id, "from": stored, "to": str(chosen), "differences": differences,
+                     "time": datetime.datetime.now().isoformat(timespec="seconds")})
+    session.update_data("raw_repoints", repoints)
+    session.update_data(key, str(chosen))
+    logger.info("Raw image for %s re-pointed from %s to %s%s", round_id, stored, chosen,
+                f" ({len(differences)} difference(s) accepted)" if differences else "")
+    return chosen
     
 @timed_stage("convert_nd2_to_ome", fields=lambda a: {"round": a["prefix"]})
 def convert_nd2_to_ome(
