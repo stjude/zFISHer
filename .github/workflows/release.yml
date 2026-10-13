@@ -1,0 +1,38 @@
+# Pushing a version tag (git push origin v2.1.0) runs the tests, checks the tag
+# against zfisher/version.py, CITATION.cff and CHANGELOG.md, and creates a
+# DRAFT GitHub release whose notes are that version's CHANGELOG.md section.
+# Nothing is published until someone reviews the draft and clicks Publish.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+
+  draft-release:
+    needs: tests
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Check the tag and take the release notes from CHANGELOG.md
+        run: python .github/scripts/release_notes.py "$GITHUB_REF_NAME" > notes.md
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+            --title "zFISHer ${GITHUB_REF_NAME#v}" --notes-file notes.md
