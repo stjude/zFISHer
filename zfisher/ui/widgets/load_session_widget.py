@@ -75,6 +75,11 @@ class LoadSessionWidget(Container):
             self._viewer.status = "Error: Invalid session file selected."
             return
 
+        # Edits to the current session's masks must reach its folder before
+        # the loaded session becomes the active one.
+        from .mask_editor_widget import flush_pending_mask_saves
+        flush_pending_mask_saves()
+
         with popups.ProgressDialog(self._viewer.window._qt_window, "Loading Session...") as dialog:
             session.set_loading(True)
             from .. import viewer as viewer_module
@@ -134,6 +139,12 @@ class LoadSessionWidget(Container):
                         progress_callback=processed_progress
                     )
                 
+                # Puncta CSVs may predate the last mask edit on disk; re-derive
+                # Nucleus_ID from the consensus mask so what the user sees (and
+                # exports) matches the mask, whatever the CSVs say.
+                dialog.update_progress(94, "Reconciling puncta nucleus IDs...")
+                reconciled = viewer_helpers.reconcile_puncta_with_consensus(self._viewer)
+
                 dialog.update_progress(95, "Finalizing UI...")
                 refresh_rules_display()
 
@@ -149,7 +160,11 @@ class LoadSessionWidget(Container):
                         if isinstance(layer, napari.layers.Points) and _constants.PUNCTA_SUFFIX in layer.name:
                             _events.lock_layer(layer)
 
-                self._viewer.status = "Session Restored."
+                status = "Session Restored."
+                if reconciled and reconciled.get('changed_total', 0) > 0:
+                    status += (f" {reconciled['changed_total']} puncta nucleus ID(s) "
+                               f"updated to match the consensus mask.")
+                self._viewer.status = status
 
                 if hasattr(self._viewer.window, 'custom_scale_bar'):
                     self._viewer.window.custom_scale_bar.show()

@@ -119,7 +119,7 @@ def _build_instructions_rows():
          "Set to FALSE for rigid-only alignment (faster, sufficient when tissue deformation is minimal). "
          "Defaults to TRUE."),
         ("Max_RANSAC_Distance",
-         "Maximum distance in pixels for RANSAC inlier matching during the registration step. "
+         "Maximum distance in micrometres (µm) for matching nuclei centroids between rounds during the registration step. "
          "This controls how strict the centroid matching is: a smaller value requires closer matches, "
          "a larger value is more permissive. Set to 0 for automatic detection (recommended for most data). "
          "Only increase this if registration is failing due to large tissue shifts. "
@@ -346,8 +346,8 @@ def add_dropdown_validations(workbook):
     ws.add_data_validation(dv)
     dv.add(f"K2:K{MAX_ROW}")
 
-    # Max_RANSAC_Distance (col J) — integer 0-100
-    dv = _numeric_range(0, 100, allow_decimal=False, prompt="0 = auto-detect. Range: 0-100.", title="Max RANSAC Distance")
+    # Max_RANSAC_Distance (col J) — integer 0-100, micrometres
+    dv = _numeric_range(0, 100, allow_decimal=False, prompt="Micrometres. 0 = auto-detect. Range: 0-100.", title="Max RANSAC Distance (um)")
     ws.add_data_validation(dv)
     dv.add(f"J2:J{MAX_ROW}")
 

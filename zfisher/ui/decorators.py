@@ -1,7 +1,7 @@
 import logging
 from functools import wraps
 import napari
-from ..core import session
+from ..core import session, timing
 from . import popups
 
 logger = logging.getLogger(__name__)
@@ -32,13 +32,19 @@ def require_active_session(message="Please start or load a session first."):
 def error_handler(title="An Error Occurred"):
     """
     A decorator to catch exceptions in widget functions and show an error popup.
+
+    The call is timed as one ``ACTION`` line in the session log, named after
+    ``title`` without its "Failed" suffix (``widget:registration``).
     """
+    action = "widget:" + title.removesuffix(" Failed").strip().lower().replace(" ", "_")
+
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
             try:
-                logger.info("ACTION: %s", title)
-                return func(*args, **kwargs)
+                logger.debug("Starting %s", action)
+                with timing.action_timer(action):
+                    return func(*args, **kwargs)
             except Exception as e:
                 logger.error("Error in %s: %s", func.__name__, e, exc_info=True)
                 try:

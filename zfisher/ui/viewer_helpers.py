@@ -1,11 +1,14 @@
 import logging
+import weakref
 import napari
 import numpy as np
 import tifffile
 from pathlib import Path
 import pandas as pd
 from packaging.version import parse as parse_version
-from ..core import session, segmentation
+from ..core import session, segmentation, timing, label_edits, puncta as _puncta
+from ..core import io as _io
+from ..core import provenance
 
 from .. import constants
 from . import style
@@ -27,18 +30,56 @@ def clear_points_index_cache(layer):
     layer._Points__indices_view = np.empty(0, int)
 
 
-def set_points_data(layer, data):
-    """Assign ``data`` to a napari Points layer, clearing its cached
-    ``_Points__indices_view`` FIRST.
+def set_points_data(layer, data, features=None):
+    """Assign ``data`` (and optionally ``features``) to a napari Points layer,
+    clearing its cached ``_Points__indices_view`` FIRST.
 
     Load-bearing napari-private workaround: when a Points layer's point count
     changes while a stale view-index cache is still live, vispy raises an
     IndexError / corrupts the GL buffer. Clearing the cache immediately before
     reassigning ``data`` avoids it. The clear-before-assign order is REQUIRED —
     do not reorder or split.
+
+    When ``features`` is given it is assigned AFTER ``data``. napari resizes the
+    feature table itself whenever the point count changes (truncating to the
+    first N rows on a shrink, broadcasting the last row on a grow), so a feature
+    table computed for the new points must be written after the data, never
+    before. Callers must build ``features`` from the layer's current table
+    BEFORE calling this; see ``subset_points_layer``.
     """
     clear_points_index_cache(layer)
     layer.data = data
+    if features is not None:
+        layer.features = features
+
+
+def subset_points_layer(layer, keep):
+    """Keep only the points of ``layer`` where ``keep`` is True, carrying each
+    surviving point's feature row with it. Returns the number of points removed.
+
+    This is the one safe way to shrink a puncta layer. The feature rows are
+    selected from the layer's current table before the data is shrunk, because
+    napari truncates ``layer.features`` to the first N rows the moment ``data``
+    shrinks: subsetting the features afterwards either does nothing (the length
+    check fails) or reads an already-mangled table. Doing it after was the cause
+    of the Refilter Puncta bug in which surviving puncta inherited the
+    ``puncta_id``/``Nucleus_ID``/``Source`` of whichever puncta used to sit at
+    their new row index.
+    """
+    keep = np.asarray(keep, dtype=bool)
+    data = np.asarray(layer.data)
+    n_before = len(data)
+    if keep.shape != (n_before,):
+        raise ValueError(
+            f"keep mask has shape {keep.shape}, expected ({n_before},) to match the layer's points"
+        )
+    feats = getattr(layer, "features", None)
+    if feats is not None and len(feats) == n_before and n_before > 0:
+        feats = feats.iloc[keep].reset_index(drop=True)
+    else:
+        feats = None
+    set_points_data(layer, data[keep], feats)
+    return int(n_before - keep.sum())
 
 
 def add_image_session_to_viewer(viewer: napari.Viewer, image_session, prefix: str):
@@ -134,6 +175,14 @@ def _load_points_layer(viewer, name, path, scale, file_info, translate):
                     "positional ids (not stable across edits/re-runs).", name
                 )
                 features['puncta_id'] = np.arange(len(data))
+            if 'Source' not in features.columns:
+                logger.warning(
+                    "Puncta CSV for layer '%s' has no Source column; marking its "
+                    "%d puncta as '%s'.", name, len(data), constants.PUNCTA_SOURCE_UNKNOWN
+                )
+                features['Source'] = constants.PUNCTA_SOURCE_UNKNOWN
+            else:
+                features['Source'] = features['Source'].fillna(constants.PUNCTA_SOURCE_UNKNOWN)
             
             text_params = {
                 'string': '{puncta_id:.0f}', 'size': 8, 'color': 'white',
@@ -197,7 +246,7 @@ def _load_points_layer(viewer, name, path, scale, file_info, translate):
         raise e
 
 def _load_labels_layer(viewer, name, path, scale, file_info, translate):
-    data = tifffile.imread(path)
+    data = _io.read_label_tif(path)
     layer = viewer.add_labels(data, name=name, opacity=0.3, visible=False, scale=scale, translate=translate)
     # Use iso_categorical for better 3D rendering of masks alongside points
     layer.rendering = 'iso_categorical'
@@ -263,6 +312,10 @@ def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, defau
         logger.debug("Applying canvas translation: %s", translate)
 
     computed_ids_names = []  # deferred: must be rebuilt after all mask layers are loaded
+    # Raw-space puncta are data for re-detection, not layers, once the session
+    # has aligned images: drawn there, raw coordinates would be misplaced.
+    has_aligned = any(constants.ALIGNED_PREFIX in key or constants.WARPED_PREFIX in key
+                      for key in processed_files)
 
     for i, (name, file_info) in enumerate(processed_files.items()):
         if progress_callback:
@@ -283,6 +336,10 @@ def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, defau
         layer_type = file_info.get('type')
 
         if layer_type == 'report': # Don't load reports as layers
+            continue
+
+        if has_aligned and isinstance(file_info, dict) and file_info.get('space') == 'raw':
+            logger.info("Keeping raw-space puncta '%s' as data, not as a layer", name)
             continue
 
         if not path_str or not layer_type:
@@ -325,8 +382,10 @@ def restore_processed_layers(viewer: napari.Viewer, processed_files: dict, defau
             except Exception as e:
                 logger.error("Error recomputing IDs for '%s': %s", mask_name, e)
 
-def ask_replace_or_merge(parent, layer_name, n_existing):
-    """Show a popup asking Replace/Merge/Cancel. Returns 'replace', 'merge', or 'cancel'."""
+def ask_replace_or_merge(parent, layer_name, n_existing, n_manual=0):
+    """Show a popup asking Replace/Merge/Cancel. Returns 'replace', 'merge',
+    'replace_all' or 'cancel'. Replace keeps the ``n_manual`` puncta placed by
+    hand; when there are any, 'Replace All' is offered too and drops them."""
     from qtpy.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
     from qtpy.QtCore import Qt
     from .popups import _DimOverlay
@@ -346,7 +405,11 @@ def ask_replace_or_merge(parent, layer_name, n_existing):
     title.setStyleSheet("color: white; font-weight: bold; font-size: 14px;")
     title.setWordWrap(True)
     layout.addWidget(title)
-    body = QLabel("Replace existing puncta with new detection, or merge\n(skipping duplicates within min distance)?")
+    body_text = "Replace existing puncta with new detection, or merge\n(skipping duplicates within min distance)?"
+    if n_manual:
+        body_text += (f"\n\n{n_manual} of them were placed by hand. Replace keeps them; "
+                      f"Replace All deletes them too.")
+    body = QLabel(body_text)
     body.setStyleSheet("color: #c0b8c8; font-size: 12px;")
     body.setWordWrap(True)
     layout.addWidget(body)
@@ -355,7 +418,10 @@ def ask_replace_or_merge(parent, layer_name, n_existing):
         border-radius: 6px; padding: 6px 16px; font-size: 12px; }
         QPushButton:hover { background-color: #4a3f58; }"""
     btn_layout = QHBoxLayout()
-    for label, action in [("Cancel", "cancel"), ("Merge (Deduplicated)", "merge"), ("Replace", "replace")]:
+    choices = [("Cancel", "cancel"), ("Merge (Deduplicated)", "merge"), ("Replace", "replace")]
+    if n_manual:
+        choices.append(("Replace All", "replace_all"))
+    for label, action in choices:
         btn = QPushButton(label)
         btn.setStyleSheet(btn_style)
         btn.clicked.connect(lambda _=False, a=action: (setattr(dlg, '_result_action', a), dlg.accept()))
@@ -366,32 +432,161 @@ def ask_replace_or_merge(parent, layer_name, n_existing):
         overlay.raise_()
     dlg.show()
     dlg.raise_()
-    dlg.exec_()
+    with timing.user_wait():
+        dlg.exec_()
     if overlay:
         overlay.close()
         overlay.deleteLater()
     return dlg._result_action
 
 
+def manual_mask(features):
+    """Which rows of a puncta feature table were placed by hand."""
+    if features is None or 'Source' not in getattr(features, 'columns', ()):
+        return np.zeros(0 if features is None else len(features), dtype=bool)
+    return (features['Source'] == constants.PUNCTA_SOURCE_MANUAL).to_numpy()
+
+
+def raw_puncta_from_layer(pts_layer):
+    """``(raw_puncta, puncta_ids, sources)`` of a puncta layer, for
+    ``puncta.transform_puncta_to_aligned_space``: an (N, 6) array of Z, Y, X,
+    Nucleus_ID, Intensity, SNR, and each point's ``puncta_id`` (None if the
+    layer has none) and ``Source``."""
+    coords = np.array(pts_layer.data)
+    n = len(coords)
+    feats = getattr(pts_layer, 'features', None)
+    if not (isinstance(feats, pd.DataFrame) and not feats.empty and len(feats) == n):
+        feats = pd.DataFrame(index=range(n))
+
+    def column(name, default):
+        return feats[name].to_numpy() if name in feats.columns else np.full(n, default)
+
+    raw = np.column_stack([coords.reshape(-1, 3), column('Nucleus_ID', 0), column('Intensity', 0),
+                           column('SNR', 0)]).astype(float)
+    pid = feats['puncta_id'].to_numpy() if 'puncta_id' in feats.columns else None
+    sources = _puncta.puncta_table(coords, feats)['Source'].to_numpy(dtype=object)
+    return raw, pid, sources
+
+
+def _round_and_channel(layer_name):
+    """('R1', 'FITC') from a layer name such as 'Aligned R1 - FITC_puncta'."""
+    base = layer_name.replace(constants.PUNCTA_SUFFIX, "")
+    round_id = "R1" if "R1" in base.upper() else "R2" if "R2" in base.upper() else None
+    return round_id, base.split(" - ")[-1].strip()
+
+
+def _reports_csv(layer_name):
+    out_dir = session.get_data("output_dir")
+    if not out_dir:
+        return None
+    return constants.puncta_csv_path(Path(out_dir) / constants.REPORTS_DIR, layer_name)
+
+
+def retire_raw_puncta_layer(viewer, pts_layer):
+    """Remove a raw puncta layer after the canvas step has transformed it,
+    keeping its CSV as the session's raw-space record of those puncta.
+
+    The CSV is saved from the layer first, so manual edits are in it; it stays
+    registered with ``space='raw'`` and its provenance record notes the
+    space. Without an output folder the layer is just removed."""
+    from . import events
+    csv_path = _reports_csv(pts_layer.name)
+    if csv_path is not None:
+        events.save_puncta_layer(pts_layer)
+        round_id, channel = _round_and_channel(pts_layer.name)
+        session.set_processed_file(pts_layer.name, str(csv_path), layer_type='points', metadata={
+            'subtype': 'puncta_csv', 'space': 'raw', 'round': round_id})
+        _puncta.record_puncta(csv_path, "kept_raw", round=round_id, channel=channel,
+                              space=f"raw:{round_id}", run_by="gui")
+    pts_layer._locked = False  # Unlock so it can be removed
+    # Hide + clear the GL index cache before teardown — removing a visible 3D
+    # Points node can crash vispy natively.
+    pts_layer.visible = False
+    clear_points_index_cache(pts_layer)
+    try:
+        events.remove_layer_keeping_file(viewer, pts_layer)
+    except ValueError:
+        pass
+
+
+def record_aligned_puncta_provenance(aligned_layer_name, raw_layer_name, consensus_mask_name=None):
+    """Record the provenance of an aligned puncta CSV made in the GUI
+    canvas step from the raw layer ``raw_layer_name``."""
+    csv_path = _reports_csv(aligned_layer_name)
+    if csv_path is None or not csv_path.exists():
+        return
+    from ..core import registration
+    raw_csv = _reports_csv(raw_layer_name)
+    round_id, channel = _round_and_channel(aligned_layer_name)
+    consensus = None
+    if consensus_mask_name:
+        out_dir = session.get_data("output_dir")
+        consensus = provenance.file_identity(_io.find_mask(Path(out_dir) / constants.SEGMENTATION_DIR,
+                                                           consensus_mask_name))
+    _puncta.record_puncta(
+        csv_path, "transformed", round=round_id, channel=channel, space="aligned",
+        derived_from=raw_csv.name if raw_csv is not None and raw_csv.exists() else None,
+        registration=registration.registration_fingerprint(), consensus_mask=consensus,
+        run_by="gui")
+
+
+def record_detection_provenance(image_layer, nuclei_layer, params, existing_action=None):
+    """Record the provenance of the puncta CSV that GUI detection on
+    ``image_layer`` just wrote. Detection on an aligned or warped image is
+    recorded as ``detected_in='aligned'``: for R2 that is a different method
+    from detecting on the raw image and transforming."""
+    layer_name = f"{image_layer.name}{constants.PUNCTA_SUFFIX}"
+    csv_path = _reports_csv(layer_name)
+    if csv_path is None or not csv_path.exists():
+        return
+    aligned = (image_layer.name.startswith(constants.ALIGNED_PREFIX)
+               or image_layer.name.startswith(constants.WARPED_PREFIX))
+    round_id, channel = _round_and_channel(layer_name)
+    processed = session.get_data("processed_files", default={}) or {}
+
+    def registered(layer):
+        info = processed.get(layer.name) if layer is not None else None
+        return info.get('path') if isinstance(info, dict) else None
+
+    image_path = registered(image_layer) if aligned else session.get_data(
+        "r1_path" if round_id == "R1" else "r2_path")
+    _puncta.record_puncta(
+        csv_path, "detected", round=round_id, channel=channel,
+        space="aligned" if aligned else f"raw:{round_id}",
+        detected_in="aligned" if aligned else "raw",
+        source_image=provenance.file_identity(image_path) if image_path else {"layer": image_layer.name},
+        mask=(provenance.file_identity(registered(nuclei_layer)) if registered(nuclei_layer)
+              else {"layer": nuclei_layer.name}) if nuclei_layer is not None else None,
+        detection_parameters=dict(params), voxel_size=[float(v) for v in image_layer.scale],
+        existing_action=existing_action, run_by="gui")
+
+
 def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layers.Image,
-                                puncta_data: np.ndarray, existing_action=None):
+                                puncta_data: np.ndarray, existing_action=None, sources=None):
     """
     Adds or updates a puncta layer with full feature support.
 
     Handles merging new data, creating unique IDs, and setting up text display.
-    existing_action: 'replace', 'merge', or None (new layer).
+    existing_action: 'replace' (keeps the puncta placed by hand), 'replace_all',
+    'merge', or None (new layer). ``puncta_data`` is (N, 7) with ``puncta_id``
+    in column 6, kept for a new layer; ``sources`` is each row's ``Source``,
+    ``auto`` if omitted.
     """
     if puncta_data is None or puncta_data.shape[0] == 0:
         return
 
     layer_name = f"{source_layer.name}{constants.PUNCTA_SUFFIX}"
     coords = puncta_data[:, :3]
+    n_new = len(puncta_data)
 
     # Create a DataFrame for the new properties
     new_features = pd.DataFrame({
+        'puncta_id': (puncta_data[:, 6] if puncta_data.shape[1] > 6 else np.arange(n_new)).astype(np.int64),
         'Nucleus_ID': puncta_data[:, 3],
         'Intensity': puncta_data[:, 4],
-        'SNR': puncta_data[:, 5]
+        'SNR': puncta_data[:, 5],
+        'Source': (np.full(n_new, constants.PUNCTA_SOURCE_AUTO, dtype=object) if sources is None
+                   else np.asarray(sources, dtype=object)),
     })
 
     text_params = {
@@ -404,9 +599,33 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
     if layer_name in viewer.layers and existing_action:
         pts_layer = viewer.layers[layer_name]
 
-        if existing_action == 'replace':
-            # Replace: clear existing, use only new data
-            new_features['puncta_id'] = np.arange(len(new_features))
+        if existing_action in ('replace', 'replace_all'):
+            # Replace the detected puncta; 'replace' keeps the ones placed by
+            # hand, and new points on top of one of them are dropped.
+            kept = manual_mask(pts_layer.features) if existing_action == 'replace' else np.zeros(0, bool)
+            if kept.any():
+                from scipy.spatial import cKDTree
+                kept_coords = np.asarray(pts_layer.data)[kept]
+                kept_features = pts_layer.features[kept].reset_index(drop=True)
+                dists, _ = cKDTree(kept_coords).query(coords)
+                fresh = dists > 3            # the merge's min_distance
+                coords = np.vstack([kept_coords, coords[fresh]])
+                added = new_features.iloc[fresh.nonzero()[0]].reset_index(drop=True)
+                # New ids continue after the kept ones. A kept punctum without
+                # an id gets one too, so no row is left without.
+                if 'puncta_id' in kept_features.columns:
+                    kept_ids = pd.to_numeric(kept_features['puncta_id'], errors='coerce')
+                else:
+                    kept_ids = pd.Series(np.nan, index=kept_features.index)
+                known = kept_ids.dropna()
+                start = int(known.max()) + 1 if len(known) else 0
+                missing = kept_ids.isna().to_numpy()
+                kept_ids[missing] = np.arange(start, start + missing.sum())
+                kept_features['puncta_id'] = kept_ids.astype(np.int64)
+                start += int(missing.sum())
+                added['puncta_id'] = np.arange(start, start + len(added))
+                new_features = pd.concat([kept_features, added], ignore_index=True)
+                logger.info("Replace on '%s' kept %d manual puncta", layer_name, int(kept.sum()))
             pts_layer.visible = False
             set_points_data(pts_layer, coords)
             pts_layer.features = new_features
@@ -453,10 +672,6 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
             pts_layer.visible = True
 
     else:
-        # Create new layer
-        # Assign initial IDs
-        new_features['puncta_id'] = np.arange(len(new_features))
-
         viewer.add_points(
             coords,
             name=layer_name,
@@ -473,17 +688,12 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
     out_dir = session.get_data("output_dir")
     if out_dir:
         puncta_layer = viewer.layers[layer_name]
-        
-        # Combine coordinates and features for saving
-        coords_df = pd.DataFrame(puncta_layer.data, columns=['Z', 'Y', 'X'])
-        full_df_to_save = pd.concat([puncta_layer.features.reset_index(drop=True), coords_df.reset_index(drop=True)], axis=1)
 
         # Define path and save (one canonical file per layer)
         reports_dir = Path(out_dir) / constants.REPORTS_DIR
         reports_dir.mkdir(exist_ok=True)
         csv_path = constants.puncta_csv_path(reports_dir, layer_name)
-
-        full_df_to_save.to_csv(csv_path, index=False)
+        _puncta.write_puncta_csv(csv_path, puncta_layer.data, puncta_layer.features)
 
         # Update session file to point to this new CSV
         session.set_processed_file(layer_name, str(csv_path), layer_type='points', metadata={'subtype': 'puncta_csv'})
@@ -638,8 +848,9 @@ def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napa
         # Use iso_categorical for better 3D rendering of masks alongside points
         layer.rendering = 'iso_categorical'
         if seg_dir:
-            mask_path = seg_dir / f"{mask_layer_name}.tif"
-            tifffile.imwrite(mask_path, masks)
+            mask_path = _io.mask_path(seg_dir, mask_layer_name)
+            seg_dir.mkdir(exist_ok=True, parents=True)
+            _io.write_label_tif(mask_path, masks, voxel_size=tuple(source_layer.scale))
             session.set_processed_file(mask_layer_name, str(mask_path), layer_type='labels', metadata={'subtype': 'mask'})
 
         # Build the _IDs text overlay directly from the centroids we already
@@ -726,6 +937,7 @@ def add_consensus_nuclei_to_viewer(viewer: napari.Viewer, r1_mask_layer: napari.
             scale=r1_mask_layer.scale, translate=r1_mask_layer.translate,
         )
 
+@timing.timed_action("mask_ids_refresh", fields=lambda a: {"layer": a["labels_layer"].name})
 def add_or_update_label_ids(viewer: napari.Viewer, labels_layer: napari.layers.Labels):
     """
     Calculates centroids for a labels layer and displays them as text.
@@ -757,7 +969,202 @@ def add_or_update_label_ids(viewer: napari.Viewer, labels_layer: napari.layers.L
     if not session.is_loading():
         session.set_processed_file(name, "", layer_type='points', metadata={'subtype': 'computed_ids'})
 
+    # The overlay now matches the mask exactly; track changes from here on.
+    _start_ids_tracking(labels_layer)
 
+
+# --- Incremental ID overlay updates ------------------------------------------
+#
+# A full ID refresh re-measures every nucleus (regionprops over the whole mask,
+# about 1 s on a typical volume). After an edit only the labels it touched can
+# have moved, appeared or gone, so ``refresh_label_ids`` re-measures just those
+# and keeps every other row. Tracking starts with a full refresh: from then on
+# every change to the mask marks the labels it touched. Mask editor edits mark
+# them directly (``mark_label_ids_dirty``), brush, eraser and fill strokes
+# through ``events.paint``, and napari's own undo and redo, which fire no event,
+# are read from napari's history at the next update. napari's history does not
+# know about the editor's in-place edits, so its undo can overwrite labels it
+# never recorded (paint 9, merge 9 into 2, napari undo: label 2 loses voxels).
+# For an undone or redone item every label whose box overlaps the item is
+# therefore marked too; boxes only grow, so that covers every label that had a
+# voxel there. A whole-array assignment ends tracking, and the next update is a
+# full refresh again.
+
+class _IdsTracking:
+    """Labels whose overlay row may be out of date, for one mask array."""
+
+    def __init__(self, layer, on_freed):
+        self.data_ref = weakref.ref(layer.data, on_freed)
+        self.dirty = set()
+        self.seen = _napari_history_items(layer)
+
+
+_ids_tracking = {}  # id(labels_layer) -> _IdsTracking
+
+
+def _napari_history_items(layer):
+    """napari's undo and redo items, keyed by id. The items are held, so no
+    other object can take one of these ids while the dict lives."""
+    items = (*getattr(layer, '_undo_history', ()), *getattr(layer, '_redo_history', ()))
+    return {id(item): item for item in items}
+
+
+def _atom_labels(atom):
+    _indices, old_values, new_values = atom
+    return (*np.unique(np.asarray(old_values)).tolist(),
+            *np.unique(np.asarray(new_values)).tolist())
+
+
+def _ids_tracking_for(layer):
+    tracking = _ids_tracking.get(id(layer))
+    if tracking is not None and tracking.data_ref() is layer.data:
+        return tracking
+    return None
+
+
+def _start_ids_tracking(layer):
+    key = id(layer)
+
+    def _freed(ref):
+        tracking = _ids_tracking.get(key)
+        if tracking is not None and tracking.data_ref is ref:
+            _ids_tracking.pop(key, None)
+
+    _ids_tracking[key] = _IdsTracking(layer, _freed)
+    if _mark_ids_on_paint not in layer.events.paint.callbacks:
+        layer.events.paint.connect(_mark_ids_on_paint)
+    if _stop_ids_on_data not in layer.events.data.callbacks:
+        layer.events.data.connect(_stop_ids_on_data)
+
+
+def _mark_ids_on_paint(event):
+    """Brush, eraser and fill strokes, from napari's ``events.paint``. The
+    stroke's history item is recorded as seen, so the next update does not
+    treat it as a napari undo or redo."""
+    tracking = _ids_tracking_for(event.source)
+    if tracking is None:
+        return
+    tracking.seen[id(event.value)] = event.value
+    for atom in event.value:
+        tracking.dirty.update(int(label) for label in _atom_labels(atom) if label)
+
+
+def _stop_ids_on_data(event):
+    """The whole array was assigned: the next update is a full refresh."""
+    invalidate_label_ids(event.source)
+
+
+def mark_label_ids_dirty(labels_layer, labels):
+    """Record that ``labels`` may have changed in ``labels_layer``."""
+    tracking = _ids_tracking_for(labels_layer)
+    if tracking is not None:
+        tracking.dirty.update(int(label) for label in labels if label)
+
+
+def invalidate_label_ids(labels_layer):
+    """Make the next ``refresh_label_ids`` of ``labels_layer`` a full refresh."""
+    _ids_tracking.pop(id(labels_layer), None)
+
+
+def reset_label_ids_tracking():
+    _ids_tracking.clear()
+
+
+@timing.timed_action("mask_ids_update", fields=lambda a: {"layer": a["labels_layer"].name})
+def refresh_label_ids(viewer, labels_layer, boxes):
+    """Bring the ``_IDs`` overlay of ``labels_layer`` up to date, re-measuring
+    only the labels changed since the last update.
+
+    ``boxes`` is a callable returning the ``label_edits.LabelBoxes`` of
+    ``labels_layer.data``. Falls back to ``add_or_update_label_ids``, which
+    creates the overlay if missing, when nothing is tracked for the layer.
+    """
+    name = f"{labels_layer.name}_IDs"
+    tracking = _ids_tracking_for(labels_layer)
+    if tracking is None or name not in viewer.layers:
+        add_or_update_label_ids(viewer, labels_layer)
+        return
+    current = _napari_history_items(labels_layer)
+    for key, item in current.items():
+        if key not in tracking.seen:          # napari undo or redo
+            regions = []
+            for atom in item:
+                tracking.dirty.update(int(label) for label in _atom_labels(atom) if label)
+                regions.append(label_edits.index_extent(atom[0]))
+            regions = [r for r in regions if r is not None]
+            if regions:
+                lo = np.min([[s.start for s in r] for r in regions], axis=0)
+                hi = np.max([[s.stop for s in r] for r in regions], axis=0)
+                region = tuple(slice(int(a), int(b)) for a, b in zip(lo, hi))
+                tracking.dirty.update(boxes().labels_overlapping(region))
+    tracking.seen = current
+    if not tracking.dirty:
+        return
+    ids_layer = viewer.layers[name]
+    changed = label_edits.label_centroids(labels_layer.data, boxes(), tracking.dirty)
+    coords, labels = label_edits.update_centroid_table(
+        ids_layer.data, ids_layer.properties.get('label', ()), changed, labels_layer.ndim)
+    _add_or_replace_ids_layer(
+        viewer, name, coords, labels,
+        scale=labels_layer.scale, translate=labels_layer.translate,
+    )
+    tracking.dirty = set()
+
+
+@timing.timed_action("mask_redraw", fields=lambda a: {"layer": a["labels_layer"].name},
+                     result_fields=lambda partial: {"partial": partial})
+def redraw_labels_voxels(labels_layer, pieces):
+    """Redraw ``labels_layer`` after the voxels at ``pieces`` (fancy-index
+    tuples into ``labels_layer.data``) were changed in place.
+
+    ``layer.refresh()`` re-colours the whole displayed slice and uploads it
+    again; in 3D that is the whole volume (0.1 to 0.2 s of CPU on a
+    71 x 2044 x 2048 mask, then a 0.3 to 0.6 GB texture upload). This does what
+    napari's ``data_setitem`` does after a brush stroke, without writing
+    napari's history: re-colour the changed voxels in the displayed slice and
+    upload only their bounding box. Voxels outside the displayed slice need no
+    redraw. Uses napari 0.6.6 private API (pinned in pyproject.toml); falls back
+    to ``layer.refresh()`` where that path does not apply. Returns True if the
+    partial path was used.
+    """
+    from napari.utils._indexing import elements_in_slice, index_in_slice
+    pieces = [ix for ix in pieces if ix and np.size(ix[0])]
+    if not pieces:
+        return True
+    if not (isinstance(labels_layer.data, np.ndarray) and labels_layer.loaded
+            and labels_layer.contour == 0):
+        labels_layer.refresh()
+        return False
+    pt_not_disp = labels_layer._get_pt_not_disp()
+    order = labels_layer._slice.slice_input.order
+    view = labels_layer._slice.image.view
+    region = None
+    for ix in pieces:
+        visible = elements_in_slice(ix, pt_not_disp)
+        if np.ndim(visible) == 0:           # nothing sliced away (3D view)
+            shown = ix if visible else None
+        else:
+            shown = tuple(i[visible] for i in ix) if visible.any() else None
+        if shown is None:
+            continue
+        view[index_in_slice(shown, pt_not_disp, order)] = (
+            labels_layer.colormap._data_to_texture(labels_layer.data[shown]))
+        extent = label_edits.index_extent(shown)
+        region = extent if region is None else tuple(
+            slice(min(a.start, b.start), max(a.stop, b.stop)) for a, b in zip(region, extent))
+    if region is None:
+        return True
+    pending = labels_layer._updated_slice
+    if pending is not None:
+        region = tuple(slice(min(a.start, b.start), max(a.stop, b.stop))
+                       for a, b in zip(region, pending))
+    labels_layer._updated_slice = region
+    labels_layer._partial_labels_refresh()
+    return True
+
+
+@timing.timed_action("puncta_resync", fields=lambda a: {"mask": a["mask_layer"].name},
+                     result_fields=lambda r: {"changed": r.get("changed_total"), "removed": r.get("removed_total")})
 def resync_puncta_nucleus_ids(
     viewer: napari.Viewer,
     mask_layer: napari.layers.Labels,
@@ -786,61 +1193,72 @@ def resync_puncta_nucleus_ids(
         If True and ``output_dir`` is set in the session, re-save each puncta
         layer's CSV in the reports directory.
 
+    Only aligned/warped puncta layers are touched: the consensus mask lives in
+    aligned space, and raw-space puncta (which exist only before registration)
+    would be looked up at the wrong place. Layers whose IDs do not change are
+    left alone entirely (no layer write, no CSV, no session write), so calling
+    this after every edit is cheap.
+
     Returns
     -------
     dict
-        ``{'updated_layers': N, 'removed_total': M}``.
+        ``{'updated_layers': N, 'removed_total': M, 'changed_total': K}`` where
+        ``changed_total`` is the number of puncta whose ``Nucleus_ID`` changed.
     """
-    if mask_layer is None:
-        return {'updated_layers': 0, 'removed_total': 0}
+    empty = {'updated_layers': 0, 'removed_total': 0, 'changed_total': 0}
+    if mask_layer is None or viewer is None:
+        return empty
 
     mask_data = mask_layer.data
-    mask_scale = np.array(mask_layer.scale)
-    mask_translate = np.array(mask_layer.translate)
-    mask_shape = np.array(mask_data.shape)
 
     puncta_layers = [
         l for l in list(viewer.layers)
-        if isinstance(l, napari.layers.Points) and constants.PUNCTA_SUFFIX in l.name
+        if isinstance(l, napari.layers.Points)
+        and constants.PUNCTA_SUFFIX in l.name
+        and (constants.ALIGNED_PREFIX.upper() in l.name.upper()
+             or constants.WARPED_PREFIX.upper() in l.name.upper())
     ]
 
     updated = 0
     removed_total = 0
+    changed_total = 0
     for pts_layer in puncta_layers:
         coords = np.array(pts_layer.data)
         if len(coords) == 0:
             continue
 
-        pts_scale = np.array(pts_layer.scale)
-        pts_translate = np.array(pts_layer.translate)
-        world_coords = coords * pts_scale + pts_translate
-        voxel_coords = np.round((world_coords - mask_translate) / mask_scale).astype(int)
-
-        in_bounds = np.all((voxel_coords >= 0) & (voxel_coords < mask_shape), axis=1)
-        clipped = np.clip(voxel_coords, 0, mask_shape - 1)
-        new_ids = mask_data[clipped[:, 0], clipped[:, 1], clipped[:, 2]]
-        new_ids[~in_bounds] = 0
+        new_ids = _puncta.lookup_label_ids(
+            coords, pts_layer.scale, pts_layer.translate,
+            mask_data, mask_layer.scale, mask_layer.translate,
+        )
 
         features = (
             pts_layer.features.copy()
             if hasattr(pts_layer, 'features') and not pts_layer.features.empty
             else pd.DataFrame()
         )
-        if not features.empty and 'Nucleus_ID' in features.columns:
-            features['Nucleus_ID'] = new_ids
+        if features.empty or 'Nucleus_ID' not in features.columns or len(features) != len(coords):
+            # Nothing to reconcile against; leave legacy / malformed layers alone.
+            continue
+
+        old_ids = pd.to_numeric(features['Nucleus_ID'], errors='coerce').fillna(-1).to_numpy()
+        changed = int((old_ids.astype(np.int64) != new_ids.astype(np.int64)).sum())
+        n_removed = int((new_ids <= 0).sum()) if remove_extranuclear else 0
+        if changed == 0 and n_removed == 0:
+            continue
+
+        features['Nucleus_ID'] = new_ids
+        changed_total += changed
 
         if remove_extranuclear:
             inside = new_ids > 0
-            n_removed = int((~inside).sum())
             removed_total += n_removed
             coords = coords[inside]
-            if not features.empty:
-                features = features[inside].reset_index(drop=True)
-
-        # Update the napari layer (clear the indices_view cache to avoid GL crashes
-        # when the point count changes).
-        set_points_data(pts_layer, coords)
-        if not features.empty:
+            features = features[inside].reset_index(drop=True)
+            # Point count changes: go through the GL-safe path, features after data.
+            set_points_data(pts_layer, coords, features)
+        else:
+            # Same points, new feature values: no data write, so no data event fires.
             pts_layer.features = features
 
         if save_csv:
@@ -849,9 +1267,7 @@ def resync_puncta_nucleus_ids(
                 reports_dir = Path(out_dir) / constants.REPORTS_DIR
                 reports_dir.mkdir(exist_ok=True, parents=True)
                 csv_path = constants.puncta_csv_path(reports_dir, pts_layer.name)
-                coords_df = pd.DataFrame(coords, columns=['Z', 'Y', 'X'])
-                full_df = pd.concat([features.reset_index(drop=True), coords_df], axis=1)
-                full_df.to_csv(csv_path, index=False)
+                _puncta.write_puncta_csv(csv_path, coords, features)
                 # Re-register so the session points at the freshly-resynced file
                 # (previously omitted, which left the registry on a stale path).
                 session.set_processed_file(
@@ -861,4 +1277,39 @@ def resync_puncta_nucleus_ids(
 
         updated += 1
 
-    return {'updated_layers': updated, 'removed_total': removed_total}
+    return {'updated_layers': updated, 'removed_total': removed_total, 'changed_total': changed_total}
+
+
+def find_consensus_layer(viewer):
+    """Return the consensus nuclei Labels layer, or None."""
+    if viewer is None:
+        return None
+    for layer in viewer.layers:
+        if isinstance(layer, napari.layers.Labels) and constants.CONSENSUS_MASKS_NAME in layer.name:
+            return layer
+    return None
+
+
+def reconcile_puncta_with_consensus(viewer, *, save_csv=True):
+    """Re-derive every aligned/warped punctum's ``Nucleus_ID`` from the consensus
+    mask currently in the viewer.
+
+    ``Nucleus_ID`` on a punctum is a cache of "which nucleus is under this
+    point". Call this before anything that reports per-nucleus numbers (export)
+    and after anything that could have left the cache behind (session load), so
+    the report never depends on which edit path was used.
+
+    Returns the ``resync_puncta_nucleus_ids`` dict, or None when the viewer has
+    no consensus layer.
+    """
+    consensus = find_consensus_layer(viewer)
+    if consensus is None:
+        return None
+    result = resync_puncta_nucleus_ids(
+        viewer, consensus, remove_extranuclear=False, save_csv=save_csv,
+    )
+    logger.info(
+        "Reconciled puncta with '%s': %d layer(s) updated, %d nucleus ID(s) changed.",
+        consensus.name, result['updated_layers'], result['changed_total'],
+    )
+    return result

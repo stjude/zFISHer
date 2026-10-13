@@ -2,6 +2,8 @@ cff-version: 1.2.0
 title: "zFISHer: An Interactive Platform for 3D Puncta Curation and Colocalization Analysis in Sequential Multiplexed FISH"
 message: "If you use this software, please cite it using the metadata from this file."
 type: software
+version: 2.1.0
+date-released: 2026-10-13
 license: MIT
 authors:
   - given-names: Seth

@@ -4,12 +4,16 @@ from pathlib import Path
 import gc
 import logging
 
-from . import io, registration, segmentation, puncta, analysis, session
+from . import io, registration, segmentation, puncta, analysis, session, provenance
 from .. import constants
+from .timing import timed_stage
 
 logger = logging.getLogger(__name__)
 
 
+@timed_stage("pipeline_total",
+             fields=lambda a: {"dataset": Path(a["output_dir"]).name, "seg_method": a["seg_method"],
+                               "apply_warp": a["apply_warp"]})
 def run_full_zfisher_pipeline(
     r1_path, r2_path, output_dir,
     seg_method="Classical", merge_splits=True,
@@ -168,10 +172,10 @@ def run_full_zfisher_pipeline(
         ]
 
     # Load per-round nuclear masks for puncta filtering
-    r1_mask_path = seg_dir / f"R1 - {r1_nuc_ch}{constants.MASKS_SUFFIX}.tif"
-    r2_mask_path = seg_dir / f"R2 - {r2_nuc_ch}{constants.MASKS_SUFFIX}.tif"
-    r1_mask = tifffile.imread(r1_mask_path) if r1_mask_path.exists() else None
-    r2_mask = tifffile.imread(r2_mask_path) if r2_mask_path.exists() else None
+    r1_mask_path = io.find_mask(seg_dir, f"R1 - {r1_nuc_ch}{constants.MASKS_SUFFIX}")
+    r2_mask_path = io.find_mask(seg_dir, f"R2 - {r2_nuc_ch}{constants.MASKS_SUFFIX}")
+    r1_mask = io.read_label_tif(r1_mask_path) if r1_mask_path else None
+    r2_mask = io.read_label_tif(r2_mask_path) if r2_mask_path else None
 
     raw_puncta_results = {}  # {("R1", ch): ndarray, ("R2", ch): ndarray}
     channel_jobs = [(rnd, mask) for rnd, mask in [("R1", r1_mask), ("R2", r2_mask)] for _ in puncta_channels]
@@ -205,12 +209,20 @@ def run_full_zfisher_pipeline(
             job_base = 25 + int((job_i / job_count) * 10)
             _update(job_base, f"Detecting puncta (raw): {rnd} {ch}...")
 
+            # The raw-space puncta are kept: the aligned rows share their
+            # puncta_id, and a saved registration can transform them again.
+            raw_layer_name = f"{rnd} - {ch}{constants.PUNCTA_SUFFIX}"
+            raw_reports_dir = output_dir / constants.REPORTS_DIR
+            raw_reports_dir.mkdir(exist_ok=True, parents=True)
+            raw_csv = constants.puncta_csv_path(raw_reports_dir, raw_layer_name)
             try:
                 result = puncta.process_puncta_detection(
                     image_data=ch_data,
                     mask_data=mask_for_detection,
                     voxels=sess_obj.voxels,
                     params=ch_params,
+                    output_path=raw_csv,
+                    layer_name=raw_layer_name,
                     progress_callback=lambda p, t, _b=job_base: _update(
                         _b + int(p / 100 * 2), f"{rnd} {ch}: {t}"
                     )
@@ -221,6 +233,18 @@ def run_full_zfisher_pipeline(
                 job_i += 1
                 continue
             raw_puncta_results[(rnd, ch)] = result
+            if raw_csv.exists():
+                session.set_processed_file(raw_layer_name, str(raw_csv), "points", metadata={
+                    'format': 'csv', 'subtype': 'puncta_csv', 'space': 'raw', 'round': rnd})
+                puncta.record_puncta(
+                    raw_csv, "detected", round=rnd, channel=ch, space=f"raw:{rnd}", detected_in="raw",
+                    source_image=provenance.file_identity(r1_path if rnd == "R1" else r2_path),
+                    mask=provenance.file_identity(r1_mask_path if rnd == "R1" else r2_mask_path)
+                    if mask_for_detection is not None else None,
+                    # After detection, which fills in z_scale from the voxel size.
+                    detection_parameters=dict(ch_params, nuclei_only=nuclei_only),
+                    voxel_size=list(map(float, sess_obj.voxels)),
+                    run_by="batch")
 
             # Persist detection parameters per layer for the final report.
             # Format: {layer_key: {algorithm, sensitivity, min_distance, ...}}
@@ -273,11 +297,11 @@ def run_full_zfisher_pipeline(
         ("R2", r2_sess, r2_layers, r2_nuc_ch),
     ]:
         mask_name = f"{prefix} - {round_nuc}{constants.MASKS_SUFFIX}"
-        mask_path = seg_dir / f"{mask_name}.tif"
-        if mask_path.exists():
+        mask_path = io.find_mask(seg_dir, mask_name)
+        if mask_path:
             layer_list.append({
                 'name': mask_name,
-                'data': tifffile.imread(mask_path),
+                'data': io.read_label_tif(mask_path),
                 'scale': sess_obj.voxels,
                 'is_label': True
             })
@@ -314,6 +338,7 @@ def run_full_zfisher_pipeline(
             output_dir=output_dir,
             threshold=match_threshold or None,
             method=overlap_method,
+            voxel_size=r1_sess.voxels,
             progress_callback=lambda p, t: _update(60 + int(p * 0.1), t)
         )
     except Exception as exc:
@@ -351,6 +376,16 @@ def run_full_zfisher_pipeline(
                 _b + int(p / 100 * _s), f"{rnd} {ch}: {t}"
             )
         )
+
+        if csv_out.exists():
+            raw_csv = constants.puncta_csv_path(reports_dir, f"{rnd} - {ch}{constants.PUNCTA_SUFFIX}")
+            consensus_file = io.find_mask(output_dir / constants.SEGMENTATION_DIR, constants.CONSENSUS_MASKS_NAME)
+            puncta.record_puncta(
+                csv_out, "transformed", round=rnd, channel=ch, space="aligned", detected_in="raw",
+                derived_from=raw_csv.name if raw_csv.exists() else None,
+                registration=registration.registration_fingerprint(),
+                consensus_mask=provenance.file_identity(consensus_file),
+                remove_extranuclear=remove_extranuclear_puncta, run_by="batch")
 
         # Build layer data dict for colocalization analysis
         if transformed is not None and len(transformed) > 0:
@@ -408,8 +443,10 @@ def run_full_zfisher_pipeline(
         # labels are non-contiguous (gaps from remove_small_objects or mask edits).
         if merged_mask is not None:
             unique_ids = np.unique(merged_mask)
-            total_nuclei = int((unique_ids > 0).sum())
+            nucleus_ids = unique_ids[unique_ids > 0]
+            total_nuclei = int(len(nucleus_ids))
         else:
+            nucleus_ids = None
             total_nuclei = None
 
         report_filename = f"zFISHer_Report{constants.EXCEL_SUFFIX}"
@@ -423,6 +460,7 @@ def run_full_zfisher_pipeline(
                 output_dir=str(reports_dir),
                 tri_rules=resolved_tri if resolved_tri else None,
                 total_nuclei=total_nuclei,
+                nucleus_ids=nucleus_ids,
             )
             _update(95, "Colocalization report saved.")
         except Exception as exc:

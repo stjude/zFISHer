@@ -8,6 +8,8 @@ from qtpy.QtWidgets import (
 from qtpy.QtCore import Qt
 from qtpy.QtGui import QPainter, QColor, QPainterPath
 
+from ..core import timing
+
 # Saved state for napari notification suppression
 _saved_napari_handlers = []
 _saved_showwarning = None
@@ -508,14 +510,15 @@ def select_nuclear_channel(parent, channels):
         The selected channel name, or None if the user cancels.
     """
     from qtpy.QtWidgets import QInputDialog
-    choice, ok = QInputDialog.getItem(
-        parent,
+    with timing.user_wait():
+        choice, ok = QInputDialog.getItem(
+            parent,
         "Select Nuclear Channel",
-        "No known nuclear stain detected.\nPlease select the nuclear channel:",
-        channels,
-        0,
-        False,
-    )
+            "No known nuclear stain detected.\nPlease select the nuclear channel:",
+            channels,
+            0,
+            False,
+        )
     return choice if ok else None
 
 
@@ -627,21 +630,25 @@ class _ThemedPopup(QDialog):
 def show_info_popup(parent, title, text):
     """Shows a dark-themed informational popup."""
     dlg = _ThemedPopup(parent, title, text, icon_text="\u2713")
-    dlg.exec_()
+    with timing.user_wait():
+        dlg.exec_()
 
 def show_error_popup(parent, title, text):
     """Shows a dark-themed error popup."""
     dlg = _ThemedPopup(parent, title, text, icon_text="\u2716")
-    dlg.exec_()
+    with timing.user_wait():
+        dlg.exec_()
 
 def show_warning_popup(parent, title, text):
     """Shows a dark-themed warning popup."""
     dlg = _ThemedPopup(parent, title, text, icon_text="\u26A0")
-    dlg.exec_()
+    with timing.user_wait():
+        dlg.exec_()
 
 def show_yes_no_popup(parent, title, text):
     """Shows a dark-themed Yes/No confirmation dialog. Returns True if Yes was clicked."""
     dlg = _ThemedPopup(parent, title, text, icon_text="\u26A0",
                         buttons=[("No", False), ("Yes", True)])
-    result = dlg.exec_()
+    with timing.user_wait():
+        result = dlg.exec_()
     return result == QDialog.Accepted

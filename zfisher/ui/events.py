@@ -1,10 +1,10 @@
 import logging
 import napari
 import numpy as np
-import pandas as pd
 from pathlib import Path
 from qtpy.QtCore import QTimer
-from ..core import session
+from ..core import session, timing
+from ..core import puncta as _puncta
 from .. import constants
 
 logger = logging.getLogger(__name__)
@@ -75,6 +75,7 @@ def reset_events_state():
     _attached_listeners.clear()
 
 
+@timing.timed_action("puncta_save", fields=lambda a: {"layer": a["layer"].name, "n": len(a["layer"].data)})
 def save_puncta_layer(layer):
     """Write a puncta layer's current data + features to its canonical CSV and
     register it in the session.
@@ -95,10 +96,8 @@ def save_puncta_layer(layer):
     live_name = layer.name
     csv_path = constants.puncta_csv_path(reports_dir, live_name)
     try:
-        coords_df = pd.DataFrame(layer.data, columns=['Z', 'Y', 'X'])
-        features = layer.features.reset_index(drop=True) if hasattr(layer, 'features') and not layer.features.empty else pd.DataFrame()
-        full_df = pd.concat([features, coords_df], axis=1)
-        full_df.to_csv(csv_path, index=False)
+        features = layer.features if hasattr(layer, 'features') and not layer.features.empty else None
+        _puncta.write_puncta_csv(csv_path, layer.data, features)
     except Exception as e:
         # Fallback: save coordinates only
         logger.warning("Could not save full puncta CSV for '%s': %s. Saving coordinates only.", live_name, e)
@@ -228,6 +227,23 @@ def on_layer_inserted(event, widgets):
     # Use a QTimer to delay execution slightly, ensuring the layer is fully added
     QTimer.singleShot(100, update_widgets)
 
+_keep_files_of = set()   # layer names whose file stays registered when removed
+
+
+def remove_layer_keeping_file(viewer, layer):
+    """Remove ``layer`` from the viewer but keep its file and its session entry.
+
+    Removing a layer normally backs its file up to ``.bak`` and unregisters it
+    (``_remove_layer_and_file``). The canvas step removes the raw puncta layers
+    once they are transformed, but their CSVs stay part of the session: they
+    hold the raw-space detections the aligned rows came from."""
+    _keep_files_of.add(layer.name)
+    try:
+        viewer.layers.remove(layer)
+    finally:
+        _keep_files_of.discard(layer.name)
+
+
 def _remove_layer_and_file(layer_name):
     """Remove a layer's session entry and BACK UP its file on disk.
 
@@ -288,7 +304,8 @@ def on_layer_removed(event, widgets):
             _remove_layer_and_file(f"{layer.name}_centroids")
 
         elif isinstance(layer, napari.layers.Points):
-            _remove_layer_and_file(layer.name)
+            if layer.name not in _keep_files_of:
+                _remove_layer_and_file(layer.name)
             detach_puncta_listener(layer)
             # Cascade: also remove the parent mask
             if not _programmatic_removal and layer.name.endswith("_IDs"):

@@ -105,6 +105,11 @@ class NewSessionWidget(Container):
         if not self._validate_input_files(r1_val, r2_val):
             return
 
+        # Edits to the current session's masks must reach its folder before
+        # the new session becomes the active one.
+        from .mask_editor_widget import flush_pending_mask_saves
+        flush_pending_mask_saves()
+
         with popups.ProgressDialog(self._viewer.window._qt_window, title="Initializing...") as dialog:
             success = session.initialize_new_session(out_val, r1_val, r2_val, progress_callback=dialog.update_progress)
             if not success:

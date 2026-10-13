@@ -9,6 +9,7 @@ from scipy.spatial import cKDTree
 from ..decorators import require_active_session
 from .. import viewer_helpers
 from ... import constants
+from ...core import timing
 
 logger = logging.getLogger(__name__)
 
@@ -270,6 +271,7 @@ def _next_puncta_ids(layer, count):
     return list(range(start, start + count))
 
 
+@timing.timed_action("puncta_data_changed")
 def _on_points_data_changed(event=None):
     """Auto-assign unique puncta_id when points are added via napari's native Add mode."""
     global _skip_data_sync
@@ -311,7 +313,8 @@ def _on_points_data_changed(event=None):
         z, y, x = layer.data[i]
         peak, snr = _compute_quality_at_point(layer, z, y, x)
         nuc = _nucleus_id_at_point(layer, z, y, x)
-        for col, default in [('Nucleus_ID', nuc), ('Intensity', peak), ('SNR', snr), ('Source', 'manual')]:
+        for col, default in [('Nucleus_ID', nuc), ('Intensity', peak), ('SNR', snr),
+                             ('Source', constants.PUNCTA_SOURCE_MANUAL)]:
             if col not in features.columns:
                 features[col] = default
             else:
@@ -575,7 +578,7 @@ def fishing_hook_callback(layer, event):
             'Nucleus_ID': _nucleus_id_at_point(layer, z, y, x),
             'Intensity': _peak,
             'SNR': _snr,
-            'Source': 'manual',
+            'Source': constants.PUNCTA_SOURCE_MANUAL,
         }
 
         # Ensure all required columns exist
@@ -611,6 +614,7 @@ def fishing_hook_callback(layer, event):
 # --- Undo Button ---
 pe_undo_btn = widgets.PushButton(text="Undo", tooltip="Undo the last puncta edit (add or remove).")
 
+@timing.timed_action("puncta_undo")
 def _on_puncta_undo():
     global _skip_data_sync
     viewer = napari.current_viewer()

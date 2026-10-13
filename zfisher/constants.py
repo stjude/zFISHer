@@ -32,6 +32,14 @@ CONSENSUS_IDS_SUFFIX = "_IDs"
 # the same identity across reloads, re-runs, and analysis report tabs.
 PUNCTA_CSV_COLUMNS = ['puncta_id', 'Z', 'Y', 'X', 'Nucleus_ID', 'Intensity', 'SNR', 'Source']
 
+# Values of the `Source` column: how a punctum came to exist. `auto` is found by
+# a detector, `manual` placed by hand (native Add or the Fishing Hook). `unknown`
+# marks rows whose provenance was never recorded, such as CSVs written before the
+# column was kept. Every writer keeps a row's value; only a new row gets one.
+PUNCTA_SOURCE_AUTO = "auto"
+PUNCTA_SOURCE_MANUAL = "manual"
+PUNCTA_SOURCE_UNKNOWN = "unknown"
+
 
 def puncta_csv_stem(layer_name):
     """Canonical on-disk filename stem for a puncta layer's CSV.
@@ -84,6 +92,12 @@ DEFORMABLE_DOWNSAMPLE_FACTOR = 16
 DEFORMABLE_MESH_SIZE = 4
 DEFORMABLE_ITERATIONS = 100
 DEFORMABLE_SAMPLING_PERC = 0.01
+# Seed of the B-spline fit's random metric sampling. Unseeded, two fits of the
+# same images differed; seeded, the fit is repeatable.
+DEFORMABLE_RANDOM_SEED = 1
+# The fitted B-spline, in the aligned/ folder; the session's "registration"
+# record points to it.
+REGISTRATION_TRANSFORM_FILE = "registration_bspline.tfm"
 DEFORMATION_GRID_SPACING = 50 # For visualization vector field
 DEFORMATION_FIELD_NAME = "Deformation_Field"
 WARPED_CHECKERBOARD_NAME = "Warped_Checkerboard"

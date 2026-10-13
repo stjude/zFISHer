@@ -4,7 +4,7 @@ import math
 import warnings
 from pathlib import Path
 from functools import partial
-from ..version import __version__ as _zfisher_version
+from ..core.provenance import software_version
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,8 @@ from .widgets.puncta_editor_widget import puncta_editor_widget, delete_point_und
 from .widgets.capture_widget import capture_widget, capture_with_hotkey, region_capture_with_hotkey, ArrowOverlay
 
 # Import the event handlers
-from . import events, style
+from . import events, style, stall_monitor
+from ..core import timing
 
 # Module-level flag to suppress custom layer control callbacks during batch loading
 _suppress_custom_controls = False
@@ -187,7 +188,7 @@ class WelcomeWidget(QWidget):
         # Branding (Mint and White)
         label_html = (
             f"<h1 {style.WELCOME_WIDGET_STYLE['h1']}>zFISHer</h1>"
-            f"<p {style.WELCOME_WIDGET_STYLE['p']}>Version {_zfisher_version}</p>"
+            f"<p {style.WELCOME_WIDGET_STYLE['p']}>Version {software_version()}</p>"
         )
         self.label = QLabel(label_html)
         self.label.setAlignment(Qt.AlignCenter)
@@ -939,10 +940,13 @@ def launch_zfisher():
             w.setMaximumHeight(16777215)
         _puncta_custom_widgets.extend(all_custom)
 
-    viewer.layers.selection.events.changed.connect(_hide_unwanted_controls)
-    viewer.layers.selection.events.changed.connect(_add_ids_custom_controls)
-    viewer.layers.selection.events.changed.connect(_add_centroids_custom_controls)
-    viewer.layers.selection.events.changed.connect(_add_puncta_custom_controls)
+    # Each handler tears down and rebuilds Qt widgets on every layer click;
+    # timed as controls_rebuild so the cost shows up in the session log.
+    for _rebuild in (_hide_unwanted_controls, _add_ids_custom_controls,
+                     _add_centroids_custom_controls, _add_puncta_custom_controls):
+        viewer.layers.selection.events.changed.connect(timing.timed_action(
+            "controls_rebuild", fields=lambda _a, n=_rebuild.__name__.lstrip("_"): {"handler": n},
+        )(_rebuild))
 
     # Suppress custom controls during layer removal and close any
     # stray popup windows that napari creates during control rebuilds.
@@ -1240,5 +1244,8 @@ def launch_zfisher():
     viewer.bind_key('Shift-G', region_capture_with_hotkey, overwrite=True)
     viewer.bind_key('x', delete_point_under_mouse, overwrite=True)
     viewer.bind_key('c', delete_mask_under_mouse, overwrite=True)
+
+    # STALL lines: any main-thread block over 100 ms, with what was running.
+    stall_monitor.start(viewer)
 
     napari.run()

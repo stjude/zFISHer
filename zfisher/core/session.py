@@ -7,6 +7,7 @@ import numpy as np
 
 from .. import constants
 from .log_config import attach_session_log, detach_session_log
+from .timing import timed_stage
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +253,7 @@ def clear_session():
             "puncta_params": {},
         })
 
+@timed_stage("session_init")
 def initialize_new_session(output_dir, r1_path, r2_path, progress_callback=None):
     """
     Core Logic: Initializes directories and prepares files for processing.
@@ -276,6 +278,8 @@ def initialize_new_session(output_dir, r1_path, r2_path, progress_callback=None)
     update_data("output_dir", str(output_dir))
     update_data("r1_path", str(r1_path))
     update_data("r2_path", str(r2_path))
+    from .provenance import software_version
+    update_data("created_with_zfisher", software_version())
 
     logger.info("New session created: output_dir=%s, r1=%s, r2=%s", output_dir, r1_path, r2_path)
 
@@ -299,6 +303,9 @@ def _save_session_unlocked():
         return
 
     try:
+        # The version that last wrote this file; created_with_zfisher keeps the first.
+        from .provenance import software_version
+        _SESSION_DATA["zfisher_version"] = software_version()
         filename = _SESSION_DATA.get("session_filename", constants.SESSION_FILENAME)
         out_path = _session_save_path(out_dir, filename)
         with open(out_path, 'w') as f:

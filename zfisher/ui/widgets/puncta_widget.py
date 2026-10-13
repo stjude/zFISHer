@@ -1,6 +1,5 @@
 import logging
 import napari
-from pathlib import Path
 from magicgui import magicgui, widgets
 from ...core import session, puncta
 from qtpy.QtWidgets import QApplication
@@ -57,9 +56,10 @@ def _puncta_widget(
     _puncta_layer_name = f"{image_layer.name}{constants.PUNCTA_SUFFIX}"
     _existing_action = None
     if _puncta_layer_name in viewer.layers:
+        _existing = viewer.layers[_puncta_layer_name]
         _existing_action = viewer_helpers.ask_replace_or_merge(
-            viewer.window._qt_window, _puncta_layer_name,
-            len(viewer.layers[_puncta_layer_name].data)
+            viewer.window._qt_window, _puncta_layer_name, len(_existing.data),
+            n_manual=int(viewer_helpers.manual_mask(_existing.features).sum()),
         )
         if _existing_action == 'cancel' or _existing_action is None:
             return
@@ -77,9 +77,7 @@ def _puncta_widget(
             'nuclei_only': nuclei_only
         }
         
-        out_dir = session.get_data("output_dir")
         _raw_puncta_name = f"{image_layer.name}{constants.PUNCTA_SUFFIX}"
-        csv_path = constants.puncta_csv_path(Path(out_dir) / constants.REPORTS_DIR, _raw_puncta_name) if out_dir else None
 
         # Run detection in a background thread so the indeterminate progress
         # bar can animate during the blocking computation.
@@ -102,7 +100,11 @@ def _puncta_widget(
                     mask_data=nuclei_layer.data if nuclei_layer else None,
                     voxels=getattr(image_layer, 'scale', (1,1,1)),
                     params=params,
-                    output_path=csv_path,
+                    # No CSV here: the layer's CSV is written once below, from
+                    # the layer itself. Writing the detection alone first put
+                    # only the new puncta on disk, losing manual ones whenever
+                    # the update below did not rewrite the file.
+                    output_path=None,
                     layer_name=_raw_puncta_name,
                     progress_callback=_thread_progress
                 )
@@ -134,6 +136,8 @@ def _puncta_widget(
         _viewer_mod._suppress_custom_controls = True
         try:
             viewer_helpers.add_or_update_puncta_layer(viewer, image_layer, results,
+                                                       existing_action=_existing_action)
+            viewer_helpers.record_detection_provenance(image_layer, nuclei_layer, params,
                                                        existing_action=_existing_action)
         finally:
             _viewer_mod._suppress_custom_controls = False

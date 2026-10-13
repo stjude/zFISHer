@@ -16,13 +16,20 @@ from pathlib import Path
 import tifffile
 
 from .. import constants
+from . import io
+from .timing import timed_stage, add_stage_fields
 
 logger = logging.getLogger(__name__)
 
 
-def process_consensus_nuclei(mask1, mask2, output_dir, threshold=None, method="Union", progress_callback=None):
+@timed_stage("consensus_nuclei", fields=lambda a: {"method": a["method"]})
+def process_consensus_nuclei(mask1, mask2, output_dir, threshold=None, method="Union", progress_callback=None,
+                             voxel_size=None):
     """
     Updated Core Orchestrator to support Union vs Intersection and 3D coordinate integrity.
+
+    ``voxel_size`` (z, y, x) in µm goes into the saved mask's OME metadata;
+    without it the session's ``canvas_scale`` is used, if set.
     """
     if progress_callback: 
         progress_callback(10, f"Matching nuclei labels ({method})...")
@@ -48,9 +55,11 @@ def process_consensus_nuclei(mask1, mask2, output_dir, threshold=None, method="U
         seg_dir = Path(output_dir) / constants.SEGMENTATION_DIR
         seg_dir.mkdir(exist_ok=True, parents=True)
         
-        # Save the .tif mask
-        mask_path = seg_dir / f"{constants.CONSENSUS_MASKS_NAME}.tif"
-        tifffile.imwrite(mask_path, merged_mask.astype(np.uint32), compression='zlib')
+        # Save the mask
+        mask_path = io.mask_path(seg_dir, constants.CONSENSUS_MASKS_NAME)
+        if voxel_size is None:
+            voxel_size = session.get_data("canvas_scale")
+        io.write_label_tif(mask_path, merged_mask.astype(np.uint32), voxel_size=voxel_size)
         session.set_processed_file(constants.CONSENSUS_MASKS_NAME, str(mask_path), 'labels')
         
         # Save the structured .npy IDs
@@ -281,6 +290,7 @@ def _merge_oversegmented_labels(labels, progress_callback=None):
     return merged, centroids
 
 
+@timed_stage("segment_nuclei:classical", fields=lambda a: {"shape": "x".join(map(str, a["image_data"].shape))})
 def segment_nuclei_classical(image_data, voxel_spacing=None, merge_splits=True, progress_callback=None):
     """
     Segment 3D nuclei using a classical image processing workflow.
@@ -381,6 +391,7 @@ def segment_nuclei_classical(image_data, voxel_spacing=None, merge_splits=True, 
     if progress_callback: progress_callback(100, "Done.")
     return labels, centroids
 
+@timed_stage("segment_nuclei:cellpose", fields=lambda a: {"shape": "x".join(map(str, a["image_data"].shape))})
 def segment_nuclei_cellpose(image_data, gpu=True, merge_splits=True, progress_callback=None):
     """
     Segment 3D nuclei using Cellpose in 2D-per-slice mode with cross-slice stitching.
@@ -421,6 +432,9 @@ def segment_nuclei_cellpose(image_data, gpu=True, merge_splits=True, progress_ca
     if progress_callback: progress_callback(10, "Loading Cellpose model...")
     use_gpu = core.use_gpu() if gpu else False
     model = models.CellposeModel(gpu=use_gpu)
+    device = str(getattr(model, "device", "cuda" if use_gpu else "cpu"))
+    logger.info("Cellpose model loaded: requested_gpu=%s use_gpu=%s device=%s", gpu, use_gpu, device)
+    add_stage_fields(device=device)
 
     # 3. Run 2D eval with stitching
     if progress_callback: progress_callback(15, "Running Cellpose (2D + stitch)...")
@@ -646,6 +660,7 @@ def delete_label(mask_data, label_id):
     return new_data
 
 
+@timed_stage("segmentation_session", fields=lambda a: {"method": a["method"]})
 def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callback=None, method="classical", merge_splits=True, voxel_spacing=None):
     """
     Core Orchestrator: Runs segmentation on one or both rounds and saves results.
@@ -697,8 +712,8 @@ def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callba
             mask_layer_name = f"{dapi_layer_name}{constants.MASKS_SUFFIX}"
             centroid_layer_name = f"{dapi_layer_name}{constants.CENTROIDS_SUFFIX}"
 
-            mask_path = seg_dir / f"{mask_layer_name}.tif"
-            tifffile.imwrite(mask_path, masks.astype(np.uint32), compression='zlib')
+            mask_path = io.mask_path(seg_dir, mask_layer_name)
+            io.write_label_tif(mask_path, masks.astype(np.uint32), voxel_size=voxel_spacing)
             session.set_processed_file(mask_layer_name, str(mask_path), layer_type='labels', metadata={'subtype': 'mask'})
 
             cent_path = seg_dir / f"{centroid_layer_name}.npy"
