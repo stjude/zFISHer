@@ -33,7 +33,9 @@ _lock = threading.Lock()
 _software_version = None
 
 
-def _version():
+def software_version():
+    """The zFISHer version with, for anything but a tagged release, the commit
+    (``2.1.0-dev+96a0ac9``). Computed once per run."""
     global _software_version
     if _software_version is None:
         from ..version import get_full_version
@@ -149,7 +151,7 @@ def record_artifact(path, event, **fields):
         record.update({k: v for k, v in fields.items() if v is not None})
         record.update(path=_stored(path), event=event, sha256=_sha256(path),
                       size_bytes=path.stat().st_size, run_by=fields.get("run_by", record.get("run_by")),
-                      software={"zfisher": _version()},
+                      software={"zfisher": software_version()},
                       time=datetime.datetime.now().isoformat(timespec="seconds"))
         target.parent.mkdir(parents=True, exist_ok=True)
         with open(target, "a", encoding="utf-8") as f:

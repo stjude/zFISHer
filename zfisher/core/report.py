@@ -5,6 +5,7 @@ from datetime import datetime
 
 from .. import constants
 from . import session
+from .provenance import software_version
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,7 @@ def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None, co
             {"Key": "R1 File Path", "Value": str(r1_p)},
             {"Key": "R2 File Path", "Value": str(r2_p)},
             {"Key": "Analysis Date", "Value": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
+            {"Key": "zFISHer Version", "Value": software_version()},
             {"Key": "Output Folder", "Value": str(output_dir) if output_dir else "Not Set"},
             {"Key": "Session JSON Name", "Value": session_filename}
         ]

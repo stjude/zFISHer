@@ -4,7 +4,7 @@ import math
 import warnings
 from pathlib import Path
 from functools import partial
-from ..version import __version__ as _zfisher_version
+from ..core.provenance import software_version
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +188,7 @@ class WelcomeWidget(QWidget):
         # Branding (Mint and White)
         label_html = (
             f"<h1 {style.WELCOME_WIDGET_STYLE['h1']}>zFISHer</h1>"
-            f"<p {style.WELCOME_WIDGET_STYLE['p']}>Version {_zfisher_version}</p>"
+            f"<p {style.WELCOME_WIDGET_STYLE['p']}>Version {software_version()}</p>"
         )
         self.label = QLabel(label_html)
         self.label.setAlignment(Qt.AlignCenter)
