@@ -78,6 +78,7 @@ def load_raw_data_into_viewer(viewer, round1_path, round2_path, output_dir=None,
     all_paths = [(Path(round1_path), "R1"), (Path(round2_path), "R2")]
     steps_per_file = 3 # Load, Convert, Add to viewer
     total_steps = len(all_paths) * steps_per_file
+    first_channels = []  # channel names of the first round loaded, for the nuclear channel
 
     for i, (path, prefix) in enumerate(all_paths):
         base_progress = i * steps_per_file
@@ -93,6 +94,8 @@ def load_raw_data_into_viewer(viewer, round1_path, round2_path, output_dir=None,
 
         # 1. Core I/O Logic
         image_session = io.load_image_session(path)
+        if not first_channels:
+            first_channels = list(image_session.channels)
 
         # 2. Conversion/Processing Logic
         if path.suffix.lower() == '.nd2' and input_storage_dir:
@@ -106,18 +109,11 @@ def load_raw_data_into_viewer(viewer, round1_path, round2_path, output_dir=None,
             progress_callback(int(((base_progress + 2) / total_steps) * 100), f"Adding {prefix} layers to viewer...")
         viewer_helpers.add_image_session_to_viewer(viewer, image_session, prefix)
 
-    # Resolve and store the nuclear channel name (first round's channels used)
+    # Resolve and store the nuclear channel name from the first round that
+    # loaded, whose channels are already known: reading it again cost a second
+    # full load of a multi-GB round.
     if not session.get_data("nuclear_channel"):
-        # Collect channels from whichever round loaded successfully
-        all_channels = []
-        for path in [Path(round1_path), Path(round2_path)]:
-            try:
-                s = io.load_image_session(path)
-                all_channels = s.channels
-                break
-            except Exception:
-                continue
-
+        all_channels = first_channels
         if all_channels:
             nuc = io.find_nuclear_channel(all_channels)
             if nuc is None:
