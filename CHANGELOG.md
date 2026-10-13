@@ -33,6 +33,14 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   on to the next one. Classical segmentation cannot find a nucleus in a stack
   with fewer than 29 Z planes, and the warning says so when that is the cause.
 
+### Development
+
+- `python .github/scripts/prepare_release.py patch` (or `minor`, `major`, or a
+  version number) prepares a release: it sets the version in
+  `zfisher/version.py` and `CITATION.cff`, dates the Unreleased heading in this
+  changelog, checks the result the way the release workflow will, and prints
+  the git commands left to run.
+
 ## 2.1.0 — 2026-10-13
 
 Faster mask editing, safer saves, and a full record of how every puncta file
