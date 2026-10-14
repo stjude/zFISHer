@@ -20,6 +20,21 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   (`raw`, or `aligned` for detection on an aligned or warped image). In older
   sessions with several rows for one channel, the report shows the latest.
 
+## 2.1.2 — 2026-10-14
+
+### Fixes
+
+- **Batch now works when R2's nuclear channel has another name than R1's**
+  (the batch template's `R2_Nuclear_Channel`, e.g. `DAPI` in R1 and `Hoechst`
+  in R2). Such a dataset failed with "Consensus failed: aligned masks not
+  found": R2's mask was saved under R1's channel name, and canvas generation
+  pairs the two rounds' channels by name, so R2's nuclei were never aligned or
+  warped. The two nuclear channels and their masks are now paired with each
+  other, and R2's files keep R2's channel name (`Warped_R2_Hoechst.tif`).
+  Datasets whose rounds use the same name give the same results as before.
+  When such a session is reopened in the GUI, R2's nuclear layers are not
+  pre-selected in the widgets; choose them by hand.
+
 ## 2.1.1 — 2026-10-13
 
 ### Raw images

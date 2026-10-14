@@ -149,6 +149,7 @@ def run_full_zfisher_pipeline(
             progress_callback=lambda p, t: _update(15 + int(p * 0.10), t),
             method=method_key, merge_splits=merge_splits,
             voxel_spacing=r1_sess.voxels,
+            nuclear_channels={"R1": r1_nuc_ch, "R2": r2_nuc_ch},
         )
     except Exception as exc:
         raise RuntimeError(
@@ -309,7 +310,8 @@ def run_full_zfisher_pipeline(
         _, bspline_transform, canvas_offset = registration.generate_global_canvas(
             r1_layers_data=r1_layers, r2_layers_data=r2_layers,
             shift=shift, output_dir=aligned_dir, apply_warp=apply_warp,
-            progress_callback=lambda p, t: _update(45 + int(p * 0.15), t)
+            progress_callback=lambda p, t: _update(45 + int(p * 0.15), t),
+            r2_channel_names={r1_nuc_ch: r2_nuc_ch},
         )
     except Exception as exc:
         raise RuntimeError(
