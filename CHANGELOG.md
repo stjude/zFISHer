@@ -19,6 +19,7 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   left the old one. Both now use `R2 - FITC`, and the row gives `detected_in`
   (`raw`, or `aligned` for detection on an aligned or warped image). In older
   sessions with several rows for one channel, the report shows the latest.
+  Batch rows now also give `z_scale`, as GUI rows did.
 
 ### Development
 
@@ -29,6 +30,10 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   script, commit and push, merge the pull request, publish the draft. Merges
   that leave the version alone release nothing, and pushing a tag by hand still
   works.
+- Batch detects each channel's puncta and transforms them into aligned space
+  with the same core steps (`zfisher/core/stages.py`) that re-detecting a
+  channel of a reopened session will use. Its puncta CSVs, images and masks
+  are unchanged.
 
 ## 2.1.2 — 2026-10-14
 

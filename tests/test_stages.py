@@ -91,7 +91,10 @@ def test_redetect_with_the_recorded_settings_finds_the_same_puncta_under_new_ids
     stages.detect_channel(round_id, CHANNEL)
     after = _raw(reopened.reports, round_id)
     np.testing.assert_array_equal(after[["Z", "Y", "X"]], before[["Z", "Y", "X"]])
+    assert list(after.columns) == constants.PUNCTA_CSV_COLUMNS
     assert after["puncta_id"].min() > before["puncta_id"].max()
+    # Detection's own numbering, shifted: the gaps left by the nucleus filter stay.
+    np.testing.assert_array_equal(np.diff(after["puncta_id"]), np.diff(before["puncta_id"]))
     record = provenance.latest(constants.puncta_csv_path(reopened.reports, stages.raw_puncta_name(round_id, CHANNEL)))
     assert record["event"] == "detected" and record["detected_in"] == "raw" and record["existing_action"] == "replace"
     assert record["mask"]["path"].endswith(f"{round_id} - DAPI_masks.ome.tif")
@@ -189,3 +192,18 @@ def test_settings_must_be_given_when_none_are_recorded(reopened):
         stages.detect_channel("R1", "DAPI")
     with pytest.raises(ValueError, match="existing must be"):
         stages.detect_channel("R1", CHANNEL, existing="keep")
+
+
+def test_finding_nothing_empties_the_csv_or_writes_none(reopened):
+    """A re-detection that finds nothing replaces the old puncta; a channel
+    with no CSV yet gets none, as batch writes none for an empty channel."""
+    params = dict(stages.recorded_detection_parameters("R1", CHANNEL), threshold_rel=1.01)
+    raw_csv = stages.detect_channel("R1", CHANNEL, params=params)
+    assert len(pd.read_csv(raw_csv)) == 0 and list(pd.read_csv(raw_csv).columns) == constants.PUNCTA_CSV_COLUMNS
+    aligned_csv = stages.transform_channel("R1", CHANNEL)
+    assert len(pd.read_csv(aligned_csv)) == 0                    # the batch rows are gone too
+    raw_csv.unlink()
+    aligned_csv.unlink()
+    assert stages.detect_channel("R1", CHANNEL, params=params) is None
+    assert not raw_csv.exists()
+    assert puncta.detection_settings()[f"R1 - {CHANNEL}"]["num_puncta"] == 0

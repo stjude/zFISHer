@@ -70,18 +70,23 @@ def recorded_detection_parameters(round_id, channel):
     return dict(record["detection_parameters"]) if record and record.get("detection_parameters") else None
 
 
-def _combine(existing, coords, rows, action, voxels, name):
+def _combine(existing, found, action, voxels, name):
     """The rows of a channel's CSV after a new detection: ``existing`` (the
-    current table, or None) and the new ``coords`` and ``rows`` (Nucleus_ID,
-    Intensity, SNR) met as ``action`` says. New rows within
-    ``PUNCTA_DUPLICATE_DISTANCE_UM`` of a kept punctum are dropped; new rows,
-    and kept ones without an id, get ids the channel has never had."""
+    current table, or None) and ``found`` (``process_puncta_detection``'s
+    rows) met as ``action`` says. New rows within
+    ``PUNCTA_DUPLICATE_DISTANCE_UM`` of a kept punctum are dropped.
+
+    New rows keep the ids detection gave them, shifted above every id the
+    channel has had, so a first detection is numbered as detection numbers it
+    and a later one reuses none; kept rows without an id get new ones."""
     import pandas as pd
     from scipy.spatial import cKDTree
 
+    found = np.asarray(found, dtype=float).reshape(-1, 7)
+    coords = found[:, :3]
     new = pd.DataFrame({"Z": coords[:, 0], "Y": coords[:, 1], "X": coords[:, 2],
-                        "Nucleus_ID": rows[:, 0], "Intensity": rows[:, 1], "SNR": rows[:, 2],
-                        "Source": constants.PUNCTA_SOURCE_AUTO})
+                        "Nucleus_ID": found[:, 3], "Intensity": found[:, 4], "SNR": found[:, 5],
+                        "Source": constants.PUNCTA_SOURCE_AUTO, "_detected": found[:, 6]})
     old_ids = existing["puncta_id"] if existing is not None and "puncta_id" in existing.columns else ()
     if existing is None or action == "replace_all":
         kept = new.iloc[:0]
@@ -90,7 +95,7 @@ def _combine(existing, coords, rows, action, voxels, name):
             else existing.iloc[:0]
     else:
         kept = existing
-    kept = kept.reset_index(drop=True)
+    kept = kept.drop(columns="_detected", errors="ignore").reset_index(drop=True)
     if len(kept) and len(new):
         scale = np.asarray(voxels, dtype=float)
         dists, _ = cKDTree(kept[["Z", "Y", "X"]].to_numpy(float) * scale).query(coords * scale)
@@ -98,15 +103,17 @@ def _combine(existing, coords, rows, action, voxels, name):
     kept_ids = (pd.to_numeric(kept["puncta_id"], errors="coerce") if "puncta_id" in kept.columns
                 else pd.Series(np.nan, index=kept.index))
     missing = kept_ids.isna().to_numpy()
-    ids = puncta.allocate_puncta_ids(name, int(missing.sum()) + len(new), old_ids)
+    span = int(found[:, 6].max()) + 1 if len(found) else 0
+    ids = puncta.allocate_puncta_ids(name, int(missing.sum()) + span, old_ids)
     kept_ids[missing] = ids[:missing.sum()]
     kept = kept.assign(puncta_id=kept_ids.astype(np.int64))
-    new["puncta_id"] = ids[missing.sum():]
+    start = int(ids[missing.sum()]) if span else 0
+    new["puncta_id"] = (start + new.pop("_detected")).astype(np.int64)
     return pd.concat([kept, new], ignore_index=True)
 
 
 def detect_channel(round_id, channel, params=None, existing="replace", chooser=None, confirm=None,
-                   run_by="gui", progress_callback=None):
+                   run_by="gui", progress_callback=None, image=None, image_path=None, voxels=None, mask=None):
     """Detect ``channel``'s puncta on the raw image of ``round_id`` and write
     the channel's raw-space CSV (``reports/R2_-_FITC_puncta.csv``). Returns its
     path.
@@ -119,6 +126,11 @@ def detect_channel(round_id, channel, params=None, existing="replace", chooser=N
     ``'merge'`` keeps all. The raw image is found with ``io.resolve_raw_path``
     (``chooser`` and ``confirm`` as there; without a chooser a missing image
     raises ``io.RawImageNotFound``) and only this channel is read.
+
+    Batch, which holds the round already, passes the channel as ``image``,
+    with ``image_path`` and ``voxels`` and the round's nuclei ``mask``, so
+    nothing is read twice. Returns None, writing nothing, when nothing is
+    found and the channel has no CSV to replace.
     """
     import pandas as pd
 
@@ -133,18 +145,23 @@ def detect_channel(round_id, channel, params=None, existing="replace", chooser=N
     name = raw_puncta_name(round_id, channel)
     csv = constants.puncta_csv_path(_reports_dir(), name)
 
-    image_path = io.resolve_raw_path(round_id, chooser=chooser, confirm=confirm)
-    if progress_callback: progress_callback(5, f"Reading {round_id} {channel}...")
-    image = io.read_channel(image_path, channel)
-    voxels = io.image_identity(image_path)["voxels"]
+    if image_path is None:
+        image_path = io.resolve_raw_path(round_id, chooser=chooser, confirm=confirm)
+    if image is None:
+        if progress_callback: progress_callback(5, f"Reading {round_id} {channel}...")
+        image = io.read_channel(image_path, channel)
+    if voxels is None:
+        voxels = io.image_identity(image_path)["voxels"]
     mask_path = None
-    mask = None
     if nuclei_only:
         mask_path = round_mask_path(round_id)
         if mask_path is None:
             raise FileNotFoundError(f"{round_id} has no nuclei mask, which detecting only inside nuclei "
                                     f"needs. Segment {round_id}'s nuclei, or detect everywhere.")
-        mask = io.read_label_tif(mask_path)
+        if mask is None:
+            mask = io.read_label_tif(mask_path)
+    else:
+        mask = None
 
     def detection_progress(p, text):
         if progress_callback and p >= 0:
@@ -154,7 +171,12 @@ def detect_channel(round_id, channel, params=None, existing="replace", chooser=N
     del image, mask
 
     current = pd.read_csv(csv, float_precision="round_trip") if csv.exists() else None
-    table = _combine(current, found[:, :3], found[:, 3:6], existing, voxels, name)
+    if len(found) == 0 and current is None:
+        puncta.record_detection_settings(name, puncta.detection_settings_row(params, 0, "raw"))
+        logger.info("No puncta found in %s %s; nothing written", round_id, channel)
+        if progress_callback: progress_callback(100, f"No puncta in {round_id} {channel}.")
+        return None
+    table = _combine(current, found, existing, voxels, name)
     puncta.write_puncta_csv(csv, table[["Z", "Y", "X"]].to_numpy(float), table.drop(columns=["Z", "Y", "X"]))
     session.set_processed_file(name, str(csv), "points", metadata={
         "format": "csv", "subtype": "puncta_csv", "space": "raw", "round": round_id})
@@ -196,7 +218,8 @@ def _aligned_only_manual(aligned_csv, raw_csv):
     return old[manual & ~np.isin(_numeric(old, "puncta_id", np.nan), raw_manual)].reset_index(drop=True)
 
 
-def transform_channel(round_id, channel, remove_extranuclear=None, keep_aligned_manual=True, run_by="gui"):
+def transform_channel(round_id, channel, remove_extranuclear=None, keep_aligned_manual=True, run_by="gui",
+                      consensus_mask=None):
     """Take the channel's raw-space CSV into aligned space with the
     registration saved by canvas generation, assign nuclei from the consensus
     mask, and write the channel's aligned CSV. Returns its path.
@@ -207,7 +230,9 @@ def transform_channel(round_id, channel, remove_extranuclear=None, keep_aligned_
     hand on the aligned layer, which have no raw-space row, are carried over
     unchanged, at the same coordinates. Raises ``LookupError`` for a session
     with no saved registration (made before 2.1.0) and ``FileNotFoundError``
-    without a raw CSV.
+    without a raw CSV. Batch passes the ``consensus_mask`` it holds. Returns
+    None, writing nothing, when no punctum reaches aligned space and the
+    channel has no aligned CSV to replace.
     """
     import pandas as pd
 
@@ -224,7 +249,9 @@ def transform_channel(round_id, channel, remove_extranuclear=None, keep_aligned_
         remove_extranuclear = bool((previous or {}).get("remove_extranuclear", False))
     consensus_path = io.find_mask(Path(session.get_data("output_dir")) / constants.SEGMENTATION_DIR,
                                   constants.CONSENSUS_MASKS_NAME)
-    consensus = io.read_label_tif(consensus_path) if consensus_path is not None else None
+    consensus = consensus_mask
+    if consensus is None and consensus_path is not None:
+        consensus = io.read_label_tif(consensus_path)
 
     data, sources = puncta.transform_puncta_csv(raw_csv, round_id, saved, consensus_mask=consensus,
                                                 remove_extranuclear=remove_extranuclear)
@@ -241,6 +268,9 @@ def transform_channel(round_id, channel, remove_extranuclear=None, keep_aligned_
         data = np.vstack([data.reshape(-1, 7), rows])
         sources = np.concatenate([sources, np.full(len(carried), constants.PUNCTA_SOURCE_MANUAL, dtype=object)])
     n_carried = 0 if carried is None else len(carried)
+    if len(data) == 0 and not aligned_csv.exists():
+        logger.info("No %s %s puncta reach aligned space; nothing written", round_id, channel)
+        return None
     puncta._save_puncta_csv(data.reshape(-1, 7), aligned_csv, name, sources=sources)
     puncta.record_puncta(
         aligned_csv, "transformed", round=round_id, channel=channel, space="aligned", detected_in="raw",
