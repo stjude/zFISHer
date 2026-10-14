@@ -522,7 +522,9 @@ def transform_puncta_csv(csv_path, round_id, registration, consensus_mask=None,
     coordinates; ``puncta_id`` and ``Source`` are carried to the output."""
     import pandas as pd
 
-    df = pd.read_csv(csv_path)
+    # round_trip: the default parser can change a float's last bit, so a CSV
+    # rewritten from what it read would differ from the one it was given.
+    df = pd.read_csv(csv_path, float_precision="round_trip")
     n = len(df)
 
     def column(name, default):
@@ -617,6 +619,27 @@ def record_detection_settings(layer_name, settings):
               if (channel_key(k) or k) != key}
     params[key] = dict(settings)
     session.update_data("puncta_params", params)
+
+
+def detection_settings_row(params, n_puncta, detected_in):
+    """The ``puncta_params`` entry for a detection with ``process_puncta_detection``'s
+    ``params``: the settings the report's Parameters sheet lists."""
+    row = {
+        'algorithm': params.get('method', 'Local Maxima'),
+        'sensitivity': params.get('threshold_rel', constants.PUNCTA_THRESHOLD_REL),
+        'min_distance': params.get('min_distance', constants.PUNCTA_MIN_DISTANCE),
+        'sigma': params.get('sigma', constants.PUNCTA_SIGMA),
+    }
+    if 'z_scale' in params:
+        row['z_scale'] = params['z_scale']
+    row.update({
+        'nuclei_only': params.get('nuclei_only', True),
+        'tophat': params.get('use_tophat', False),
+        'tophat_radius': params.get('tophat_radius', constants.PUNCTA_TOPHAT_RADIUS),
+        'num_puncta': int(n_puncta),
+        'detected_in': detected_in,
+    })
+    return row
 
 
 def detection_settings():
