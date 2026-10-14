@@ -207,3 +207,106 @@ def test_finding_nothing_empties_the_csv_or_writes_none(reopened):
     assert stages.detect_channel("R1", CHANNEL, params=params) is None
     assert not raw_csv.exists()
     assert puncta.detection_settings()[f"R1 - {CHANNEL}"]["num_puncta"] == 0
+
+
+# --- what is out of date --------------------------------------------------------
+
+def _states(items=None):
+    return {item.name: (item.state, item.edited) for item in (items or stages.status())}
+
+
+def _export_report(reopened):
+    from zfisher.core import analysis
+    layers = []
+    for name in (_aligned_name("R1"), _aligned_name("R2")):
+        table = _csv(reopened.reports, name)
+        layers.append({"name": name, "data": table[["Z", "Y", "X"]].to_numpy(float), "scale": np.ones(3),
+                       "translate": np.zeros(3), "nucleus_ids": table["Nucleus_ID"].to_numpy(),
+                       "puncta_id": table["puncta_id"].to_numpy()})
+    return analysis.run_colocalization_analysis(layers, [], "report.xlsx", None, None, reopened.reports)
+
+
+def test_a_finished_batch_session_is_up_to_date(reopened):
+    states = _states()
+    assert states[_aligned_name("R1")] == ("fresh", False) and states[_aligned_name("R2")] == ("fresh", False)
+    assert states[stages.REPORT_NAME] == ("missing", False)          # no rules, so batch wrote no report
+
+
+def test_a_redetected_channel_is_stale_until_warped_again(reopened):
+    report = _export_report(reopened)
+    assert _states()[report.name] == ("fresh", False)
+    stages.detect_channel("R2", CHANNEL, params=dict(stages.recorded_detection_parameters("R2", CHANNEL),
+                                                       threshold_rel=0.6))
+    items = {item.name: item for item in stages.status()}
+    r2 = items[_aligned_name("R2")]
+    assert (r2.state, r2.edited, r2.round, r2.channel) == ("stale", False, "R2", CHANNEL)
+    assert "R2_-_FITC_puncta.csv changed since it was warped" in r2.reasons
+    assert items[_aligned_name("R1")].state == "fresh"
+    assert items[report.name].state == "stale"                      # downstream of the stale channel
+    stages.transform_channel("R2", CHANNEL)
+    states = _states()
+    assert states[_aligned_name("R2")] == ("fresh", False)
+    assert states[report.name] == ("stale", False)                  # its R2 puncta changed
+    report = _export_report(reopened)
+    assert _states()[report.name] == ("fresh", False)
+
+
+def test_hand_edits_are_told_apart_from_nucleus_id_updates(reopened):
+    aligned_csv = constants.puncta_csv_path(reopened.reports, _aligned_name("R1"))
+    table = pd.read_csv(aligned_csv)
+    table["Nucleus_ID"] = 0                                          # as a reload or export re-derives them
+    puncta.write_puncta_csv(aligned_csv, table[["Z", "Y", "X"]].to_numpy(float), table.drop(columns=["Z", "Y", "X"]))
+    assert _states()[_aligned_name("R1")] == ("fresh", False)
+    _append(aligned_csv, [{"puncta_id": 5000, "Z": 15.0, "Y": 50.0, "X": 50.0, "Nucleus_ID": 0,
+                           "Intensity": 0, "SNR": 0, "Source": "manual"}])
+    item = {i.name: i for i in stages.status()}[_aligned_name("R1")]
+    assert (item.state, item.edited) == ("fresh", True)
+    stages.detect_channel("R1", CHANNEL)
+    assert _states()[_aligned_name("R1")] == ("stale", True)        # a re-warp would have to keep the edit
+
+
+def test_a_consensus_mask_edit_makes_the_report_and_filtered_puncta_stale(reopened):
+    report = _export_report(reopened)
+    consensus = io.find_mask(reopened.out / constants.SEGMENTATION_DIR, constants.CONSENSUS_MASKS_NAME)
+    mask = io.read_label_tif(consensus)
+    mask[mask == mask.max()] = 0                                      # delete one nucleus
+    io.write_label_tif(consensus, mask)
+    items = {item.name: item for item in stages.status()}
+    assert items[report.name].state == "stale"
+    assert "the consensus mask changed since it was exported" in items[report.name].reasons
+    # Batch removed puncta outside nuclei with the old mask.
+    assert items[_aligned_name("R1")].state == "stale"
+
+
+def test_aligned_detection_and_sessions_without_a_saved_registration(reopened):
+    from zfisher.core import provenance as prov
+    aligned_csv = constants.puncta_csv_path(reopened.reports, _aligned_name("R2"))
+    puncta.record_puncta(aligned_csv, "detected", detected_in="aligned", space="aligned", run_by="gui")
+    assert _states()[_aligned_name("R2")] == ("detected_on_aligned", False)
+    session.update_data("registration", {})
+    assert [item.kind for item in stages.status()] == ["report"]     # cannot be warped again: not judged
+    assert prov.latest(aligned_csv)["event"] == "detected"
+
+
+def test_sessions_made_before_fingerprints_were_kept(reopened):
+    """2.1.x recorded neither the raw CSV's hash nor the puncta fingerprint:
+    a re-detection is seen from the record times, and a hand edit from the
+    counts by Source."""
+    import json
+    log = reopened.out / "provenance.jsonl"
+    records = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+    for record in records:
+        record.pop("derived_from_sha256", None)
+        record.pop("points_sha256", None)
+    log.write_text("".join(json.dumps(r) + "\n" for r in records))
+    assert _states()[_aligned_name("R2")] == ("fresh", False)
+    aligned_csv = constants.puncta_csv_path(reopened.reports, _aligned_name("R2"))
+    _append(aligned_csv, [{"puncta_id": 5000, "Z": 15.0, "Y": 50.0, "X": 50.0, "Nucleus_ID": 0,
+                           "Intensity": 0, "SNR": 0, "Source": "manual"}])
+    puncta.record_puncta(aligned_csv, "saved")                      # as the GUI's autosave records it
+    assert _states()[_aligned_name("R2")] == ("fresh", True)
+    import time
+    time.sleep(1.1)                                                  # record times are to the second
+    raw_csv = constants.puncta_csv_path(reopened.reports, stages.raw_puncta_name("R2", CHANNEL))
+    puncta.record_puncta(raw_csv, "detected")
+    assert _states()[_aligned_name("R2")] == ("stale", True)

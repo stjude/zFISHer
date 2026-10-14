@@ -694,5 +694,8 @@ def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, 
             path=str(final_path),
             layer_type="report"
         )
+        # What the report was made from, so it can be told when it is out of date.
+        from .stages import record_report
+        record_report(final_path, [layer['name'] for layer in layers_data], output_dir)
 
     return final_path

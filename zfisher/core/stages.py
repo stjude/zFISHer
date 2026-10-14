@@ -11,8 +11,12 @@ Both work on the session's files, not on viewer layers, and take no UI; the GUI
 and batch call the same functions. Detection settings, the mask, the image and
 the registration used are recorded in ``provenance.jsonl`` like every other
 puncta file.
+
+``status`` reads those records back and says which aligned puncta CSVs and
+which report are out of date, missing, or edited by hand since they were made.
 """
 import logging
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -50,6 +54,18 @@ def _reports_dir():
     return path
 
 
+def _in_output_folder(subdir, stored):
+    """``stored`` (a registered path) as the file of that name in the open
+    session's ``subdir``, when there is one. A session opened from a copied
+    output folder can still have paths into the folder it was copied from."""
+    out = session.get_data("output_dir")
+    if out and stored:
+        local = Path(out) / subdir / Path(stored).name
+        if local.exists():
+            return local
+    return Path(stored) if stored and Path(stored).exists() else None
+
+
 def round_mask_path(round_id):
     """The raw-space nuclei mask of ``round_id`` registered in the session
     (``'R2 - DAPI_masks'``), or None. Looked up by registration rather than by
@@ -57,8 +73,10 @@ def round_mask_path(round_id):
     saved under."""
     for name, info in (session.get_data("processed_files", default={}) or {}).items():
         if (isinstance(info, dict) and info.get("subtype") == "mask" and name.startswith(f"{round_id} - ")
-                and name.endswith(constants.MASKS_SUFFIX) and Path(info.get("path", "")).exists()):
-            return Path(info["path"])
+                and name.endswith(constants.MASKS_SUFFIX)):
+            path = _in_output_folder(constants.SEGMENTATION_DIR, info.get("path"))
+            if path is not None:
+                return path
     return None
 
 
@@ -274,9 +292,165 @@ def transform_channel(round_id, channel, remove_extranuclear=None, keep_aligned_
     puncta._save_puncta_csv(data.reshape(-1, 7), aligned_csv, name, sources=sources)
     puncta.record_puncta(
         aligned_csv, "transformed", round=round_id, channel=channel, space="aligned", detected_in="raw",
-        derived_from=raw_csv.name, registration=registration.registration_fingerprint(),
+        derived_from=raw_csv.name, derived_from_sha256=provenance.file_sha256(raw_csv),
+        registration=registration.registration_fingerprint(),
         consensus_mask=provenance.file_identity(consensus_path) if consensus_path is not None else "none",
-        remove_extranuclear=remove_extranuclear, n_carried_manual=n_carried, run_by=run_by)
+        remove_extranuclear=remove_extranuclear, n_carried_manual=n_carried,
+        points_sha256=puncta.points_fingerprint(aligned_csv), run_by=run_by)
     logger.info("Transformed %s %s into %s: %d puncta, %d placed by hand on the aligned layer kept",
                 round_id, channel, aligned_csv.name, len(data), n_carried)
     return aligned_csv
+
+
+# --- What is out of date ------------------------------------------------------
+
+REPORT_NAME = "Master_Analysis_Report"
+FRESH, STALE, MISSING, UNKNOWN = "fresh", "stale", "missing", "unknown"
+DETECTED_ON_ALIGNED = "detected_on_aligned"
+
+
+@dataclass
+class ArtifactStatus:
+    """Whether one output of the session is up to date.
+
+    ``state`` is ``fresh``; ``stale`` (something it was made from changed since);
+    ``missing`` (it should exist and does not); ``detected_on_aligned`` (an
+    aligned puncta CSV last made by detecting on the aligned image, not from
+    the raw CSV, so warping the raw CSV again would replace it); or ``unknown``
+    (made before zFISHer recorded what it was made from). ``edited`` says the
+    puncta in an aligned CSV were changed by hand since it was made, which a
+    re-warp would discard. ``reasons`` explain the state in words."""
+    kind: str                 # "aligned_puncta" or "report"
+    name: str                 # layer name, or the report's file name
+    path: object              # Path, or None when missing
+    state: str
+    edited: bool = False
+    reasons: list = field(default_factory=list)
+    round: str = None
+    channel: str = None
+
+
+def record_report(path, layer_names, reports_dir):
+    """Record the report just written at ``path`` from the puncta layers
+    ``layer_names``: each layer's CSV with ``puncta.points_fingerprint``, and
+    the consensus mask."""
+    inputs = {}
+    for name in layer_names:
+        csv = constants.puncta_csv_path(reports_dir, name)
+        if csv.exists():
+            inputs[csv.name] = puncta.points_fingerprint(csv, with_source=False)
+    consensus = _consensus_path()
+    provenance.record_artifact(path, "exported", kind="report", inputs=inputs,
+                               consensus_mask=provenance.file_identity(consensus) if consensus else "none")
+
+
+def _consensus_path():
+    out = session.get_data("output_dir")
+    return io.find_mask(Path(out) / constants.SEGMENTATION_DIR, constants.CONSENSUS_MASKS_NAME) if out else None
+
+
+def _sha(path):
+    return provenance.file_sha256(path) if path is not None and Path(path).exists() else None
+
+
+def _aligned_status(round_id, channel, raw_csv, saved, consensus_sha):
+    name = aligned_puncta_name(round_id, channel, saved)
+    path = constants.puncta_csv_path(raw_csv.parent, name)
+    out = ArtifactStatus("aligned_puncta", name, path, FRESH, round=round_id, channel=channel)
+    if not path.exists():
+        out.path, out.state = None, MISSING
+        out.reasons.append(f"{raw_csv.name} has not been warped into aligned space")
+        return out
+    history = provenance.records(path)
+    made = [r for r in history if r.get("event") in ("transformed", "detected")]
+    if not made:
+        out.state = UNKNOWN
+        out.reasons.append("no record of how it was made")
+        return out
+    last = made[-1]
+    if last["event"] == "detected":
+        out.state = DETECTED_ON_ALIGNED
+        out.reasons.append("detected on the aligned image, not warped from the raw puncta")
+        return out
+    # Edited by hand since it was made: its puncta differ from what was written.
+    if last.get("points_sha256"):
+        out.edited = puncta.points_fingerprint(path) != last["points_sha256"]
+    else:                     # records from before fingerprints: compare counts by Source
+        out.edited = (history[-1].get("n_by_source") or {}) != (last.get("n_by_source") or {})
+    if out.edited:
+        out.reasons.append("puncta were added, moved or deleted by hand since it was made")
+    # Stale: what it was made from has changed.
+    stale = []
+    if last.get("derived_from_sha256"):
+        if _sha(raw_csv) != last["derived_from_sha256"]:
+            stale.append(f"{raw_csv.name} changed since it was warped")
+    else:                     # records from before the raw CSV's hash was kept
+        raw_made = [r for r in provenance.records(raw_csv) if r.get("event") == "detected"]
+        if raw_made and raw_made[-1].get("time", "") > last.get("time", ""):
+            stale.append(f"{raw_csv.name} was detected again since it was warped")
+    if last.get("registration") and last["registration"] != registration.registration_fingerprint():
+        stale.append("the registration changed since it was warped")
+    made_with = last.get("consensus_mask")
+    if last.get("remove_extranuclear") and isinstance(made_with, dict) and made_with.get("sha256") != consensus_sha:
+        stale.append("the consensus mask changed, and puncta outside nuclei were removed with it")
+    out.reasons += stale
+    if stale:
+        out.state = STALE
+    return out
+
+
+def _report_status(aligned, consensus_sha):
+    info = (session.get_data("processed_files", default={}) or {}).get(REPORT_NAME)
+    path = _in_output_folder(constants.REPORTS_DIR, info.get("path")) if isinstance(info, dict) else None
+    if path is None:
+        return ArtifactStatus("report", REPORT_NAME, None, MISSING, reasons=["no report has been exported"])
+    out = ArtifactStatus("report", path.name, path, FRESH)
+    record = provenance.latest(path)
+    if not record or record.get("kind") != "report":
+        out.state = UNKNOWN
+        out.reasons.append("exported before zFISHer recorded what a report was made from")
+        return out
+    inputs = record.get("inputs") or {}
+    for csv_name, fingerprint in inputs.items():
+        csv = path.parent / csv_name
+        if not csv.exists():
+            out.reasons.append(f"{csv_name}, which it used, is gone")
+        elif puncta.points_fingerprint(csv, with_source=False) != fingerprint:
+            out.reasons.append(f"the puncta in {csv_name} changed since it was exported")
+    for item in aligned:
+        if item.path is not None and item.path.name not in inputs:
+            out.reasons.append(f"{item.path.name} is not in it")
+        if item.state in (STALE, MISSING):
+            out.reasons.append(f"{item.name} is {item.state}")
+    made_with = record.get("consensus_mask")
+    if isinstance(made_with, dict) and made_with.get("sha256") != consensus_sha:
+        out.reasons.append("the consensus mask changed since it was exported")
+    if out.reasons:
+        out.state = STALE
+    return out
+
+
+def status():
+    """What is out of date in the open session: one ``ArtifactStatus`` per
+    channel with raw-space puncta (its aligned CSV), then one for the report.
+
+    Channels are listed only for sessions with a saved registration; sessions
+    made before 2.1.0 cannot be warped again, so their aligned CSVs are not
+    judged against their raw ones."""
+    consensus_sha = _sha(_consensus_path())
+    aligned = []
+    try:
+        saved = registration.load_registration()
+    except (LookupError, FileNotFoundError):
+        saved = None
+    if saved is not None:
+        for name, info in sorted((session.get_data("processed_files", default={}) or {}).items()):
+            if not (isinstance(info, dict) and info.get("space") == "raw" and info.get("subtype") == "puncta_csv"):
+                continue
+            key = puncta.channel_key(name)
+            raw_csv = constants.puncta_csv_path(_reports_dir(), name)
+            if key is None or not raw_csv.exists():
+                continue
+            round_id, channel = key.split(" - ", 1)
+            aligned.append(_aligned_status(round_id, channel, raw_csv, saved, consensus_sha))
+    return aligned + [_report_status(aligned, consensus_sha)]

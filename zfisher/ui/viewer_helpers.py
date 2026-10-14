@@ -523,10 +523,14 @@ def record_aligned_puncta_provenance(aligned_layer_name, raw_layer_name, consens
         out_dir = session.get_data("output_dir")
         consensus = provenance.file_identity(_io.find_mask(Path(out_dir) / constants.SEGMENTATION_DIR,
                                                            consensus_mask_name))
+    has_raw = raw_csv is not None and raw_csv.exists()
     _puncta.record_puncta(
         csv_path, "transformed", round=round_id, channel=channel, space="aligned",
-        derived_from=raw_csv.name if raw_csv is not None and raw_csv.exists() else None,
+        derived_from=raw_csv.name if has_raw else None,
+        derived_from_sha256=provenance.file_sha256(raw_csv) if has_raw else None,
         registration=registration.registration_fingerprint(), consensus_mask=consensus,
+        # The transform drops puncta outside nuclei only when it has the consensus mask.
+        remove_extranuclear=consensus_mask_name is not None, points_sha256=_puncta.points_fingerprint(csv_path),
         run_by="gui")
 
 

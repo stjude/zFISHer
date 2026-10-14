@@ -21,6 +21,16 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   sessions with several rows for one channel, the report shows the latest.
   Batch rows now also give `z_scale`, as GUI rows did.
 
+### Provenance
+
+- **Exported reports are recorded in `provenance.jsonl`**, with the puncta
+  CSVs and the consensus mask they were made from. Aligned puncta CSVs also
+  record the hash of the raw CSV they were warped from and a fingerprint of
+  their puncta. From these zFISHer tells whether a channel's aligned puncta or
+  the report are out of date, and whether aligned puncta were edited by hand
+  since they were made. Updating a puncta's `Nucleus_ID` on reload or export
+  does not count as an edit.
+
 ### Development
 
 - **Releases are tagged automatically.** When a merge into main brings a

@@ -49,6 +49,28 @@ def write_puncta_csv(path, coords, features=None):
 # Source. A raw CSV and the aligned CSV made from it share puncta_id, so each
 # aligned punctum can be traced to its detection.
 
+def points_fingerprint(csv_path, with_source=True):
+    """A hash of the puncta in a puncta CSV: each row's ``puncta_id``, Z, Y, X
+    (to 1e-6 voxel) and, with ``with_source``, ``Source``, in id order.
+
+    Two files with the same puncta in the same places have the same
+    fingerprint, whatever their ``Nucleus_ID``, ``Intensity`` and ``SNR``:
+    ``Nucleus_ID`` is re-derived from the consensus mask whenever a session is
+    opened or a report exported, and that rewrite is not an edit."""
+    import hashlib
+    import pandas as pd
+    df = pd.read_csv(csv_path, float_precision="round_trip")
+    ids = pd.to_numeric(df["puncta_id"], errors="coerce") if "puncta_id" in df.columns else pd.Series(range(len(df)))
+    order = np.argsort(ids.to_numpy(float), kind="stable")
+    source = (df["Source"].fillna(constants.PUNCTA_SOURCE_UNKNOWN).astype(str) if "Source" in df.columns
+              else pd.Series([constants.PUNCTA_SOURCE_UNKNOWN] * len(df)))
+    digest = hashlib.sha256()
+    for i in order:
+        row = f"{ids.iloc[i]:.0f},{df['Z'].iloc[i]:.6f},{df['Y'].iloc[i]:.6f},{df['X'].iloc[i]:.6f}"
+        digest.update((row + (f",{source.iloc[i]}" if with_source else "") + "\n").encode())
+    return digest.hexdigest()
+
+
 def record_puncta(csv_path, event, **fields):
     """Record the puncta CSV that zFISHer just wrote at ``csv_path``, with its
     puncta counts by ``Source``; see ``provenance.record_artifact``."""
