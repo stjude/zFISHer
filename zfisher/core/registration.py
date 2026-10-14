@@ -688,10 +688,16 @@ def transform_points_inverse_bspline(points_zyx, bspline_transform, max_iter=20,
     return results
 
 @timed_stage("canvas_total", fields=lambda a: {"apply_warp": a["apply_warp"]})
-def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, apply_warp=True, progress_callback=None):
+def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, apply_warp=True, progress_callback=None,
+                           r2_channel_names=None):
     """
     Core Orchestrator: Aligns, warps, and saves all channels.
     Headless-ready (uses callback instead of yield).
+
+    Each R1 channel is paired with the R2 channel of the same name, or the one
+    ``r2_channel_names`` gives for it (``{'DAPI': 'Hoechst'}``, for rounds whose
+    nuclear channel is named differently); a channel's mask pairs the same way.
+    R2's outputs keep R2's channel name.
 
     Returns
     -------
@@ -721,7 +727,8 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
             prog = int(((i + 1) / num_raw_layers) * 20)  # This part takes up to 20%
             update(prog, f"Rigidly aligning {channel_name}...")
 
-            r2 = next((l for l in r2_layers_data if channel_name in l['name']), None)
+            partner = _r2_partner(channel_name, r2_channel_names)
+            r2 = next((l for l in r2_layers_data if partner in l['name']), None)
             if r2:
                 is_label = r1.get('is_label', False)
                 with stage_timer("canvas:rigid_align", channel=channel_name):
@@ -741,7 +748,7 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
                                    channel_name, canvas_offset_pixels.tolist(), final_canvas_offset.tolist())
                 aligned_pairs[channel_name] = {
                     'r1_data': aligned_r1, 'r2_data': aligned_r2,
-                    'r1_meta': r1, 'r2_meta': r2, 'is_label': is_label
+                    'r1_meta': r1, 'r2_meta': r2, 'is_label': is_label, 'r2_channel': partner,
                 }
 
     # 2. Deformable Transform Calculation
@@ -899,9 +906,23 @@ def load_registration():
                              np.asarray(canvas["canvas_offset_pixels"], dtype=float), bspline, canvas)
 
 
+def _r2_partner(channel_name, r2_channel_names):
+    """The R2 channel paired with R1's ``channel_name``: its entry in
+    ``r2_channel_names``, the partner of its base channel for a mask
+    (``'DAPI_masks'`` -> ``'Hoechst_masks'``), else the same name."""
+    names = r2_channel_names or {}
+    if channel_name in names:
+        return names[channel_name]
+    base = channel_name.removesuffix(constants.MASKS_SUFFIX)
+    if base != channel_name and base in names:
+        return names[base] + constants.MASKS_SUFFIX
+    return channel_name
+
+
 def _process_channel_pair(channel_name, pair_data, transform, output_dir):
     """Applies deformable warp if needed and saves both layers in parallel."""
     r1_data, r2_data = pair_data['r1_data'], pair_data['r2_data']
+    r2_channel = pair_data.get('r2_channel', channel_name)
     is_label = pair_data['is_label']
 
     final_r2 = r2_data
@@ -915,7 +936,7 @@ def _process_channel_pair(channel_name, pair_data, transform, output_dir):
     with ThreadPoolExecutor(max_workers=2) as save_executor:
         saves = [
             save_executor.submit(_save_aligned_layer, r1_data, constants.ALIGNED_PREFIX, "R1", channel_name, output_dir, is_label),
-            save_executor.submit(_save_aligned_layer, final_r2, r2_prefix, "R2", channel_name, output_dir, is_label),
+            save_executor.submit(_save_aligned_layer, final_r2, r2_prefix, "R2", r2_channel, output_dir, is_label),
         ]
     # An exception raised inside a submitted task stays in its future until it
     # is read. Unread, a failed write (full disk, permissions) would vanish and
@@ -924,7 +945,7 @@ def _process_channel_pair(channel_name, pair_data, transform, output_dir):
         save.result()
 
     r1_result = {'data': r1_data, 'name': f"{constants.ALIGNED_PREFIX} R1 - {channel_name}", 'meta': pair_data['r1_meta'], 'type': 'labels' if is_label else 'image'}
-    r2_result = {'data': final_r2, 'name': f"{r2_prefix} R2 - {channel_name}", 'meta': pair_data['r2_meta'], 'type': 'labels' if is_label else 'image'}
+    r2_result = {'data': final_r2, 'name': f"{r2_prefix} R2 - {r2_channel}", 'meta': pair_data['r2_meta'], 'type': 'labels' if is_label else 'image'}
     return [r1_result, r2_result]
 
 def _save_aligned_layer(data, prefix, round_id, channel_name, output_dir, is_label):

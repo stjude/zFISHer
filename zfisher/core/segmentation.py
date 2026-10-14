@@ -692,9 +692,15 @@ def delete_label(mask_data, label_id):
 
 
 @timed_stage("segmentation_session", fields=lambda a: {"method": a["method"]})
-def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callback=None, method="classical", merge_splits=True, voxel_spacing=None):
+def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callback=None, method="classical", merge_splits=True, voxel_spacing=None,
+                         nuclear_channels=None):
     """
     Core Orchestrator: Runs segmentation on one or both rounds and saves results.
+
+    Each round's mask is saved as ``'<round> - <nuclear channel>_masks'``, the
+    name the later steps look it up by. ``nuclear_channels`` gives the channel
+    per round (``{'R1': 'DAPI', 'R2': 'Hoechst'}``); a round not in it uses the
+    session's nuclear channel.
     """
     # Pass 1: Segment all rounds
     raw_results = {}
@@ -745,7 +751,8 @@ def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callba
         seg_dir.mkdir(exist_ok=True, parents=True)
 
         for prefix, (masks, centroids) in results.items():
-            dapi_layer_name = f"{prefix} - {session.get_nuclear_channel()}"
+            channel = (nuclear_channels or {}).get(prefix) or session.get_nuclear_channel()
+            dapi_layer_name = f"{prefix} - {channel}"
             mask_layer_name = f"{dapi_layer_name}{constants.MASKS_SUFFIX}"
             centroid_layer_name = f"{dapi_layer_name}{constants.CENTROIDS_SUFFIX}"
 
