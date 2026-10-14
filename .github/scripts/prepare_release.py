@@ -7,7 +7,8 @@ It sets the version in ``zfisher/version.py`` and ``CITATION.cff`` (and the
 citation's ``date-released``), renames ``## Unreleased`` in CHANGELOG.md to
 ``## <version> — <date>``, checks the result with ``release_notes.py`` (the
 check the release workflow runs on the tag), and prints the git commands that
-are left to run. It runs no git command itself.
+are left to run. It runs no git command itself. Once the release is merged into
+main, the release workflow tags it and creates the draft release.
 
 Refuses, changing nothing, if the Unreleased section is missing or empty, the
 new version is not higher than the current one, or the changelog already has
@@ -99,11 +100,8 @@ def main(argv=None):
     print("Then commit on v2fixes, push, and merge v2fixes into main with a pull request:")
     print(f'  git commit -am "Release {version}"')
     print("  git push origin v2fixes\n")
-    print("After the merge, tag main and push the tag; that creates the draft release:")
-    print("  git checkout main && git pull")
-    print(f"  git tag v{version}")
-    print(f"  git push origin v{version}")
-    print("\nThen start a new '## Unreleased' section on v2fixes for the next changes.")
+    print(f"After the merge, GitHub tags main v{version}, runs the tests and creates a draft")
+    print("release (Actions > Release). Review the draft under Releases and click Publish.")
 
 
 if __name__ == "__main__":

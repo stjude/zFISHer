@@ -20,6 +20,16 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   (`raw`, or `aligned` for detection on an aligned or warped image). In older
   sessions with several rows for one channel, the report shows the latest.
 
+### Development
+
+- **Releases are tagged automatically.** When a merge into main brings a
+  version made with `prepare_release.py` (one with no tag yet), the release
+  workflow runs the tests, checks the version and changelog, tags the merge
+  commit and creates the draft release. Releasing is now: run the prepare
+  script, commit and push, merge the pull request, publish the draft. Merges
+  that leave the version alone release nothing, and pushing a tag by hand still
+  works.
+
 ## 2.1.2 — 2026-10-14
 
 ### Fixes
