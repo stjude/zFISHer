@@ -128,6 +128,10 @@ def _puncta_widget(
         if _error_holder[0]:
             raise _error_holder[0]
         results = _result_holder[0]
+        if _existing_action is None and len(results):
+            # A new layer: ids the channel has never had (Replace and Merge
+            # number their new rows themselves).
+            results[:, 6] = puncta.allocate_puncta_ids(_puncta_layer_name, len(results))
 
         # Freeze canvas before adding/updating the points layer to prevent
         # vispy from drawing stale GL buffers during processEvents()
@@ -146,8 +150,8 @@ def _puncta_widget(
             viewer.layers.selection.events.changed(added=set(), removed=set())
 
         # Persist the detection parameters for this channel in the session
-        puncta_params_all = session.get_data("puncta_params", default={})
-        puncta_params_all[image_layer.name] = {
+        aligned = image_layer.name.startswith((constants.ALIGNED_PREFIX, constants.WARPED_PREFIX))
+        puncta.record_detection_settings(image_layer.name, {
             'algorithm': method,
             'sensitivity': threshold,
             'min_distance': min_distance,
@@ -157,8 +161,8 @@ def _puncta_widget(
             'tophat': use_tophat,
             'tophat_radius': tophat_radius,
             'num_puncta': len(results),
-        }
-        session.update_data("puncta_params", puncta_params_all)
+            'detected_in': 'aligned' if aligned else 'raw',
+        })
 
         viewer.status = f"Found {len(results)} spots in {image_layer.name}."
 

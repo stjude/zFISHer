@@ -9,7 +9,7 @@ from scipy.spatial import cKDTree
 from ..decorators import require_active_session
 from .. import viewer_helpers
 from ... import constants
-from ...core import timing
+from ...core import puncta, timing
 
 logger = logging.getLogger(__name__)
 
@@ -264,11 +264,13 @@ def _seed_next_puncta_id(layer):
 
 
 def _next_puncta_ids(layer, count):
-    """Allocate ``count`` monotonically increasing puncta_ids for ``layer``."""
+    """Allocate ``count`` monotonically increasing puncta_ids for ``layer``,
+    also above every id its channel has had in the session
+    (``puncta.allocate_puncta_ids``), so an id is not reused after a reload."""
     _seed_next_puncta_id(layer)
-    start = int(layer.metadata['next_puncta_id'])
-    layer.metadata['next_puncta_id'] = start + count
-    return list(range(start, start + count))
+    ids = puncta.allocate_puncta_ids(layer.name, count, [int(layer.metadata['next_puncta_id']) - 1])
+    layer.metadata['next_puncta_id'] = int(ids[-1]) + 1 if count else layer.metadata['next_puncta_id']
+    return [int(i) for i in ids]
 
 
 @timing.timed_action("puncta_data_changed")

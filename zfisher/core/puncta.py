@@ -549,6 +549,90 @@ def sources_of(puncta_data, ids, sources):
                      for pid in np.asarray(puncta_data)[:, 6]], dtype=object)
 
 
+def channel_key(layer_name):
+    """``'R2 - FITC'`` for any image or puncta layer of round R2's FITC channel
+    (``'R2 - FITC'``, ``'Warped R2 - FITC_puncta'``, ``'Aligned R2 - FITC'``),
+    or None if the name does not name a round and channel."""
+    import re
+    name = str(layer_name)
+    if name.endswith(constants.PUNCTA_SUFFIX):
+        name = name[:-len(constants.PUNCTA_SUFFIX)]
+    match = re.fullmatch(rf"(?:(?:{constants.ALIGNED_PREFIX}|{constants.WARPED_PREFIX})\s+)?"
+                         r"(R\d+)\s+-\s+(.+?)\s*", name)
+    return f"{match.group(1)} - {match.group(2)}" if match else None
+
+
+def _channel_ids_on_disk(key):
+    """Every ``puncta_id`` in the session's puncta CSVs of channel ``key``,
+    raw and aligned: the two share ids, so a new id must be new to both."""
+    import pandas as pd
+    from . import session
+    ids = []
+    for name, info in (session.get_data("processed_files", default={}) or {}).items():
+        if channel_key(name) != key or not isinstance(info, dict) or info.get("subtype") != "puncta_csv":
+            continue
+        try:
+            column = pd.read_csv(info["path"], usecols=["puncta_id"])["puncta_id"]
+        except (OSError, KeyError, ValueError):
+            continue
+        ids.extend(pd.to_numeric(column, errors="coerce").dropna().tolist())
+    return ids
+
+
+def allocate_puncta_ids(layer_name, count, existing_ids=()):
+    """``count`` new ``puncta_id`` values for the channel of ``layer_name``,
+    higher than any id the channel has had, so an id never names two puncta.
+
+    The next free id per channel (``channel_key``) is kept in the session's
+    ``puncta_next_id``, so ids deleted or replaced earlier, in this run or a
+    previous one, are not handed out again. Sessions without it start above
+    ``existing_ids`` and the ids in the channel's CSVs. A layer whose name
+    names no round and channel gets ids above ``existing_ids`` only."""
+    import pandas as pd
+    from . import session
+    known = pd.to_numeric(pd.Series(list(existing_ids), dtype=object), errors="coerce").dropna()
+    start = int(known.max()) + 1 if len(known) else 0
+    key = channel_key(layer_name)
+    if key is not None:
+        counters = dict(session.get_data("puncta_next_id", default={}) or {})
+        if key in counters:
+            start = max(start, int(counters[key]))
+        else:
+            on_disk = _channel_ids_on_disk(key)
+            start = max([start] + [int(i) + 1 for i in on_disk])
+        counters[key] = start + count
+        session.update_data("puncta_next_id", counters)
+    return np.arange(start, start + count, dtype=np.int64)
+
+
+def record_detection_settings(layer_name, settings):
+    """Store the settings that made the puncta of ``layer_name``'s channel in
+    the session's ``puncta_params`` under ``channel_key`` (``'R2 - FITC'``),
+    the key batch uses, and drop older entries for the same channel, which GUI
+    detection used to key by image layer (``'Warped R2 - FITC'``). One channel
+    then has one row in the report's Parameters sheet."""
+    from . import session
+    key = channel_key(layer_name) or str(layer_name)
+    params = {k: v for k, v in (session.get_data("puncta_params", default={}) or {}).items()
+              if (channel_key(k) or k) != key}
+    params[key] = dict(settings)
+    session.update_data("puncta_params", params)
+
+
+def detection_settings():
+    """The session's ``puncta_params`` keyed by ``channel_key``. For sessions
+    that hold several entries for one channel (GUI detection on an aligned
+    image before ``record_detection_settings``), the one stored last wins: it
+    describes the detection the channel's current puncta came from."""
+    from . import session
+    out = {}
+    for name, settings in (session.get_data("puncta_params", default={}) or {}).items():
+        key = channel_key(name) or name
+        out.pop(key, None)                  # keep the order in which entries were stored
+        out[key] = settings
+    return out
+
+
 @timed_stage("puncta_detection",
              fields=lambda a: {"layer": a["layer_name"], "method": (a["params"] or {}).get("method")},
              result_fields=n_rows)

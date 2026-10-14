@@ -2,6 +2,24 @@
 
 All notable changes to zFISHer. Versions follow [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Puncta IDs and detection settings
+
+- **A `puncta_id` is never given to a second punctum.** Re-running detection
+  with Replace used to number the new puncta from 0 (or from the highest kept
+  manual punctum), so the ids of the puncta it removed were reused for
+  different ones. Replace, Replace All, Merge and points added by hand now take
+  ids higher than any the channel has had. The next free id is kept in the
+  session file (`puncta_next_id`), so this holds after reopening a session too.
+  Sessions without it start above the ids in that channel's puncta CSVs.
+- **One channel has one row in the report's Parameters sheet.** GUI detection
+  stored its settings under the image layer's name (`Warped R2 - FITC`) while
+  batch used `R2 - FITC`, so re-detecting a batch channel added a second row and
+  left the old one. Both now use `R2 - FITC`, and the row gives `detected_in`
+  (`raw`, or `aligned` for detection on an aligned or warped image). In older
+  sessions with several rows for one channel, the report shows the latest.
+
 ## 2.1.1 — 2026-10-13
 
 ### Raw images

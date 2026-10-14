@@ -657,7 +657,8 @@ def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, 
     distribution_df = calculate_distribution(per_nucleus_df, total_nuclei=total_nuclei)
 
     # 5. Build parameters sheet from session puncta_params
-    puncta_params = session.get_data("puncta_params", default={})
+    from .puncta import detection_settings
+    puncta_params = detection_settings()
     if puncta_params:
         params_rows = []
         for channel, params in puncta_params.items():

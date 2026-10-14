@@ -599,6 +599,10 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
     if layer_name in viewer.layers and existing_action:
         pts_layer = viewer.layers[layer_name]
 
+        # New rows get ids the channel has never had, above the ones they
+        # replace too, so an id never names two different puncta.
+        old_ids = pts_layer.features['puncta_id'] if 'puncta_id' in pts_layer.features.columns else ()
+
         if existing_action in ('replace', 'replace_all'):
             # Replace the detected puncta; 'replace' keeps the ones placed by
             # hand, and new points on top of one of them are dropped.
@@ -611,21 +615,20 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
                 fresh = dists > 3            # the merge's min_distance
                 coords = np.vstack([kept_coords, coords[fresh]])
                 added = new_features.iloc[fresh.nonzero()[0]].reset_index(drop=True)
-                # New ids continue after the kept ones. A kept punctum without
-                # an id gets one too, so no row is left without.
+                # A kept punctum without an id gets one too, so no row is left without.
                 if 'puncta_id' in kept_features.columns:
                     kept_ids = pd.to_numeric(kept_features['puncta_id'], errors='coerce')
                 else:
                     kept_ids = pd.Series(np.nan, index=kept_features.index)
-                known = kept_ids.dropna()
-                start = int(known.max()) + 1 if len(known) else 0
                 missing = kept_ids.isna().to_numpy()
-                kept_ids[missing] = np.arange(start, start + missing.sum())
+                ids = _puncta.allocate_puncta_ids(layer_name, int(missing.sum()) + len(added), old_ids)
+                kept_ids[missing] = ids[:missing.sum()]
                 kept_features['puncta_id'] = kept_ids.astype(np.int64)
-                start += int(missing.sum())
-                added['puncta_id'] = np.arange(start, start + len(added))
+                added['puncta_id'] = ids[missing.sum():]
                 new_features = pd.concat([kept_features, added], ignore_index=True)
                 logger.info("Replace on '%s' kept %d manual puncta", layer_name, int(kept.sum()))
+            else:
+                new_features['puncta_id'] = _puncta.allocate_puncta_ids(layer_name, len(new_features), old_ids)
             pts_layer.visible = False
             set_points_data(pts_layer, coords)
             pts_layer.features = new_features
@@ -652,13 +655,7 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
                 viewer.status = "No new unique puncta to add (all duplicates)."
                 return
 
-            # Assign new IDs continuing from existing max
-            if not existing_features.empty and 'puncta_id' in existing_features:
-                max_id = existing_features['puncta_id'].dropna().max()
-                next_id = int(max_id) + 1 if pd.notna(max_id) else 0
-            else:
-                next_id = 0
-            new_features['puncta_id'] = np.arange(next_id, next_id + len(new_features))
+            new_features['puncta_id'] = _puncta.allocate_puncta_ids(layer_name, len(new_features), old_ids)
 
             combined_coords = np.vstack([existing_coords, coords])
             combined_features = pd.concat([existing_features, new_features], ignore_index=True)
