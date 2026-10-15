@@ -447,6 +447,13 @@ _detect_on_original.setChecked(True)
 _detect_on_original.setToolTip(_DETECT_ON_ORIGINAL_TIP)
 _detect_on_original.setVisible(False)
 _inner.insertWidget(_inner.indexOf(_algo_header) - 2, _detect_on_original)
+# Why the box is greyed out, shown under it rather than only on hover.
+_original_note = QLabel("")
+_original_note.setWordWrap(True)
+_original_note.setMinimumWidth(0)
+_original_note.setStyleSheet("color: #f9e2af; margin: 2px 2px 4px 2px; font-size: 12px;")
+_original_note.setVisible(False)
+_inner.insertWidget(_inner.indexOf(_detect_on_original) + 1, _original_note)
 
 
 def _update_detect_on_original(layer):
@@ -454,6 +461,7 @@ def _update_detect_on_original(layer):
     the session has a saved registration to warp with."""
     aligned = layer is not None and layer.name.startswith((constants.ALIGNED_PREFIX, constants.WARPED_PREFIX))
     _detect_on_original.setVisible(bool(aligned))
+    _original_note.setVisible(False)
     if not aligned:
         return
     from ...core import stages
@@ -462,6 +470,8 @@ def _update_detect_on_original(layer):
         _detect_on_original.setChecked(True)       # the default again, after a session that could not
     _detect_on_original.setEnabled(ok)
     _detect_on_original.setToolTip(_DETECT_ON_ORIGINAL_TIP if ok else f"Not available: {reason}")
+    _original_note.setText(reason or "")
+    _original_note.setVisible(not ok)
     if not ok:
         _detect_on_original.setChecked(False)
 

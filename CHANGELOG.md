@@ -34,6 +34,12 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   leaves the aligned puncta marked out of date. For R2 the original image is
   placed by the rigid shift only, so it sits close to, not exactly on, the
   warped data.
+- **Sessions made before 2.1.0** have no saved warp, so neither feature above
+  works in them. Puncta Detection says so under the greyed-out box, and so does
+  the picking page: detecting on the aligned image still works, and the report
+  says so; re-running the dataset through batch with zFISHer 2.1 or later makes
+  both available. A folder missing its saved warp file
+  (`aligned/registration_bspline.tfm`) is named as such.
 - When puncta are warped into aligned space with puncta outside nuclei
   removed, as batch does, puncta placed by hand are kept wherever they are.
 - **The report's Parameters sheet says how each channel was detected**, in a

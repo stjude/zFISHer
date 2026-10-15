@@ -464,14 +464,25 @@ def status():
 
 # --- Re-detecting one channel of a reopened session ------------------------------
 
+NO_SAVED_WARP = (
+    "This session has no saved warp: it was made before zFISHer 2.1.0, or its canvas was never "
+    "generated. Detecting on the aligned image still works, and the report says so. To detect on "
+    "the original image and warp, or to pick on it, run the dataset through batch again with "
+    "zFISHer 2.1 or later.")
+
+
 def can_rewarp():
     """``(True, None)`` when puncta detected on a raw image can be warped into
-    this session's aligned space, else ``(False, reason)``: sessions made
-    before 2.1.0 have no saved registration."""
+    this session's aligned space, else ``(False, message)``, a message for
+    the user: sessions made before 2.1.0 have no saved warp, and a folder can
+    be missing the saved warp's file."""
     try:
         registration.load_registration()
-    except (LookupError, FileNotFoundError) as exc:
-        return False, str(exc)
+    except LookupError:
+        return False, NO_SAVED_WARP
+    except FileNotFoundError as exc:
+        return False, (f"{exc} Puncta cannot be warped again until it is put back in the session's "
+                       f"aligned folder; or run the dataset through batch again.")
     return True, None
 
 

@@ -150,9 +150,11 @@ def test_the_tick_box_follows_the_layer_and_the_saved_registration(gui):
     session.update_data("registration", {})                     # a session made before 2.1.0
     gui.widget._update_detect_on_original(gui.image)
     assert not box.isEnabled() and not box.isChecked() and box.toolTip().startswith("Not available:")
+    note = gui.widget._original_note
+    assert note.isVisibleTo(note.parentWidget()) and note.text() == stages.NO_SAVED_WARP
     session.update_data("registration", saved)
     gui.widget._update_detect_on_original(gui.image)
-    assert box.isEnabled() and box.isChecked()
+    assert box.isEnabled() and box.isChecked() and not note.isVisibleTo(note.parentWidget())
 
 
 def test_without_the_original_image_nothing_changes(gui, monkeypatch):

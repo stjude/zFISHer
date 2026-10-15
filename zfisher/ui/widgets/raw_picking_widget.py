@@ -63,6 +63,10 @@ class RawPickingWidget(Container):
         self._status = QLabel("")
         self._status.setWordWrap(True)
         self._status.setStyleSheet("margin: 4px 2px; font-size: 12px;")
+        self._unavailable = QLabel("")
+        self._unavailable.setWordWrap(True)
+        self._unavailable.setStyleSheet("color: #f9e2af; margin: 4px 2px; font-size: 12px;")
+        self._unavailable.setVisible(False)
 
     def _init_layout(self):
         desc = QLabel(_DESCRIPTION)
@@ -73,7 +77,7 @@ class RawPickingWidget(Container):
         layout = self.native.layout()
         layout.setSpacing(2)
         layout.setContentsMargins(0, 0, 0, 0)
-        for widget in (self._header.native, self._info.native, _make_divider(), desc, form.native,
+        for widget in (self._header.native, self._info.native, _make_divider(), desc, self._unavailable, form.native,
                        self.show_mask.native, self.open_btn.native, self.warp_btn.native,
                        self.close_btn.native, self._status):
             layout.addWidget(widget)
@@ -94,10 +98,16 @@ class RawPickingWidget(Container):
 
     def reset_choices(self):
         self.channel.reset_choices()
+        self._update_buttons()
 
     def _update_buttons(self):
         open_ = self._active is not None
-        self.open_btn.enabled = not open_
+        ok, reason = (True, None)
+        if not open_ and self._channel_choices():
+            ok, reason = stages.can_rewarp()
+        self._unavailable.setText(reason or "")
+        self._unavailable.setVisible(not ok)
+        self.open_btn.enabled = not open_ and ok
         self.channel.enabled = not open_
         self.show_mask.enabled = not open_
         self.warp_btn.enabled = open_
@@ -145,8 +155,7 @@ class RawPickingWidget(Container):
             return
         ok, reason = stages.can_rewarp()
         if not ok:
-            popups.show_warning_popup(self._viewer.window._qt_window, "Cannot Pick on the Original Image",
-                                      f"Picks on the original image cannot be warped in this session: {reason}")
+            popups.show_warning_popup(self._viewer.window._qt_window, "Cannot Pick on the Original Image", reason)
             return
         round_id, channel = key.split(" - ", 1)
         raw_name = stages.raw_puncta_name(round_id, channel)

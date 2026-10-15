@@ -330,7 +330,13 @@ def test_can_rewarp_only_with_a_saved_registration(reopened):
     assert stages.can_rewarp() == (True, None)
     session.update_data("registration", {})
     ok, reason = stages.can_rewarp()
-    assert not ok and "no saved registration" in reason
+    assert not ok and reason == stages.NO_SAVED_WARP and "run the dataset through batch again" in reason
+
+
+def test_a_missing_warp_file_is_named(reopened):
+    (reopened.out / constants.ALIGNED_DIR / constants.REGISTRATION_TRANSFORM_FILE).unlink()
+    ok, reason = stages.can_rewarp()
+    assert not ok and "registration_bspline.tfm is missing" in reason and "put back" in reason
 
 
 # --- how a channel was detected, in the report -----------------------------------

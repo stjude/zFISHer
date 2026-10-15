@@ -161,10 +161,15 @@ def test_closing_without_warping_keeps_the_picks_and_says_the_channel_is_out_of_
 
 
 def test_a_session_without_a_saved_registration_cannot_open(gui):
+    note = gui.widget._unavailable
+    assert not note.isVisibleTo(note.parentWidget()) and gui.widget.open_btn.enabled
     session.update_data("registration", {})
+    gui.widget.reset_choices()
+    assert note.isVisibleTo(note.parentWidget()) and note.text() == stages.NO_SAVED_WARP
+    assert not gui.widget.open_btn.enabled
     gui.widget.channel.value = f"R2 - {CHANNEL}"
     gui.widget._on_open()
-    assert gui.shown and gui.shown[0][1] == "Cannot Pick on the Original Image"
+    assert gui.shown and gui.shown[0][1:] == ("Cannot Pick on the Original Image", stages.NO_SAVED_WARP)
     assert f"R2 - {CHANNEL}" not in gui.model.layers
 
 
