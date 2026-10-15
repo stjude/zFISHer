@@ -122,6 +122,11 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Development
 
+- A regression test for the 3D-rotation crash (`tests/test_3d_rotation.py`)
+  rotates the 3D view of a session with puncta, ID labels and capture arrows in
+  zFISHer's real window and draws every frame; it is skipped on machines
+  without a display. `tools/app_driver.py` drives that window from a script,
+  so GUI changes can be checked without someone at the screen.
 - **Releases are tagged automatically.** When a merge into main brings a
   version made with `prepare_release.py` (one with no tag yet), the release
   workflow runs the tests, checks the version and changelog, tags the merge
