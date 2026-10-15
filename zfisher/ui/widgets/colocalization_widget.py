@@ -172,7 +172,7 @@ _tri_clear_btn.clicked.connect(_on_clear_tri_rules)
 # =====================================================================
 
 _filename = LineEdit(label="Report Name", value="zFISHer_Analysis_Report.xlsx", tooltip="Filename for the exported Excel report (without extension).")
-_export_btn = PushButton(text="Run Analysis & Export Master Report", tooltip="Run colocalization analysis on all rules and export the master report.")
+_export_btn = PushButton(text="Run Analysis && Export Master Report", tooltip="Run colocalization analysis on all rules and export the master report.")
 
 
 @require_active_session("Please start or load a session before exporting.")

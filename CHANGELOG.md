@@ -77,6 +77,9 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Fixes
 
+- Labels with "&" show it again: "Run Analysis & Export Master Report", the
+  "Colocalization & Export" page and "Match & Merge Nuclei" showed a gap
+  instead, because Qt reads a single "&" as a keyboard shortcut.
 - Editing a raw-space puncta layer no longer drops its `space: raw` mark in the
   session, which made the next reopen draw raw puncta over the aligned images.
 - **A copied output folder uses its own files.** Opening the session of a
