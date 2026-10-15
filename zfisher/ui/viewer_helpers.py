@@ -440,6 +440,27 @@ def ask_replace_or_merge(parent, layer_name, n_existing, n_manual=0):
     return dlg._result_action
 
 
+def show_puncta_csv(viewer, name, csv_path, source_layer):
+    """Show the puncta CSV at ``csv_path`` as the points layer ``name``: its
+    points and features replaced in place when the layer exists (a locked
+    aligned layer stays locked), otherwise a new layer with ``source_layer``'s
+    scale and translate. Returns the layer."""
+    from . import events
+    if name in viewer.layers:
+        layer = viewer.layers[name]
+        table = pd.read_csv(csv_path, float_precision="round_trip")
+        set_points_data(layer, table[['Z', 'Y', 'X']].to_numpy(float), table.drop(columns=['Z', 'Y', 'X']))
+        # The data event's autosave ran before the features were assigned.
+        events.save_puncta_layer(layer)
+        layer.refresh()
+        return layer
+    _load_points_layer(viewer, name, Path(csv_path), source_layer.scale, {'subtype': 'puncta_csv'},
+                       source_layer.translate)
+    layer = viewer.layers[name]
+    layer.visible = True
+    return layer
+
+
 def manual_mask(features):
     """Which rows of a puncta feature table were placed by hand."""
     if features is None or 'Source' not in getattr(features, 'columns', ()):

@@ -4,6 +4,25 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ## Unreleased
 
+### Re-detecting a channel of a reopened session
+
+- **A channel can be re-detected on its original image and warped again**,
+  without registering again, in sessions made with 2.1.0 or later. In Puncta
+  Detection, choose the channel's aligned or warped image layer and keep
+  **Detect on the original image, then warp (as batch does)** ticked: zFISHer
+  reads that channel of the round's raw image (asking where it is if it has
+  moved), detects with the settings in the widget inside the round's own nuclei
+  mask, warps the puncta with the session's saved registration, and replaces
+  the aligned puncta layer in place. Replace keeps the puncta placed by hand,
+  on the raw or the aligned image; Replace All drops them; Merge adds the new
+  puncta to the old ones.
+- Unticked, detection runs on the aligned image itself, as before. For R2 that
+  is the image after resampling, not the method batch uses, so zFISHer asks
+  first.
+- The export section says when the report is out of date and why (a channel
+  was re-detected, puncta were changed, the consensus mask was edited); export
+  again to update it. The status bar says the same after a re-detection.
+
 ### Puncta IDs and detection settings
 
 - **A `puncta_id` is never given to a second punctum.** Re-running detection

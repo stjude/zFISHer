@@ -454,3 +454,54 @@ def status():
             round_id, channel = key.split(" - ", 1)
             aligned.append(_aligned_status(round_id, channel, raw_csv, saved, consensus_sha))
     return aligned + [_report_status(aligned, consensus_sha)]
+
+
+# --- Re-detecting one channel of a reopened session ------------------------------
+
+def can_rewarp():
+    """``(True, None)`` when puncta detected on a raw image can be warped into
+    this session's aligned space, else ``(False, reason)``: sessions made
+    before 2.1.0 have no saved registration."""
+    try:
+        registration.load_registration()
+    except (LookupError, FileNotFoundError) as exc:
+        return False, str(exc)
+    return True, None
+
+
+def redetect_channel(round_id, channel, params, existing="replace", image_path=None, consensus_mask=None,
+                     run_by="gui", progress_callback=None):
+    """Re-detect ``channel`` of ``round_id`` on its raw image and warp it into
+    aligned space again: ``detect_channel`` then ``transform_channel``, the
+    method batch uses. Returns ``(raw_csv, aligned_csv)``; either is None when
+    there was nothing to write.
+
+    ``existing`` is as for ``detect_channel``. Puncta placed by hand on the
+    aligned layer are kept unless it is ``'replace_all'``. The GUI resolves
+    ``image_path`` first, where it can ask for a moved file, and passes the
+    consensus mask it shows."""
+    def step(start, span):
+        if progress_callback is None:
+            return None
+        return lambda p, text: progress_callback(start + int(p * span / 100), text)
+    raw_csv = detect_channel(round_id, channel, params=params, existing=existing, image_path=image_path,
+                             run_by=run_by, progress_callback=step(0, 85))
+    if raw_csv is None:
+        return None, None
+    if progress_callback: progress_callback(85, f"Warping {round_id} {channel} into aligned space...")
+    aligned_csv = transform_channel(round_id, channel, keep_aligned_manual=existing != "replace_all",
+                                    run_by=run_by, consensus_mask=consensus_mask)
+    if progress_callback: progress_callback(100, f"{round_id} {channel} re-detected and warped.")
+    return raw_csv, aligned_csv
+
+
+def report_note():
+    """A sentence for the GUI when the session's report is out of date, else
+    None (also when there is no report yet, or it is too old to tell)."""
+    report = status()[-1]
+    if report.state != STALE:
+        return None
+    more = len(report.reasons) - 1
+    return (f"The report {report.name} is out of date: {report.reasons[0]}"
+            + (f" (and {more} more change{'s' if more > 1 else ''})" if more else "")
+            + ". Export it again to update it.")

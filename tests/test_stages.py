@@ -310,3 +310,24 @@ def test_sessions_made_before_fingerprints_were_kept(reopened):
     raw_csv = constants.puncta_csv_path(reopened.reports, stages.raw_puncta_name("R2", CHANNEL))
     puncta.record_puncta(raw_csv, "detected")
     assert _states()[_aligned_name("R2")] == ("stale", True)
+
+
+# --- re-detecting one channel -----------------------------------------------------
+
+def test_redetect_channel_detects_and_warps_and_says_the_report_is_out_of_date(reopened):
+    report = _export_report(reopened)
+    assert stages.report_note() is None
+    params = dict(stages.recorded_detection_parameters("R2", CHANNEL), threshold_rel=0.6)
+    raw_csv, aligned_csv = stages.redetect_channel("R2", CHANNEL, params)
+    assert raw_csv.name == "R2_-_FITC_puncta.csv" and aligned_csv.name == "Warped_R2_-_FITC_puncta.csv"
+    assert _states()[_aligned_name("R2")] == ("fresh", False)
+    note = stages.report_note()
+    assert note.startswith(f"The report {report.name} is out of date: the puncta in Warped_R2_-_FITC_puncta.csv")
+    assert note.endswith("Export it again to update it.")
+
+
+def test_can_rewarp_only_with_a_saved_registration(reopened):
+    assert stages.can_rewarp() == (True, None)
+    session.update_data("registration", {})
+    ok, reason = stages.can_rewarp()
+    assert not ok and "no saved registration" in reason
