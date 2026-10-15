@@ -331,3 +331,30 @@ def test_can_rewarp_only_with_a_saved_registration(reopened):
     session.update_data("registration", {})
     ok, reason = stages.can_rewarp()
     assert not ok and "no saved registration" in reason
+
+
+# --- how a channel was detected, in the report -----------------------------------
+
+def test_the_report_says_how_each_channel_was_detected(reopened):
+    report = _export_report(reopened)
+    sheet = pd.read_excel(report, sheet_name=constants.PARAMETERS_SHEET).set_index("Channel")
+    assert list(sheet.columns[:1]) == ["Detected on"] and "detected_in" not in sheet.columns
+    assert sheet.loc[f"R1 - {CHANNEL}", "Detected on"] == \
+        "Original image, then shifted into aligned space (the batch method)"
+    assert sheet.loc[f"R2 - {CHANNEL}", "Detected on"] == \
+        "Original image, then warped into aligned space (the batch method)"
+
+
+def test_detection_on_the_aligned_image_is_named_as_such(reopened):
+    for round_id in ("R1", "R2"):
+        aligned_csv = constants.puncta_csv_path(reopened.reports, _aligned_name(round_id))
+        puncta.record_puncta(aligned_csv, "detected", detected_in="aligned", space="aligned", run_by="gui")
+    assert stages.detection_method("R1", CHANNEL) == "Aligned image (for R1 the same voxels as the original)"
+    assert stages.detection_method("R2", CHANNEL) == \
+        "Warped image: R2 after resampling, which differs from the batch method"
+    stages.redetect_channel("R2", CHANNEL, stages.recorded_detection_parameters("R2", CHANNEL))
+    assert stages.detection_method("R2", CHANNEL).startswith("Original image, then warped")
+
+
+def test_a_channel_with_no_record_is_not_guessed(reopened):
+    assert stages.detection_method("R1", "Cy5") == "Not recorded"

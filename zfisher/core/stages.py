@@ -505,3 +505,33 @@ def report_note():
     return (f"The report {report.name} is out of date: {report.reasons[0]}"
             + (f" (and {more} more change{'s' if more > 1 else ''})" if more else "")
             + ". Export it again to update it.")
+
+
+# --- How a channel's puncta were detected, for the report --------------------------
+
+def detection_method(round_id, channel):
+    """In words, for the report's Parameters sheet, how the channel's current
+    aligned puncta were made: detected on the original image and then moved
+    into aligned space (the batch method), or detected on the aligned image,
+    which for R2 is the image after resampling and differs from batch."""
+    reports = _reports_dir()
+    detected_in = warped = None
+    for prefix in (constants.WARPED_PREFIX, constants.ALIGNED_PREFIX):
+        csv = constants.puncta_csv_path(reports, f"{prefix} {round_id} - {channel}{constants.PUNCTA_SUFFIX}")
+        if csv.exists():
+            warped = prefix == constants.WARPED_PREFIX
+            made = [r for r in provenance.records(csv) if r.get("event") in ("transformed", "detected")]
+            if made:
+                detected_in = "raw" if made[-1]["event"] == "transformed" else made[-1].get("detected_in")
+            break
+    if detected_in is None:
+        detected_in = (puncta.detection_settings().get(f"{round_id} - {channel}") or {}).get("detected_in")
+    if detected_in == "raw":
+        moved = "warped" if warped else "shifted"
+        return f"Original image, then {moved} into aligned space (the batch method)"
+    if detected_in == "aligned":
+        if round_id == "R1":
+            return "Aligned image (for R1 the same voxels as the original)"
+        image = "Warped" if warped else "Aligned"
+        return f"{image} image: R2 after resampling, which differs from the batch method"
+    return "Not recorded"

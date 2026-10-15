@@ -22,6 +22,12 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 - The export section says when the report is out of date and why (a channel
   was re-detected, puncta were changed, the consensus mask was edited); export
   again to update it. The status bar says the same after a re-detection.
+- **The report's Parameters sheet says how each channel was detected**, in a
+  new **Detected on** column after Channel: on the original image and then
+  shifted (R1) or warped (R2) into aligned space, the batch method; or on the
+  aligned image, which for R2 is the image after resampling and differs from
+  batch. It is read from the record of the channel's current puncta, and says
+  "Not recorded" where there is none.
 
 ### Puncta IDs and detection settings
 
@@ -35,9 +41,8 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 - **One channel has one row in the report's Parameters sheet.** GUI detection
   stored its settings under the image layer's name (`Warped R2 - FITC`) while
   batch used `R2 - FITC`, so re-detecting a batch channel added a second row and
-  left the old one. Both now use `R2 - FITC`, and the row gives `detected_in`
-  (`raw`, or `aligned` for detection on an aligned or warped image). In older
-  sessions with several rows for one channel, the report shows the latest.
+  left the old one. Both now use `R2 - FITC`. In older sessions with several
+  rows for one channel, the report shows the latest.
   Batch rows now also give `z_scale`, as GUI rows did.
 
 ### Provenance

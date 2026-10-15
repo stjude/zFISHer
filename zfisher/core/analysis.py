@@ -660,10 +660,13 @@ def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, 
     from .puncta import detection_settings
     puncta_params = detection_settings()
     if puncta_params:
+        from .stages import detection_method
         params_rows = []
         for channel, params in puncta_params.items():
             row = {'Channel': channel}
-            row.update(params)
+            if " - " in channel:
+                row['Detected on'] = detection_method(*channel.split(" - ", 1))
+            row.update({k: v for k, v in params.items() if k != 'detected_in'})
             params_rows.append(row)
         params_df = pd.DataFrame(params_rows)
     else:
