@@ -84,6 +84,10 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   traceback. With a corrupt arrow this happened as soon as the 3D view was
   drawn, which fits the 3D-rotation crash reports. Such values are now
   skipped, and the painter is always closed.
+- Undo in the Puncta Editor swaps the points through the same routine as
+  every other change to a puncta layer, which clears napari's drawing cache
+  first; changing the number of points against a stale cache can corrupt what
+  is drawn.
 - Labels with "&" show it again: "Run Analysis & Export Master Report", the
   "Colocalization & Export" page and "Match & Merge Nuclei" showed a gap
   instead, because Qt reads a single "&" as a keyboard shortcut.

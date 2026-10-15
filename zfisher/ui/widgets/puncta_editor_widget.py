@@ -59,7 +59,6 @@ class _PunctaUndoStack:
                 # then restore the format string once features are valid.
                 was_visible = target.visible
                 target.visible = False
-                target._Points__indices_view = np.empty(0, int)
                 # Save and replace text encoding with safe constant
                 saved_text_format = None
                 try:
@@ -67,8 +66,8 @@ class _PunctaUndoStack:
                     target.text.string.format = ''
                 except AttributeError:
                     pass
-                target.data = data
-                target.features = features
+                # The GL-safe swap: index cache cleared first, features after data.
+                viewer_helpers.set_points_data(target, data, features)
                 # Restore the format string now that features are valid
                 if saved_text_format is not None:
                     target.text.string.format = saved_text_format
