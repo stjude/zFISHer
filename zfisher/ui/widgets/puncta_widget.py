@@ -52,6 +52,14 @@ def _puncta_widget(
                 image_layer.name, nuclei_layer.name if nuclei_layer else None,
                 nuclei_only, method, threshold, min_distance, sigma, z_scale, use_tophat, tophat_radius)
 
+    # Detecting on an aligned or warped R2 image is not batch's method: ask
+    # that first, before what to do with the puncta already there.
+    aligned = image_layer.name.startswith((constants.ALIGNED_PREFIX, constants.WARPED_PREFIX))
+    on_original = aligned and _detect_on_original.isEnabled() and _detect_on_original.isChecked()
+    key = puncta.channel_key(image_layer.name)
+    if aligned and not on_original and key and key.startswith("R2 - ") and not _confirm_aligned_r2(viewer, image_layer):
+        return
+
     # Check if puncta layer already exists — ask before running detection
     _puncta_layer_name = f"{image_layer.name}{constants.PUNCTA_SUFFIX}"
     _existing_action = None
@@ -76,12 +84,8 @@ def _puncta_widget(
         'nuclei_only': nuclei_only
     }
 
-    aligned = image_layer.name.startswith((constants.ALIGNED_PREFIX, constants.WARPED_PREFIX))
-    if aligned and _detect_on_original.isEnabled() and _detect_on_original.isChecked():
+    if on_original:
         _redetect_on_original(viewer, image_layer, params, _existing_action)
-        return
-    key = puncta.channel_key(image_layer.name)
-    if aligned and key and key.startswith("R2 - ") and not _confirm_aligned_r2(viewer, image_layer):
         return
 
     with popups.ProgressDialog(viewer.window._qt_window, f"Processing {image_layer.name}...") as dialog:
