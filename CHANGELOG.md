@@ -77,6 +77,13 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Fixes
 
+- **The capture arrows and the scale bar no longer crash zFISHer on a value
+  they cannot draw.** A corrupt arrow endpoint, or a camera zoom of nan or
+  infinity, raised inside their drawing code; Qt's painter was left open, and
+  the next redraw could end zFISHer with a segmentation fault and no
+  traceback. With a corrupt arrow this happened as soon as the 3D view was
+  drawn, which fits the 3D-rotation crash reports. Such values are now
+  skipped, and the painter is always closed.
 - Labels with "&" show it again: "Run Analysis & Export Master Report", the
   "Colocalization & Export" page and "Match & Merge Nuclei" showed a gap
   instead, because Qt reads a single "&" as a keyboard shortcut.

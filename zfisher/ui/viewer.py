@@ -53,6 +53,10 @@ from qtpy.QtCore import Qt, QPoint, QTimer, QEvent
 
 # ... (keep existing imports) ...
 
+# Painted coordinates must fit Qt's int pixels; far beyond any screen is not drawn.
+_MAX_PAINT_PX = 1e7
+
+
 class DraggableScaleBar(QWidget):
     def __init__(self, viewer, parent=None):
         super().__init__(parent)
@@ -101,7 +105,9 @@ class DraggableScaleBar(QWidget):
 
     def on_zoom(self, event=None):
         zoom = self.viewer.camera.zoom
-        if zoom == 0: return
+        # nan, inf, zero or negative (a camera mid-transition): nothing to measure,
+        # and math.log10 below would raise.
+        if not (math.isfinite(zoom) and zoom > 0): return
         target_px = 150
         
         # napari's camera.zoom is canvas-pixels per WORLD unit, and the world unit
@@ -113,7 +119,7 @@ class DraggableScaleBar(QWidget):
         um_per_canvas_px = 1.0 / zoom
 
         target_um = target_px * um_per_canvas_px
-        if target_um <= 0: return
+        if not (math.isfinite(target_um) and target_um > 0): return
 
         exponent = math.floor(math.log10(target_um))
         fraction = target_um / (10 ** exponent)
@@ -131,20 +137,31 @@ class DraggableScaleBar(QWidget):
         self.update()
 
     def paintEvent(self, event):
+        # An exception in here is swallowed by PySide and leaves the painter
+        # active, and the next repaint can end the process (a native crash with
+        # no traceback): never let one escape, and always end the painter.
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setPen(self.font_color)
-        painter.setFont(self.font)
-        rect = self.rect()
-        text_rect = painter.boundingRect(rect, Qt.AlignHCenter | Qt.AlignTop, self.text)
-        total_h = text_rect.height() + 5 + 6
-        start_y = (rect.height() - total_h) / 2
-        painter.drawText(rect.left(), int(start_y), rect.width(), text_rect.height(), Qt.AlignHCenter, self.text)
-        bar_y = start_y + text_rect.height() + 5
-        start_x = (rect.width() - self.bar_length_px) / 2
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(self.pen_color)
-        painter.drawRect(int(start_x), int(bar_y), int(self.bar_length_px), 6)
+        try:
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setPen(self.font_color)
+            painter.setFont(self.font)
+            rect = self.rect()
+            text_rect = painter.boundingRect(rect, Qt.AlignHCenter | Qt.AlignTop, self.text)
+            total_h = text_rect.height() + 5 + 6
+            start_y = (rect.height() - total_h) / 2
+            painter.drawText(rect.left(), int(start_y), rect.width(), text_rect.height(), Qt.AlignHCenter, self.text)
+            length = self.bar_length_px
+            if not (math.isfinite(length) and 0 < length < _MAX_PAINT_PX):
+                return
+            bar_y = start_y + text_rect.height() + 5
+            start_x = (rect.width() - length) / 2
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(self.pen_color)
+            painter.drawRect(int(start_x), int(bar_y), int(length), 6)
+        except Exception:
+            logger.exception("Scale bar could not be painted")
+        finally:
+            painter.end()
         
     def mousePressEvent(self, event):
         if self.locked: return
