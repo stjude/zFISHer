@@ -96,6 +96,19 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   reported missing instead of being read from the original. Raw images outside
   the output folder are opened where they are, as before.
 
+### Diagnostics
+
+- **A native crash now leaves a Python stack.** A segfault or access violation
+  inside Qt or OpenGL used to end zFISHer with nothing in the session log. Now
+  the Python stack of every thread is written to `crash_<time>.log`, in the
+  session's `logs/` folder (before a session is open: `~/Library/Logs/zFISHer`
+  on macOS, `%LOCALAPPDATA%\zFISHer\Logs` on Windows). A run that ends normally
+  leaves no crash file.
+- **Errors napari catches are logged.** zFISHer hides napari's error
+  pop-ups, and with them every error raised inside a napari event handler.
+  Those errors, with their tracebacks, now go to the session log
+  ("Error caught by napari: ..."); the pop-ups stay hidden.
+
 ### Development
 
 - **Releases are tagged automatically.** When a merge into main brings a

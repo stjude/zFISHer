@@ -96,6 +96,10 @@ class App:
         from zfisher.ui.viewer import launch_zfisher
         launch_zfisher()
         self.viewer = napari.current_viewer()
+        # napari.run() installs napari's exception hooks for the event loop
+        # (``with notification_manager:``); do the same, since it is skipped.
+        from napari.utils.notifications import notification_manager
+        notification_manager.install_hooks()
         win = self.viewer.window._qt_window
         self.wait(0.5)
         self.log(f"zFISHer started, window {win.width()}x{win.height()}")
@@ -105,6 +109,8 @@ class App:
         """Write the log and end the process (see the module docstring)."""
         self.log(f"finished, {len(self.popups_seen)} pop-up(s) answered")
         self._log.close()
+        from zfisher.core import crash_log
+        crash_log.disable()               # os._exit skips the exit handler that tidies it
         sys.stdout.flush()
         sys.stderr.flush()
         os._exit(code)

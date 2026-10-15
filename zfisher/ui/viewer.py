@@ -241,6 +241,10 @@ def _patch_vispy_arcball():
         pass
 
 def launch_zfisher():
+    # A native crash (Qt, OpenGL) leaves a Python stack; the session log takes
+    # it over when a session opens.
+    from ..core import crash_log
+    crash_log.enable(crash_log.user_log_dir())
     _patch_vispy_arcball()
 
     # FIX: Ensure QApplication is initialized properly
@@ -283,6 +287,9 @@ def launch_zfisher():
     try:
         from napari.utils.notifications import notification_manager
         notification_manager.notification_ready.block()
+        # ...but keep the errors napari catches, in the log.
+        from .diagnostics import log_caught_errors
+        log_caught_errors(notification_manager)
     except Exception:
         pass
 
