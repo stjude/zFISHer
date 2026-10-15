@@ -181,7 +181,7 @@ def _confirm_aligned_r2(viewer, image_layer):
             "is not the method batch uses (detect on the original R2 image, then warp the puncta), and "
             "the puncta can differ. The report will say this channel was detected on the aligned image.")
     if _detect_on_original.isEnabled():
-        text += "\n\nTick \"Detect on the original image, then warp\" to use batch's method instead."
+        text += "\n\nTick \"Detect on original image, then warp\" to use batch's method instead."
     return popups.show_yes_no_popup(viewer.window._qt_window, "Detect on the aligned R2 image?",
                                     text + "\n\nDetect on the aligned image anyway?")
 
@@ -433,10 +433,10 @@ _inner.insertWidget(22, _bg_desc)
 
 # --- "Detect on the original image" (aligned and warped image layers only) ---
 from qtpy.QtWidgets import QCheckBox
-_detect_on_original = QCheckBox("Detect on the original image, then warp (as batch does)")
+_detect_on_original = QCheckBox("Detect on original image, then warp")
 _DETECT_ON_ORIGINAL_TIP = (
     "Detect on the round's original image, then warp the puncta into aligned space with the session's "
-    "saved registration: the method batch uses. Puncta outside nuclei are dropped with the round's own "
+    "saved registration: the method batch uses (detect, then warp). Puncta outside nuclei are dropped with the round's own "
     "nuclei mask, as in batch, not with the mask chosen above. Unticked, detection runs on the aligned "
     "image itself, which for R2 has been resampled.")
 _detect_on_original.setChecked(True)

@@ -1,7 +1,7 @@
 """Re-detecting a channel from the GUI, on its original image.
 
 In a reopened session, Detect Puncta on an aligned or warped image layer, with
-"Detect on the original image, then warp" ticked, re-detects the channel on
+"Detect on original image, then warp" ticked, re-detects the channel on
 the round's original image and warps the puncta onto the aligned layer
 (``stages.redetect_channel``), replacing the layer in place. Unticked, it
 detects on the aligned image as before, after a warning for R2. The export

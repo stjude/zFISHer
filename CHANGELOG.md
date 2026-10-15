@@ -9,7 +9,7 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 - **A channel can be re-detected on its original image and warped again**,
   without registering again, in sessions made with 2.1.0 or later. In Puncta
   Detection, choose the channel's aligned or warped image layer and keep
-  **Detect on the original image, then warp (as batch does)** ticked: zFISHer
+  **Detect on original image, then warp** ticked (the method batch uses): zFISHer
   reads that channel of the round's raw image (asking where it is if it has
   moved), detects with the settings in the widget inside the round's own nuclei
   mask, warps the puncta with the session's saved registration, and replaces
