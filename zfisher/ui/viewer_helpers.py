@@ -405,7 +405,7 @@ def ask_replace_or_merge(parent, layer_name, n_existing, n_manual=0):
     title.setStyleSheet("color: white; font-weight: bold; font-size: 14px;")
     title.setWordWrap(True)
     layout.addWidget(title)
-    body_text = "Replace existing puncta with new detection, or merge\n(skipping duplicates within min distance)?"
+    body_text = "Replace existing puncta with new detection, or merge\n(skipping new puncta within 0.3 µm of an existing one)?"
     if n_manual:
         body_text += (f"\n\n{n_manual} of them were placed by hand. Replace keeps them; "
                       f"Replace All deletes them too.")
@@ -633,11 +633,9 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
             # hand, and new points on top of one of them are dropped.
             kept = manual_mask(pts_layer.features) if existing_action == 'replace' else np.zeros(0, bool)
             if kept.any():
-                from scipy.spatial import cKDTree
                 kept_coords = np.asarray(pts_layer.data)[kept]
                 kept_features = pts_layer.features[kept].reset_index(drop=True)
-                dists, _ = cKDTree(kept_coords).query(coords)
-                fresh = dists > 3            # the merge's min_distance
+                fresh = _puncta.far_from(coords, kept_coords, pts_layer.scale)
                 coords = np.vstack([kept_coords, coords[fresh]])
                 added = new_features.iloc[fresh.nonzero()[0]].reset_index(drop=True)
                 # A kept punctum without an id gets one too, so no row is left without.
@@ -663,16 +661,12 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
             pts_layer.visible = True
 
         elif existing_action == 'merge':
-            # Merge: deduplicate — skip new points within min_distance of existing
-            from scipy.spatial import cKDTree
+            # Merge: skip new points within PUNCTA_DUPLICATE_DISTANCE_UM of existing ones
             existing_coords = pts_layer.data
             existing_features = pts_layer.features
-            min_distance = 3  # default; matches typical detection min_distance
 
             if len(existing_coords) > 0 and len(coords) > 0:
-                tree = cKDTree(existing_coords)
-                dists, _ = tree.query(coords)
-                keep_mask = dists > min_distance
+                keep_mask = _puncta.far_from(coords, existing_coords, pts_layer.scale)
                 coords = coords[keep_mask]
                 new_features = new_features.iloc[keep_mask.nonzero()[0]].reset_index(drop=True)
 

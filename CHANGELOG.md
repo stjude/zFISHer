@@ -80,6 +80,11 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 - Labels with "&" show it again: "Run Analysis & Export Master Report", the
   "Colocalization & Export" page and "Match & Merge Nuclei" showed a gap
   instead, because Qt reads a single "&" as a keyboard shortcut.
+- **Replace and Merge judge duplicates in micrometres.** A new punctum within
+  0.3 µm of one already there is the same punctum and is dropped, along Z as
+  along XY. Before, the limit was 3 voxels, which at 0.3 µm Z steps meant
+  0.9 µm in Z: puncta two planes apart were taken for one. Re-detection on the
+  original image uses the same rule.
 - Editing a raw-space puncta layer no longer drops its `space: raw` mark in the
   session, which made the next reopen draw raw puncta over the aligned images.
 - **A copied output folder uses its own files.** Opening the session of a

@@ -573,6 +573,21 @@ def sources_of(puncta_data, ids, sources):
                      for pid in np.asarray(puncta_data)[:, 6]], dtype=object)
 
 
+def far_from(coords, kept, scale):
+    """Which of ``coords`` are further than ``PUNCTA_DUPLICATE_DISTANCE_UM``
+    from every punctum in ``kept``: new detections, not duplicates of a kept
+    punctum. Both are (N, 3) voxel coordinates; ``scale`` is the voxel size in
+    µm, so the distance is the same in Z as in XY."""
+    from scipy.spatial import cKDTree
+    coords = np.asarray(coords, dtype=float).reshape(-1, 3)
+    kept = np.asarray(kept, dtype=float).reshape(-1, 3)
+    if len(kept) == 0 or len(coords) == 0:
+        return np.ones(len(coords), dtype=bool)
+    scale = np.asarray(scale, dtype=float)
+    dists, _ = cKDTree(kept * scale).query(coords * scale)
+    return dists > constants.PUNCTA_DUPLICATE_DISTANCE_UM
+
+
 def channel_key(layer_name):
     """``'R2 - FITC'`` for any image or puncta layer of round R2's FITC channel
     (``'R2 - FITC'``, ``'Warped R2 - FITC_puncta'``, ``'Aligned R2 - FITC'``),

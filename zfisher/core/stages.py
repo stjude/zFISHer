@@ -98,7 +98,6 @@ def _combine(existing, found, action, voxels, name):
     channel has had, so a first detection is numbered as detection numbers it
     and a later one reuses none; kept rows without an id get new ones."""
     import pandas as pd
-    from scipy.spatial import cKDTree
 
     found = np.asarray(found, dtype=float).reshape(-1, 7)
     coords = found[:, :3]
@@ -115,9 +114,7 @@ def _combine(existing, found, action, voxels, name):
         kept = existing
     kept = kept.drop(columns="_detected", errors="ignore").reset_index(drop=True)
     if len(kept) and len(new):
-        scale = np.asarray(voxels, dtype=float)
-        dists, _ = cKDTree(kept[["Z", "Y", "X"]].to_numpy(float) * scale).query(coords * scale)
-        new = new[dists > constants.PUNCTA_DUPLICATE_DISTANCE_UM].reset_index(drop=True)
+        new = new[puncta.far_from(coords, kept[["Z", "Y", "X"]].to_numpy(float), voxels)].reset_index(drop=True)
     kept_ids = (pd.to_numeric(kept["puncta_id"], errors="coerce") if "puncta_id" in kept.columns
                 else pd.Series(np.nan, index=kept.index))
     missing = kept_ids.isna().to_numpy()

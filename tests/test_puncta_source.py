@@ -105,7 +105,8 @@ def env(_qapp, monkeypatch):
                         lambda key=None, default=None: (str(tmp) if key == "output_dir" else default))
     monkeypatch.setattr(session, "set_processed_file", lambda *a, **k: None)
     viewer = ViewerModel()
-    source = types.SimpleNamespace(name="R1 - FITC", scale=(1, 1, 1), translate=(0, 0, 0))
+    # Typical voxels: duplicates are judged in µm (PUNCTA_DUPLICATE_DISTANCE_UM).
+    source = types.SimpleNamespace(name="R1 - FITC", scale=(0.3, 0.1, 0.1), translate=(0, 0, 0))
     name = f"R1 - FITC{constants.PUNCTA_SUFFIX}"
     return types.SimpleNamespace(viewer=viewer, helpers=viewer_helpers, source=source, name=name,
                                  csv=constants.puncta_csv_path(tmp / constants.REPORTS_DIR, name))
@@ -225,3 +226,16 @@ def test_replace_gives_kept_manual_puncta_without_an_id_one(env, ids):
         assert out[1] == 8                          # a kept id is not changed
     assert list(layer.features["Source"]) == [MANUAL, MANUAL, AUTO, AUTO]
     assert pd.read_csv(env.csv)["puncta_id"].notna().all()
+
+
+def test_duplicates_are_judged_in_micrometres(env):
+    """Replace and Merge drop a new punctum within 0.3 µm of a kept one, the
+    same in Z as in XY. The old rule was 3 voxels, 0.9 µm in Z here."""
+    _curated_layer(env)                                  # manual puncta at (2, 60, 60) and (2, 80, 80)
+    env.helpers.add_or_update_puncta_layer(
+        env.viewer, env.source, _rows([[3, 60, 60], [4, 80, 80], [2, 62, 60], [2, 64, 60]], [0, 1, 2, 3]),
+        existing_action="replace")
+    data = env.viewer.layers[env.name].data.tolist()
+    assert [3, 60, 60] not in data                        # one plane, 0.3 µm: the same punctum
+    assert [4, 80, 80] in data                            # two planes, 0.6 µm: a new one
+    assert [2, 62, 60] not in data and [2, 64, 60] in data  # 0.2 µm and 0.4 µm in Y
