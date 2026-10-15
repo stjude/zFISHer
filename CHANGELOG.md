@@ -31,6 +31,17 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   since they were made. Updating a puncta's `Nucleus_ID` on reload or export
   does not count as an edit.
 
+### Fixes
+
+- **A copied output folder uses its own files.** Opening the session of a
+  copied output folder while the original folder still existed kept every
+  mask, puncta CSV, aligned image and report pointing into the original: the
+  GUI showed the original's layers, and removing a layer renamed the
+  original's file to `.bak`. Every file inside the output folder now opens from
+  the folder the session file is in, and a file missing from the copy is
+  reported missing instead of being read from the original. Raw images outside
+  the output folder are opened where they are, as before.
+
 ### Development
 
 - **Releases are tagged automatically.** When a merge into main brings a
