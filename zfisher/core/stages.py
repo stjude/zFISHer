@@ -242,9 +242,10 @@ def transform_channel(round_id, channel, remove_extranuclear=None, keep_aligned_
     registration saved by canvas generation, assign nuclei from the consensus
     mask, and write the channel's aligned CSV. Returns its path.
 
-    ``remove_extranuclear`` drops puncta outside every consensus nucleus; None
-    means as the channel's previous aligned CSV was made (batch records it; the
-    GUI canvas step kept them). With ``keep_aligned_manual``, puncta placed by
+    ``remove_extranuclear`` drops automatic puncta outside every consensus
+    nucleus (puncta placed by hand are kept); None means as the channel's
+    previous aligned CSV was made (batch records it; the GUI canvas step kept
+    them). With ``keep_aligned_manual``, puncta placed by
     hand on the aligned layer, which have no raw-space row, are carried over
     unchanged, at the same coordinates. Raises ``LookupError`` for a session
     with no saved registration (made before 2.1.0) and ``FileNotFoundError``
@@ -271,8 +272,13 @@ def transform_channel(round_id, channel, remove_extranuclear=None, keep_aligned_
     if consensus is None and consensus_path is not None:
         consensus = io.read_label_tif(consensus_path)
 
+    # Nuclei are assigned to every punctum; outside every nucleus only the
+    # automatic ones are dropped: a punctum placed by hand is kept where it was put.
     data, sources = puncta.transform_puncta_csv(raw_csv, round_id, saved, consensus_mask=consensus,
-                                                remove_extranuclear=remove_extranuclear)
+                                                remove_extranuclear=False)
+    if remove_extranuclear and consensus is not None and len(data):
+        keep = (data[:, 3] > 0) | (sources == constants.PUNCTA_SOURCE_MANUAL)
+        data, sources = data[keep], sources[keep]
     del consensus
     carried = _aligned_only_manual(aligned_csv, raw_csv) if keep_aligned_manual else None
     if carried is not None and len(carried):
@@ -535,3 +541,42 @@ def detection_method(round_id, channel):
         image = "Warped" if warped else "Aligned"
         return f"{image} image: R2 after resampling, which differs from the batch method"
     return "Not recorded"
+
+
+# --- Picking by hand on the original image ----------------------------------------
+
+def raw_overlay(round_id, aligned_scale):
+    """``(scale, translate)`` that place a layer in ``round_id``'s raw voxel
+    coordinates over the session's aligned layers, which have
+    ``aligned_scale``. Its data stays in raw coordinates, so points picked on
+    it are raw-space picks.
+
+    Only the rigid part of the registration is applied: for R2 the B-spline
+    warp moves the aligned image a little further, so a raw R2 layer sits
+    close to, not exactly on, the warped R2 data."""
+    saved = registration.load_registration()
+    scale = np.asarray(aligned_scale, dtype=float)
+    raw_to_canvas = np.asarray(saved.record["raw_to_canvas"][round_id], dtype=float)
+    return tuple(scale), tuple(raw_to_canvas * scale)
+
+
+def raw_puncta_csv(round_id, channel):
+    """The channel's raw-space puncta CSV, written empty and registered with
+    ``space='raw'`` if it does not exist yet, so picks have a file to go to."""
+    name = raw_puncta_name(round_id, channel)
+    csv = constants.puncta_csv_path(_reports_dir(), name)
+    if not csv.exists():
+        import pandas as pd
+        puncta.write_puncta_csv(csv, np.empty((0, 3)), pd.DataFrame(
+            {c: [] for c in constants.PUNCTA_CSV_COLUMNS if c not in ("Z", "Y", "X")}))
+    session.set_processed_file(name, str(csv), "points", metadata={
+        "format": "csv", "subtype": "puncta_csv", "space": "raw", "round": round_id})
+    return csv
+
+
+def record_raw_picks(round_id, channel):
+    """Record that the channel's raw CSV was edited by hand on the original
+    image, before it is warped."""
+    csv = constants.puncta_csv_path(_reports_dir(), raw_puncta_name(round_id, channel))
+    puncta.record_puncta(csv, "picked", round=round_id, channel=channel, space=f"raw:{round_id}",
+                         picked_in="raw", run_by="gui")

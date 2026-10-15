@@ -8,6 +8,7 @@ from .. import style
 # Import the child widgets that this composite widget will manage
 from .puncta_widget import puncta_widget
 from .puncta_editor_widget import puncta_editor_widget
+from .raw_picking_widget import RawPickingWidget
 
 class PunctaPickingWidget(widgets.Container):
     """
@@ -21,6 +22,7 @@ class PunctaPickingWidget(widgets.Container):
         # Store references to child widgets
         self.algorithmic_widget = puncta_widget
         self.manual_widget = puncta_editor_widget
+        self.raw_picking_widget = RawPickingWidget(viewer)
 
         # Get the native QWidget's layout and remove any default margins/spacing.
         layout = self.native.layout()
@@ -60,6 +62,7 @@ class PunctaPickingWidget(widgets.Container):
 
         # Add the puncta editor widget as a collapsible item.
         manual_toolbox.addItem(self.manual_widget.native, "Puncta Editor")
+        manual_toolbox.addItem(self.raw_picking_widget.native, "Pick on Original Image")
         manual_layout.addWidget(manual_toolbox)
         self.toolbox.addItem(manual_outer_container, "Manual")
 
@@ -72,3 +75,4 @@ class PunctaPickingWidget(widgets.Container):
             self.algorithmic_widget.reset_choices()
         if hasattr(self.manual_widget, "reset_choices"):
             self.manual_widget.reset_choices()
+        self.raw_picking_widget.reset_choices()

@@ -22,6 +22,20 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 - The export section says when the report is out of date and why (a channel
   was re-detected, puncta were changed, the consensus mask was edited); export
   again to update it. The status bar says the same after a re-detection.
+- **Puncta can be picked by hand on a channel's original image and warped.**
+  Puncta Picking > Manual > **Pick on Original Image**: choose a channel and
+  press **Open Original Image** to load that channel's raw image and raw puncta
+  over the aligned data (the channel's aligned layers are hidden meanwhile;
+  **Show the round's nuclei mask** adds the round's own mask, about 1.2 GB more
+  memory). Pick or correct puncta with the Puncta Editor, Fishing Hook
+  included, then press **Warp Picks into Aligned Space**: the raw puncta, picks
+  included, go through the session's saved registration onto the aligned
+  puncta layer. **Close Without Warping** keeps the picks in the raw puncta and
+  leaves the aligned puncta marked out of date. For R2 the original image is
+  placed by the rigid shift only, so it sits close to, not exactly on, the
+  warped data.
+- When puncta are warped into aligned space with puncta outside nuclei
+  removed, as batch does, puncta placed by hand are kept wherever they are.
 - **The report's Parameters sheet says how each channel was detected**, in a
   new **Detected on** column after Channel: on the original image and then
   shifted (R1) or warped (R2) into aligned space, the batch method; or on the
@@ -57,6 +71,8 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Fixes
 
+- Editing a raw-space puncta layer no longer drops its `space: raw` mark in the
+  session, which made the next reopen draw raw puncta over the aligned images.
 - **A copied output folder uses its own files.** Opening the session of a
   copied output folder while the original folder still existed kept every
   mask, puncta CSV, aligned image and report pointing into the original: the

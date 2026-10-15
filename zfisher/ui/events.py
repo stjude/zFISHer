@@ -26,6 +26,10 @@ def is_layer_locked(layer):
     return getattr(layer, '_locked', False)
 
 
+# Layer metadata key for temporary overlay layers (see on_layer_inserted).
+OVERLAY_KEY = "zfisher_overlay"
+
+
 def lock_layer(layer):
     """Mark a layer as non-deletable."""
     layer._locked = True
@@ -102,7 +106,12 @@ def save_puncta_layer(layer):
         # Fallback: save coordinates only
         logger.warning("Could not save full puncta CSV for '%s': %s. Saving coordinates only.", live_name, e)
         np.savetxt(csv_path, layer.data, delimiter=',', header='Z,Y,X', comments='')
-    session.set_processed_file(live_name, str(csv_path), layer_type='points', metadata={'subtype': 'puncta_csv'})
+    # Keep what the registration already says about the file: a raw-space CSV
+    # must stay marked raw, or a reload draws it over the aligned images.
+    existing = (session.get_data("processed_files", default={}) or {}).get(live_name) or {}
+    metadata = {'subtype': 'puncta_csv'}
+    metadata.update({k: existing[k] for k in ('space', 'round') if k in existing})
+    session.set_processed_file(live_name, str(csv_path), layer_type='points', metadata=metadata)
 
 
 def attach_puncta_listener(layer, name):
@@ -178,6 +187,11 @@ def on_layer_inserted(event, widgets):
         for w in widgets.values():
             if hasattr(w, "reset_choices"):
                 w.reset_choices()
+
+        # A temporary overlay (an original image shown while picking) is not
+        # offered to the editors: choosing it there would change what is shown.
+        if layer.metadata.get(OVERLAY_KEY):
+            return
 
         # Now, try to intelligently set the value based on layer type and name
         if isinstance(layer, napari.layers.Image):
