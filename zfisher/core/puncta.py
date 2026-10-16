@@ -573,6 +573,42 @@ def sources_of(puncta_data, ids, sources):
                      for pid in np.asarray(puncta_data)[:, 6]], dtype=object)
 
 
+def brightest_along_ray(image, start, direction, scale, refine_um=None):
+    """The voxel the Fishing Hook places a punctum on: the brightest voxel of
+    ``image`` (Z, Y, X) on the line through ``start`` (data coordinates, the
+    cursor) along ``direction`` (world, the camera's view direction), then,
+    with ``refine_um``, the brightest voxel within that radius of it. Returns
+    data coordinates, or None when the line misses the image.
+
+    The line is sampled every half voxel across the whole image: at a step of
+    a voxel or more, rounding to planes skips some, and in a 2D view it skips
+    the plane under the cursor, so a punctum went to the plane above or below
+    the spot."""
+    image = np.asarray(image)
+    scale = np.asarray(scale, dtype=float)
+    start = np.asarray(start, dtype=float)
+    step = np.asarray(direction, dtype=float) / scale            # world direction -> voxels
+    if not np.isfinite(step).all() or not np.linalg.norm(step):
+        return None
+    step = step / np.linalg.norm(step)
+    reach = float(np.linalg.norm(image.shape)) + 1
+    points = start + np.outer(np.arange(-reach, reach, 0.5), step)
+    voxels = np.round(points).astype(int)
+    inside = np.all((voxels >= 0) & (voxels < np.asarray(image.shape)), axis=1)
+    if not inside.any():
+        return None
+    points, voxels = points[inside], voxels[inside]
+    values = np.nan_to_num(image[tuple(voxels.T)].astype(float))
+    target = voxels[int(np.argmax(values))]
+    if refine_um:
+        radius = [int(max(1, refine_um / v)) for v in scale]
+        lo = np.maximum(target - radius, 0)
+        local = image[tuple(slice(l, t + r + 1) for l, t, r in zip(lo, target, radius))]
+        if local.size:
+            target = lo + np.array(np.unravel_index(int(np.argmax(local)), local.shape))
+    return target.astype(float)
+
+
 def far_from(coords, kept, scale):
     """Which of ``coords`` are further than ``PUNCTA_DUPLICATE_DISTANCE_UM``
     from every punctum in ``kept``: new detections, not duplicates of a kept

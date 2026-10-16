@@ -77,6 +77,13 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Fixes
 
+- **The Fishing Hook lands on the plane of the spot you click.** It searched
+  the line through the cursor in steps of slightly more than a voxel, and in a
+  2D view that skipped the plane under the cursor: clicking a spot on its own
+  plane put the punctum on the plane above or below (0.3 to 0.5 µm off in Z),
+  or on background for a spot one plane thick. It now searches every half
+  voxel. Puncta placed with the Fishing Hook in 2D before this may sit a plane
+  off.
 - **The capture arrows and the scale bar no longer crash zFISHer on a value
   they cannot draw.** A corrupt arrow endpoint, or a camera zoom of nan or
   infinity, raised inside their drawing code; Qt's painter was left open, and
@@ -122,6 +129,9 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Development
 
+- `tools/check_mouse_picking.py` picks puncta with simulated mouse clicks and
+  key presses (napari's add mode, the Fishing Hook) on an original image in
+  zFISHer's real window, and warps them.
 - A regression test for the 3D-rotation crash (`tests/test_3d_rotation.py`)
   rotates the 3D view of a session with puncta, ID labels and capture arrows in
   zFISHer's real window and draws every frame; it is skipped on machines
