@@ -1218,10 +1218,13 @@ def resync_puncta_nucleus_ids(
     Returns
     -------
     dict
-        ``{'updated_layers': N, 'removed_total': M, 'changed_total': K}`` where
-        ``changed_total`` is the number of puncta whose ``Nucleus_ID`` changed.
+        ``{'updated_layers': N, 'removed_total': M, 'changed_total': K,
+        'skipped_layers': [names]}`` where ``changed_total`` is the number of
+        puncta whose ``Nucleus_ID`` changed and ``skipped_layers`` lists the
+        puncta layers whose IDs could not be re-derived (feature rows that do
+        not match the points, or no ``Nucleus_ID`` column).
     """
-    empty = {'updated_layers': 0, 'removed_total': 0, 'changed_total': 0}
+    empty = {'updated_layers': 0, 'removed_total': 0, 'changed_total': 0, 'skipped_layers': []}
     if mask_layer is None or viewer is None:
         return empty
 
@@ -1238,6 +1241,7 @@ def resync_puncta_nucleus_ids(
     updated = 0
     removed_total = 0
     changed_total = 0
+    skipped = []
     for pts_layer in puncta_layers:
         coords = np.array(pts_layer.data)
         if len(coords) == 0:
@@ -1254,7 +1258,14 @@ def resync_puncta_nucleus_ids(
             else pd.DataFrame()
         )
         if features.empty or 'Nucleus_ID' not in features.columns or len(features) != len(coords):
-            # Nothing to reconcile against; leave legacy / malformed layers alone.
+            # Nothing to reconcile against; leave legacy / malformed layers alone,
+            # but say so: a skipped layer keeps whatever IDs it had.
+            logger.warning(
+                "Nucleus IDs not re-derived for '%s': %d points but %d feature rows%s.",
+                pts_layer.name, len(coords), len(features),
+                "" if 'Nucleus_ID' in features.columns else " and no Nucleus_ID column",
+            )
+            skipped.append(pts_layer.name)
             continue
 
         old_ids = pd.to_numeric(features['Nucleus_ID'], errors='coerce').fillna(-1).to_numpy()
@@ -1293,7 +1304,8 @@ def resync_puncta_nucleus_ids(
 
         updated += 1
 
-    return {'updated_layers': updated, 'removed_total': removed_total, 'changed_total': changed_total}
+    return {'updated_layers': updated, 'removed_total': removed_total, 'changed_total': changed_total,
+            'skipped_layers': skipped}
 
 
 def find_consensus_layer(viewer):
@@ -1328,4 +1340,28 @@ def reconcile_puncta_with_consensus(viewer, *, save_csv=True):
         "Reconciled puncta with '%s': %d layer(s) updated, %d nucleus ID(s) changed.",
         consensus.name, result['updated_layers'], result['changed_total'],
     )
+    return result
+
+
+def reconcile_puncta_for_report(viewer):
+    """``reconcile_puncta_with_consensus`` for the export: raises ``ValueError``
+    rather than let a report be built on Nucleus_IDs that were not re-derived.
+
+    A report counts puncta per nucleus from each layer's cached ``Nucleus_ID``.
+    If there is no consensus mask to check them against, or a puncta layer was
+    skipped, those IDs may be stale and the per-nucleus numbers wrong, with
+    nothing in the log to say so (``changed=0``).
+    """
+    result = reconcile_puncta_with_consensus(viewer)
+    if result is None:
+        raise ValueError(
+            "No consensus nuclei mask is loaded, so the puncta's nucleus IDs "
+            "cannot be checked and the per-nucleus report would be unreliable. "
+            "Load or rebuild the consensus mask and export again.")
+    if result['skipped_layers']:
+        raise ValueError(
+            "Nucleus IDs could not be re-derived for: "
+            + ", ".join(result['skipped_layers'])
+            + ". Their points and table rows do not match, so the report would "
+            "carry stale nucleus assignments. Re-detect or reload those puncta.")
     return result
