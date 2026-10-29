@@ -2,6 +2,44 @@
 
 All notable changes to zFISHer. Versions follow [semantic versioning](https://semver.org/).
 
+## 2.2.1 — 2026-10-29
+
+### Fixes
+
+- **Export refuses to build a report on nucleus IDs it could not re-derive.**
+  The per-nucleus numbers come from each puncta layer's `Nucleus_ID`, which is
+  re-derived from the consensus mask just before export. If no consensus mask is
+  loaded, or a puncta layer has no `Nucleus_ID` column or a table that does not
+  match its points, the check used to pass silently (`changed=0`) and the report
+  could carry stale assignments. Export now stops and names the problem, and the
+  log warns for each skipped layer.
+- **Reset and Load Session leave the open session's files alone.** Clearing
+  the canvas went through the same path as deleting a layer by hand, which
+  backs the layer's file up to `.bak` and drops it from the session file. So
+  Home > Reset renamed every file the open session lists (masks, puncta CSVs,
+  aligned images, reports) and emptied its session file; Load Session did the
+  same to the session it was leaving; and loading the open session again, from
+  the session file the app was writing, found it already emptied and came back
+  without its processed layers. The files and the session file now stay as
+  they are, and New Session clears the canvas the same way. A session this
+  happened to still has its files, renamed with a `.bak` ending, where they
+  were; where an earlier session file exists in its `sessions/` folder,
+  loading that one brings them back, since a listed file that is missing is
+  read from its `.bak`.
+- **Load Session keeps nothing of the session it replaces.** The file being
+  loaded was merged into the session in memory, so a key the file did not
+  have kept the value of whatever session was open before it: a session made
+  before 2.1.0, opened after a newer one, inherited that one's saved
+  registration, canvas scale and nuclear channel, and re-detecting a channel
+  would have warped its puncta with another dataset's transform. The session
+  in memory is now replaced whole.
+- **Batch Process saves the open session's mask edits first.** Mask edits are
+  written a moment after the last stroke; starting a batch replaced the open
+  session before that moment came, so the edit was written into the first
+  batch dataset's folder, or not at all. The pending edits now go to the open
+  session before the batch starts, as they already did before Load Session
+  and New Session.
+
 ## 2.2.0 — 2026-10-29
 
 ### Re-detecting a channel of a reopened session
@@ -77,13 +115,6 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Fixes
 
-- **Export refuses to build a report on nucleus IDs it could not re-derive.**
-  The per-nucleus numbers come from each puncta layer's `Nucleus_ID`, which is
-  re-derived from the consensus mask just before export. If no consensus mask is
-  loaded, or a puncta layer has no `Nucleus_ID` column or a table that does not
-  match its points, the check used to pass silently (`changed=0`) and the report
-  could carry stale assignments. Export now stops and names the problem, and the
-  log warns for each skipped layer.
 - **The Fishing Hook lands on the plane of the spot you click.** It searched
   the line through the cursor in steps of slightly more than a voxel, and in a
   2D view that skipped the plane under the cursor: clicking a spot on its own
@@ -120,32 +151,6 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   the folder the session file is in, and a file missing from the copy is
   reported missing instead of being read from the original. Raw images outside
   the output folder are opened where they are, as before.
-- **Reset and Load Session leave the open session's files alone.** Clearing
-  the canvas went through the same path as deleting a layer by hand, which
-  backs the layer's file up to `.bak` and drops it from the session file. So
-  Home > Reset renamed every file the open session lists (masks, puncta CSVs,
-  aligned images, reports) and emptied its session file; Load Session did the
-  same to the session it was leaving; and loading the open session again, from
-  the session file the app was writing, found it already emptied and came back
-  without its processed layers. The files and the session file now stay as
-  they are, and New Session clears the canvas the same way. A session this
-  happened to still has its files, renamed with a `.bak` ending, where they
-  were; where an earlier session file exists in its `sessions/` folder,
-  loading that one brings them back, since a listed file that is missing is
-  read from its `.bak`.
-- **Load Session keeps nothing of the session it replaces.** The file being
-  loaded was merged into the session in memory, so a key the file did not
-  have kept the value of whatever session was open before it: a session made
-  before 2.1.0, opened after a newer one, inherited that one's saved
-  registration, canvas scale and nuclear channel, and re-detecting a channel
-  would have warped its puncta with another dataset's transform. The session
-  in memory is now replaced whole.
-- **Batch Process saves the open session's mask edits first.** Mask edits are
-  written a moment after the last stroke; starting a batch replaced the open
-  session before that moment came, so the edit was written into the first
-  batch dataset's folder, or not at all. The pending edits now go to the open
-  session before the batch starts, as they already did before Load Session
-  and New Session.
 
 ### Diagnostics
 
