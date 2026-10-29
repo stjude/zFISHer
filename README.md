@@ -45,7 +45,7 @@ Interactive tools for manually refining segmentation masks:
 
 All edits are auto-saved to disk. Deleting a mask layer automatically removes its associated `_IDs` and `_centroids` layers.
 
-### 3. Puncta Detection
+### 3. Puncta Picking
 
 Puncta are detected on **raw (unaligned) images** using per-round nuclei masks. This ensures detection is performed on the original signal before any interpolation from alignment.
 
@@ -67,9 +67,14 @@ Detection parameters:
 - **Nuclei Only** — Discard puncta outside the nuclei mask (default: on).
 - **Top-hat Background Subtraction** — Removes uneven background illumination per-slice before detection.
 
-When re-running detection on a channel that already has puncta, a dialog asks whether to **Replace** (clear and re-detect), **Merge** (add new detections, deduplicated by minimum distance), or **Cancel**.
+When re-running detection on a channel that already has puncta, a dialog asks whether to **Replace** (clear and re-detect, keeping puncta placed by hand), **Replace All** (drop those too; offered when there are any), **Merge** (add new detections, skipping any within 0.3 µm of an existing punctum), or **Cancel**.
 
 Each detected spot is annotated with: coordinates (Z, Y, X), nucleus ID, peak intensity, and signal-to-noise ratio (SNR). Results are saved as CSV files.
+
+#### Re-detecting a Channel in a Reopened Session
+In a session made with zFISHer 2.1.0 or later, a channel can be detected again on its original image after the rounds have been aligned, without registering again. Choose the channel's aligned or warped image layer in Puncta Detection and keep **Detect on original image, then warp** ticked (the method batch uses). zFISHer reads that channel of the round's original image (asking where the file is if it has moved), detects with the settings in the widget inside the round's own nuclei mask, warps the puncta with the session's saved registration, and replaces the aligned puncta layer in place. **Replace** keeps the puncta placed by hand, **Replace All** drops them, and **Merge** adds the new puncta to the old ones.
+
+Unticked, detection runs on the aligned image itself. For R2 that is the image after resampling, not what batch uses, so zFISHer asks first. Sessions made before 2.1.0 have no saved warp: Puncta Detection says so under the greyed-out box, detecting on the aligned image still works, and the report says how each channel was detected. Running the dataset through batch with 2.1.0 or later makes the saved warp available.
 
 #### Manual Puncta Editor
 Interactive tools for curating detected puncta:
@@ -80,6 +85,9 @@ Interactive tools for curating detected puncta:
 - **Undo** — Reverts the last editing operation, including layer deletion.
 
 The editor also provides custom layer controls for each puncta layer: point size, symbol color, text size, text color, and a "draw on top of masks" toggle.
+
+#### Pick on Original Image
+After alignment, puncta can still be placed by hand on a channel's original image and warped into aligned space. Under **Manual > Pick on Original Image**, choose a channel and press **Open Original Image**: the channel's original image and its raw puncta are shown over the aligned data, and the channel's aligned layers are hidden meanwhile. **Show the round's nuclei mask** adds the round's own mask (about 1.2 GB more memory). Pick or correct puncta with the Puncta Editor, Fishing Hook included, then press **Warp Picks into Aligned Space**: the raw puncta, picks included, go through the session's saved registration onto the aligned puncta layer. **Close Without Warping** keeps the picks in the raw puncta and leaves the aligned puncta marked out of date until they are warped. For R2 the original image is placed by the rigid shift only, so it sits close to, not exactly on, the warped data. Like re-detection, this needs the saved warp of a session made with 2.1.0 or later.
 
 ### 4. Alignment & Consensus
 
@@ -143,6 +151,8 @@ Quantifies spatial relationships between puncta from different channels:
   - Per-nucleus ROI summaries
   - Descriptive statistics
   - Distribution data
+- **Detected on** — The Parameters sheet says how each channel's puncta were detected: on the original image and then shifted (R1) or warped (R2) into aligned space, the batch method; or on the aligned image, which for R2 is the resampled image and differs from batch. "Not recorded" where there is no record.
+- **Out-of-date reports** — The export section says when the report is out of date and why (a channel was re-detected, puncta were changed, the consensus mask was edited); export again to update it.
 
 #### Puncta Cleanup (Refilter)
 Remove puncta that fall outside a specified nuclei mask. Useful after mask editing to re-enforce nuclear boundaries:
@@ -271,7 +281,7 @@ This opens the napari viewer with the zFISHer sidebar containing all five workfl
 
 1. **Session & I/O** — Create a new session, select R1 and R2 image files, and choose an output directory
 2. **Nuclei Segmentation** — Segment nuclear channels to create per-round masks, then edit masks as needed
-3. **Puncta Detection** — Run algorithmic detection on each raw FISH channel, then manually curate with the editor and fishing hook
+3. **Puncta Picking** — Run algorithmic detection on each raw FISH channel, then manually curate with the editor and fishing hook; after alignment, a channel can be re-detected or picked on its original image and warped again
 4. **Alignment & Consensus** — Register rounds → Elastic warping to common space → Transform puncta → Match nuclei into consensus mask → Remove puncta outside nuclei
 5. **Export & Visualization** — Define colocalization rules, run analysis, export the Excel report, and capture images
 
@@ -280,14 +290,16 @@ Alternatively, use **Autorun** from Session & I/O to execute steps 2–4 automat
 ### Session Persistence
 
 All processing results are saved incrementally:
-- Aligned TIFFs in `aligned/`
+- Aligned TIFFs and the saved registration (`registration_bspline.tfm`, in sessions made with 2.1.0 or later) in `aligned/`
 - Segmentation masks and centroids in `segmentation/`
 - Puncta CSVs and analysis reports in `reports/`
 - Screenshots and annotations in `captures/`
 - Input files (converted OME-TIFFs and metadata) in `input/`
-- Session state in `zfisher_session_N.json`
+- Session state in `sessions/zfisher_session_N.json`; loading a session writes the next number, so earlier states are kept
+- The session log, and the crash log if there was a native crash, in `logs/`
+- `provenance.jsonl` — the record of how each puncta CSV, mask and report was made, from which zFISHer tells when aligned puncta or the report are out of date
 
-Loading a session restores all layers and processing state, so you can close and resume at any point.
+Loading a session restores all layers and processing state, so you can close and resume at any point. The saved registration is what lets a reopened session re-detect a channel, or warp puncta picked on the original image, without registering again.
 
 ## Project Structure
 
@@ -308,6 +320,10 @@ zFISHer/
       session.py             # Session state management and persistence
       io.py                  # ND2/TIFF file I/O, channel splitting, metadata extraction
       generate_batch_template.py  # Batch Excel template generation and parsing
+      stages.py              # Re-detect a channel from its original image and warp it with the saved registration; what is out of date
+      provenance.py          # provenance.jsonl: how each puncta CSV, mask and report was made
+      timing.py              # Per-stage timing and memory lines in the session log
+      crash_log.py           # Python stacks of every thread when a native crash ends the process
     ui/                      # napari GUI layer
       viewer.py              # Main viewer setup, scale bar, toolbar, hotkey bindings
       events.py              # Layer event handlers (auto-save, cascade deletion, layer locking)
@@ -324,9 +340,10 @@ zFISHer/
         nuclei_segmentation_widget.py  # Step 2 composite (mapping + mask editor)
         dapi_segmentation_widget.py    # Nuclear channel segmentation
         mask_editor_widget.py          # Interactive mask editing (merge, paint, erase, extrude)
-        puncta_picking_widget.py   # Step 3 composite (detection + editor)
+        puncta_picking_widget.py   # Step 3 composite (detection, editor, picking on the original image)
         puncta_widget.py           # Algorithmic puncta detection
         puncta_editor_widget.py    # Manual puncta editor (fishing hook, tools, undo)
+        raw_picking_widget.py      # Pick puncta on the original image and warp them into aligned space
         alignment_consensus_widget.py  # Step 4 composite (auto + manual)
         automated_preprocessing_widget.py  # One-click alignment pipeline
         registration_widget.py     # RANSAC registration
@@ -343,6 +360,7 @@ zFISHer/
 
 - **Registration**: Two-stage approach — vector voting via histogram binning for coarse alignment (robust to outliers, subsampled for speed), then RANSAC with a constrained 3-DOF translation model for robust refinement.
 - **Elastic Warping**: SimpleITK B-spline transform computed from aligned nuclear pairs. The transform is reused across all channels (since channels in a round share the same physical distortion), with per-channel interpolation strategy to preserve data integrity (nearest-neighbor for labels, linear for signals).
+- **Saved Registration**: The rigid shift and the B-spline transform computed at canvas generation are written to `aligned/registration_bspline.tfm` and recorded in the session file. A reopened session applies them again to re-detected puncta and to picks made on the original image, so neither needs the rounds registered anew.
 - **Puncta Detection**: Four algorithms with optional top-hat background subtraction. Each spot is scored with intensity and SNR metrics. Puncta are detected on raw images using per-round masks, then mathematically transformed into aligned space. Nuclear assignment is updated from the consensus mask.
 - **Puncta Coordinate Transform**: R1 puncta are rigidly shifted by the canvas offset. R2 puncta are shifted then inverse B-spline warped using an iterative fixed-point method (converges to sub-pixel accuracy). Extranuclear puncta can be automatically removed.
 - **Colocalization**: KD-tree nearest-neighbor search in world coordinates (microns). Supports pairwise and three-channel analysis with configurable distance thresholds. Greedy triplet matching ensures no punctum participates in more than one triplet.
