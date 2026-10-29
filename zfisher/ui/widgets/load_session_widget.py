@@ -12,7 +12,7 @@ from .. import popups, viewer_helpers
 from ..decorators import error_handler
 from ._shared import load_raw_data_into_viewer, make_divider as _make_divider
 from ..style import COLORS
-from .colocalization_widget import refresh_rules_display
+from .colocalization_widget import refresh_report_note, refresh_rules_display
 
 class LoadSessionWidget(Container):
     def __init__(self, viewer: napari.Viewer):
@@ -152,6 +152,7 @@ class LoadSessionWidget(Container):
 
                 dialog.update_progress(95, "Finalizing UI...")
                 refresh_rules_display()
+                refresh_report_note()
 
                 # Lock puncta layers if session has proceeded past warping
                 from .. import events as _events

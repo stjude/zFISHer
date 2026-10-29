@@ -657,12 +657,16 @@ def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, 
     distribution_df = calculate_distribution(per_nucleus_df, total_nuclei=total_nuclei)
 
     # 5. Build parameters sheet from session puncta_params
-    puncta_params = session.get_data("puncta_params", default={})
+    from .puncta import detection_settings
+    puncta_params = detection_settings()
     if puncta_params:
+        from .stages import detection_method
         params_rows = []
         for channel, params in puncta_params.items():
             row = {'Channel': channel}
-            row.update(params)
+            if " - " in channel:
+                row['Detected on'] = detection_method(*channel.split(" - ", 1))
+            row.update({k: v for k, v in params.items() if k != 'detected_in'})
             params_rows.append(row)
         params_df = pd.DataFrame(params_rows)
     else:
@@ -693,5 +697,8 @@ def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, 
             path=str(final_path),
             layer_type="report"
         )
+        # What the report was made from, so it can be told when it is out of date.
+        from .stages import record_report
+        record_report(final_path, [layer['name'] for layer in layers_data], output_dir)
 
     return final_path

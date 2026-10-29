@@ -172,7 +172,7 @@ _tri_clear_btn.clicked.connect(_on_clear_tri_rules)
 # =====================================================================
 
 _filename = LineEdit(label="Report Name", value="zFISHer_Analysis_Report.xlsx", tooltip="Filename for the exported Excel report (without extension).")
-_export_btn = PushButton(text="Run Analysis & Export Master Report", tooltip="Run colocalization analysis on all rules and export the master report.")
+_export_btn = PushButton(text="Run Analysis && Export Master Report", tooltip="Run colocalization analysis on all rules and export the master report.")
 
 
 @require_active_session("Please start or load a session before exporting.")
@@ -234,6 +234,7 @@ def _on_export():
             nucleus_ids=nucleus_ids,
         )
 
+        refresh_report_note()
         popups.show_info_popup(
             viewer.window._qt_window,
             "Export Complete",
@@ -248,6 +249,20 @@ _export_btn.clicked.connect(_on_export)
 # =====================================================================
 # Public API
 # =====================================================================
+
+def refresh_report_note():
+    """Show, above Export, why the session's report is out of date; hide the
+    note when it is not (``stages.report_note``)."""
+    note = None
+    if session.get_data("output_dir"):
+        try:
+            from ...core import stages
+            note = stages.report_note()
+        except Exception as exc:              # never let the note break the widget
+            logger.warning("Could not tell whether the report is out of date: %s", exc)
+    _report_note.setText(note or "")
+    _report_note.setVisible(bool(note))
+
 
 def refresh_rules_display():
     """Restores all rules displays from session data (e.g., after loading a session)."""
@@ -326,6 +341,13 @@ _layout.addWidget(_make_section_header("Export"))
 _layout.addWidget(_make_section_desc("Run analysis on all rules and export the master Excel report."))
 _layout.addWidget(_filename.native)
 _layout.addWidget(_make_spacer())
+from qtpy.QtWidgets import QLabel as _QLabel
+_report_note = _QLabel("")
+_report_note.setWordWrap(True)
+_report_note.setMinimumWidth(0)
+_report_note.setStyleSheet("color: #f9e2af; margin: 4px 2px; font-size: 12px;")
+_report_note.setVisible(False)
+_layout.addWidget(_report_note)
 _layout.addWidget(_export_btn.native)
 _layout.addStretch(1)
 

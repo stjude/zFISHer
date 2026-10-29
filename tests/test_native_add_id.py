@@ -38,8 +38,13 @@ def pe(_qapp, monkeypatch):
     """The puncta_editor_widget module, with side-effecting saves stubbed and the
     magicgui layer selector replaced by a settable shim."""
     import types
+    from zfisher.core import session
     from zfisher.ui import events as zevents
     monkeypatch.setattr(zevents, "save_puncta_layer", lambda *a, **k: None)
+    # Each test its own session: new ids also come from the session's per-channel counter.
+    store = {}
+    monkeypatch.setattr(session, "get_data", lambda key=None, default=None: store.get(key, default) if key else store)
+    monkeypatch.setattr(session, "update_data", lambda key, value: store.__setitem__(key, value))
     import zfisher.ui.widgets.puncta_editor_widget as pe_mod
     shim = types.SimpleNamespace(points_layer=types.SimpleNamespace(value=None))
     monkeypatch.setattr(pe_mod, "_puncta_editor_widget", shim)

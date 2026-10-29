@@ -405,7 +405,7 @@ def ask_replace_or_merge(parent, layer_name, n_existing, n_manual=0):
     title.setStyleSheet("color: white; font-weight: bold; font-size: 14px;")
     title.setWordWrap(True)
     layout.addWidget(title)
-    body_text = "Replace existing puncta with new detection, or merge\n(skipping duplicates within min distance)?"
+    body_text = "Replace existing puncta with new detection, or merge\n(skipping new puncta within 0.3 µm of an existing one)?"
     if n_manual:
         body_text += (f"\n\n{n_manual} of them were placed by hand. Replace keeps them; "
                       f"Replace All deletes them too.")
@@ -438,6 +438,27 @@ def ask_replace_or_merge(parent, layer_name, n_existing, n_manual=0):
         overlay.close()
         overlay.deleteLater()
     return dlg._result_action
+
+
+def show_puncta_csv(viewer, name, csv_path, source_layer):
+    """Show the puncta CSV at ``csv_path`` as the points layer ``name``: its
+    points and features replaced in place when the layer exists (a locked
+    aligned layer stays locked), otherwise a new layer with ``source_layer``'s
+    scale and translate. Returns the layer."""
+    from . import events
+    if name in viewer.layers:
+        layer = viewer.layers[name]
+        table = pd.read_csv(csv_path, float_precision="round_trip")
+        set_points_data(layer, table[['Z', 'Y', 'X']].to_numpy(float), table.drop(columns=['Z', 'Y', 'X']))
+        # The data event's autosave ran before the features were assigned.
+        events.save_puncta_layer(layer)
+        layer.refresh()
+        return layer
+    _load_points_layer(viewer, name, Path(csv_path), source_layer.scale, {'subtype': 'puncta_csv'},
+                       source_layer.translate)
+    layer = viewer.layers[name]
+    layer.visible = True
+    return layer
 
 
 def manual_mask(features):
@@ -523,10 +544,14 @@ def record_aligned_puncta_provenance(aligned_layer_name, raw_layer_name, consens
         out_dir = session.get_data("output_dir")
         consensus = provenance.file_identity(_io.find_mask(Path(out_dir) / constants.SEGMENTATION_DIR,
                                                            consensus_mask_name))
+    has_raw = raw_csv is not None and raw_csv.exists()
     _puncta.record_puncta(
         csv_path, "transformed", round=round_id, channel=channel, space="aligned",
-        derived_from=raw_csv.name if raw_csv is not None and raw_csv.exists() else None,
+        derived_from=raw_csv.name if has_raw else None,
+        derived_from_sha256=provenance.file_sha256(raw_csv) if has_raw else None,
         registration=registration.registration_fingerprint(), consensus_mask=consensus,
+        # The transform drops puncta outside nuclei only when it has the consensus mask.
+        remove_extranuclear=consensus_mask_name is not None, points_sha256=_puncta.points_fingerprint(csv_path),
         run_by="gui")
 
 
@@ -599,33 +624,34 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
     if layer_name in viewer.layers and existing_action:
         pts_layer = viewer.layers[layer_name]
 
+        # New rows get ids the channel has never had, above the ones they
+        # replace too, so an id never names two different puncta.
+        old_ids = pts_layer.features['puncta_id'] if 'puncta_id' in pts_layer.features.columns else ()
+
         if existing_action in ('replace', 'replace_all'):
             # Replace the detected puncta; 'replace' keeps the ones placed by
             # hand, and new points on top of one of them are dropped.
             kept = manual_mask(pts_layer.features) if existing_action == 'replace' else np.zeros(0, bool)
             if kept.any():
-                from scipy.spatial import cKDTree
                 kept_coords = np.asarray(pts_layer.data)[kept]
                 kept_features = pts_layer.features[kept].reset_index(drop=True)
-                dists, _ = cKDTree(kept_coords).query(coords)
-                fresh = dists > 3            # the merge's min_distance
+                fresh = _puncta.far_from(coords, kept_coords, pts_layer.scale)
                 coords = np.vstack([kept_coords, coords[fresh]])
                 added = new_features.iloc[fresh.nonzero()[0]].reset_index(drop=True)
-                # New ids continue after the kept ones. A kept punctum without
-                # an id gets one too, so no row is left without.
+                # A kept punctum without an id gets one too, so no row is left without.
                 if 'puncta_id' in kept_features.columns:
                     kept_ids = pd.to_numeric(kept_features['puncta_id'], errors='coerce')
                 else:
                     kept_ids = pd.Series(np.nan, index=kept_features.index)
-                known = kept_ids.dropna()
-                start = int(known.max()) + 1 if len(known) else 0
                 missing = kept_ids.isna().to_numpy()
-                kept_ids[missing] = np.arange(start, start + missing.sum())
+                ids = _puncta.allocate_puncta_ids(layer_name, int(missing.sum()) + len(added), old_ids)
+                kept_ids[missing] = ids[:missing.sum()]
                 kept_features['puncta_id'] = kept_ids.astype(np.int64)
-                start += int(missing.sum())
-                added['puncta_id'] = np.arange(start, start + len(added))
+                added['puncta_id'] = ids[missing.sum():]
                 new_features = pd.concat([kept_features, added], ignore_index=True)
                 logger.info("Replace on '%s' kept %d manual puncta", layer_name, int(kept.sum()))
+            else:
+                new_features['puncta_id'] = _puncta.allocate_puncta_ids(layer_name, len(new_features), old_ids)
             pts_layer.visible = False
             set_points_data(pts_layer, coords)
             pts_layer.features = new_features
@@ -635,16 +661,12 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
             pts_layer.visible = True
 
         elif existing_action == 'merge':
-            # Merge: deduplicate — skip new points within min_distance of existing
-            from scipy.spatial import cKDTree
+            # Merge: skip new points within PUNCTA_DUPLICATE_DISTANCE_UM of existing ones
             existing_coords = pts_layer.data
             existing_features = pts_layer.features
-            min_distance = 3  # default; matches typical detection min_distance
 
             if len(existing_coords) > 0 and len(coords) > 0:
-                tree = cKDTree(existing_coords)
-                dists, _ = tree.query(coords)
-                keep_mask = dists > min_distance
+                keep_mask = _puncta.far_from(coords, existing_coords, pts_layer.scale)
                 coords = coords[keep_mask]
                 new_features = new_features.iloc[keep_mask.nonzero()[0]].reset_index(drop=True)
 
@@ -652,13 +674,7 @@ def add_or_update_puncta_layer(viewer: napari.Viewer, source_layer: napari.layer
                 viewer.status = "No new unique puncta to add (all duplicates)."
                 return
 
-            # Assign new IDs continuing from existing max
-            if not existing_features.empty and 'puncta_id' in existing_features:
-                max_id = existing_features['puncta_id'].dropna().max()
-                next_id = int(max_id) + 1 if pd.notna(max_id) else 0
-            else:
-                next_id = 0
-            new_features['puncta_id'] = np.arange(next_id, next_id + len(new_features))
+            new_features['puncta_id'] = _puncta.allocate_puncta_ids(layer_name, len(new_features), old_ids)
 
             combined_coords = np.vstack([existing_coords, coords])
             combined_features = pd.concat([existing_features, new_features], ignore_index=True)

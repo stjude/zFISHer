@@ -52,6 +52,14 @@ def _puncta_widget(
                 image_layer.name, nuclei_layer.name if nuclei_layer else None,
                 nuclei_only, method, threshold, min_distance, sigma, z_scale, use_tophat, tophat_radius)
 
+    # Detecting on an aligned or warped R2 image is not batch's method: ask
+    # that first, before what to do with the puncta already there.
+    aligned = image_layer.name.startswith((constants.ALIGNED_PREFIX, constants.WARPED_PREFIX))
+    on_original = aligned and _detect_on_original.isEnabled() and _detect_on_original.isChecked()
+    key = puncta.channel_key(image_layer.name)
+    if aligned and not on_original and key and key.startswith("R2 - ") and not _confirm_aligned_r2(viewer, image_layer):
+        return
+
     # Check if puncta layer already exists — ask before running detection
     _puncta_layer_name = f"{image_layer.name}{constants.PUNCTA_SUFFIX}"
     _existing_action = None
@@ -64,19 +72,23 @@ def _puncta_widget(
         if _existing_action == 'cancel' or _existing_action is None:
             return
 
+    # Package parameters for the core orchestrator
+    params = {
+        'method': method,
+        'threshold_rel': threshold,
+        'z_scale': z_scale,
+        'min_distance': min_distance,
+        'sigma': sigma,
+        'use_tophat': use_tophat,
+        'tophat_radius': tophat_radius,
+        'nuclei_only': nuclei_only
+    }
+
+    if on_original:
+        _redetect_on_original(viewer, image_layer, params, _existing_action)
+        return
+
     with popups.ProgressDialog(viewer.window._qt_window, f"Processing {image_layer.name}...") as dialog:
-        # Package parameters for the core orchestrator
-        params = {
-            'method': method,
-            'threshold_rel': threshold,
-            'z_scale': z_scale,
-            'min_distance': min_distance, 
-            'sigma': sigma,
-            'use_tophat': use_tophat,
-            'tophat_radius': tophat_radius,
-            'nuclei_only': nuclei_only
-        }
-        
         _raw_puncta_name = f"{image_layer.name}{constants.PUNCTA_SUFFIX}"
 
         # Run detection in a background thread so the indeterminate progress
@@ -128,6 +140,10 @@ def _puncta_widget(
         if _error_holder[0]:
             raise _error_holder[0]
         results = _result_holder[0]
+        if _existing_action is None and len(results):
+            # A new layer: ids the channel has never had (Replace and Merge
+            # number their new rows themselves).
+            results[:, 6] = puncta.allocate_puncta_ids(_puncta_layer_name, len(results))
 
         # Freeze canvas before adding/updating the points layer to prevent
         # vispy from drawing stale GL buffers during processEvents()
@@ -146,8 +162,8 @@ def _puncta_widget(
             viewer.layers.selection.events.changed(added=set(), removed=set())
 
         # Persist the detection parameters for this channel in the session
-        puncta_params_all = session.get_data("puncta_params", default={})
-        puncta_params_all[image_layer.name] = {
+        aligned = image_layer.name.startswith((constants.ALIGNED_PREFIX, constants.WARPED_PREFIX))
+        puncta.record_detection_settings(image_layer.name, {
             'algorithm': method,
             'sensitivity': threshold,
             'min_distance': min_distance,
@@ -157,10 +173,89 @@ def _puncta_widget(
             'tophat': use_tophat,
             'tophat_radius': tophat_radius,
             'num_puncta': len(results),
-        }
-        session.update_data("puncta_params", puncta_params_all)
+            'detected_in': 'aligned' if aligned else 'raw',
+        })
 
         viewer.status = f"Found {len(results)} spots in {image_layer.name}."
+
+def _confirm_aligned_r2(viewer, image_layer):
+    """Ask before detecting on an aligned or warped R2 image, which is R2
+    resampled into R1's space: not the method batch uses."""
+    text = (f"{image_layer.name} is the R2 image after it was resampled into R1's space. Detecting on it "
+            "is not the method batch uses (detect on the original R2 image, then warp the puncta), and "
+            "the puncta can differ. The report will say this channel was detected on the aligned image.")
+    if _detect_on_original.isEnabled():
+        text += "\n\nTick \"Detect on original image, then warp\" to use batch's method instead."
+    return popups.show_yes_no_popup(viewer.window._qt_window, "Detect on the aligned R2 image?",
+                                    text + "\n\nDetect on the aligned image anyway?")
+
+
+def _redetect_on_original(viewer, image_layer, params, existing_action):
+    """Re-detect the channel of the aligned ``image_layer`` on its round's
+    original image and warp the puncta onto it (``stages.redetect_channel``),
+    replacing the aligned puncta layer in place."""
+    import threading
+    from collections import deque
+    import pandas as pd
+    from ...core import stages
+    from .mask_editor_widget import flush_pending_mask_saves
+
+    round_id, channel = puncta.channel_key(image_layer.name).split(" - ", 1)
+    parent = viewer.window._qt_window
+    # On this thread: finding a moved image can ask the user.
+    image_path = popups.resolve_raw_path(parent, round_id)
+    if image_path is None:
+        viewer.status = f"{round_id} {channel} was not re-detected: its original image was not found."
+        return
+    flush_pending_mask_saves()                     # the consensus mask on disk is the one on screen
+    consensus = viewer_helpers.find_consensus_layer(viewer)
+    consensus_data = consensus.data if consensus is not None else None
+    result, error, progress = [None], [None], deque()
+
+    def run():
+        try:
+            result[0] = stages.redetect_channel(
+                round_id, channel, params, existing=existing_action or "replace", image_path=image_path,
+                consensus_mask=consensus_data, progress_callback=lambda p, t: progress.append((p, t)))
+        except Exception as exc:
+            error[0] = exc
+
+    with popups.ProgressDialog(parent, f"Re-detecting {round_id} {channel}...") as dialog:
+        dialog.update_progress(0, f"Reading the original {round_id} {channel} image...")
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        while thread.is_alive():
+            thread.join(timeout=0.05)
+            while progress:
+                dialog.update_progress(*progress.popleft())
+            QApplication.processEvents()
+        while progress:
+            dialog.update_progress(*progress.popleft())
+        if error[0]:
+            raise error[0]
+        _raw_csv, aligned_csv = result[0]
+        if aligned_csv is None:
+            viewer.status = f"No {round_id} {channel} puncta were found or reached aligned space; nothing changed."
+            return
+        dialog.freeze_canvas()
+        from .. import viewer as _viewer_mod
+        _viewer_mod._suppress_custom_controls = True
+        try:
+            viewer_helpers.show_puncta_csv(viewer, f"{image_layer.name}{constants.PUNCTA_SUFFIX}",
+                                           aligned_csv, image_layer)
+        finally:
+            _viewer_mod._suppress_custom_controls = False
+            viewer.layers.selection.events.changed(added=set(), removed=set())
+
+    table = pd.read_csv(aligned_csv)
+    n_manual = int((table.get("Source") == constants.PUNCTA_SOURCE_MANUAL).sum()) if "Source" in table else 0
+    note = stages.report_note()
+    viewer.status = (f"Re-detected {round_id} {channel} on the original image and warped it: {len(table)} puncta"
+                     + (f", {n_manual} placed by hand kept" if n_manual else "") + "."
+                     + (f" {note}" if note else ""))
+    from .colocalization_widget import refresh_report_note
+    refresh_report_note()
+
 
 # --- Automated UI Event Listeners ---
 
@@ -226,6 +321,7 @@ def _on_image_change(new_layer: "napari.layers.Image"):
     Automatically detects voxel metadata and sets the Z-Anisotropy slider.
     Also auto-selects the appropriate nuclei mask based on the channel's round.
     """
+    _update_detect_on_original(new_layer)
     if new_layer is not None:
         scale = getattr(new_layer, 'scale', (1, 1, 1))
         if len(scale) == 3 and scale[2] != 0:
@@ -338,6 +434,47 @@ _inner.insertWidget(20, _make_divider())
 _inner.insertWidget(21, _bg_header)
 _inner.insertWidget(22, _bg_desc)
 # use_tophat(23), tophat_radius(24), call_button(25)
+
+# --- "Detect on the original image" (aligned and warped image layers only) ---
+from qtpy.QtWidgets import QCheckBox
+_detect_on_original = QCheckBox("Detect on original image, then warp")
+_DETECT_ON_ORIGINAL_TIP = (
+    "Detect on the round's original image, then warp the puncta into aligned space with the session's "
+    "saved registration: the method batch uses (detect, then warp). Puncta outside nuclei are dropped with the round's own "
+    "nuclei mask, as in batch, not with the mask chosen above. Unticked, detection runs on the aligned "
+    "image itself, which for R2 has been resampled.")
+_detect_on_original.setChecked(True)
+_detect_on_original.setToolTip(_DETECT_ON_ORIGINAL_TIP)
+_detect_on_original.setVisible(False)
+_inner.insertWidget(_inner.indexOf(_algo_header) - 2, _detect_on_original)
+# Why the box is greyed out, shown under it rather than only on hover.
+_original_note = QLabel("")
+_original_note.setWordWrap(True)
+_original_note.setMinimumWidth(0)
+_original_note.setStyleSheet("color: #f9e2af; margin: 2px 2px 4px 2px; font-size: 12px;")
+_original_note.setVisible(False)
+_inner.insertWidget(_inner.indexOf(_detect_on_original) + 1, _original_note)
+
+
+def _update_detect_on_original(layer):
+    """Show the tick box for aligned and warped image layers; enable it when
+    the session has a saved registration to warp with."""
+    aligned = layer is not None and layer.name.startswith((constants.ALIGNED_PREFIX, constants.WARPED_PREFIX))
+    _detect_on_original.setVisible(bool(aligned))
+    _original_note.setVisible(False)
+    if not aligned:
+        return
+    from ...core import stages
+    ok, reason = stages.can_rewarp()
+    if ok and not _detect_on_original.isEnabled():
+        _detect_on_original.setChecked(True)       # the default again, after a session that could not
+    _detect_on_original.setEnabled(ok)
+    _detect_on_original.setToolTip(_DETECT_ON_ORIGINAL_TIP if ok else f"Not available: {reason}")
+    _original_note.setText(reason or "")
+    _original_note.setVisible(not ok)
+    if not ok:
+        _detect_on_original.setChecked(False)
+
 
 # Add spacer above the Detect Puncta button (last widget = call_button)
 _inner.insertWidget(_inner.count() - 1, _make_spacer())

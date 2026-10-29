@@ -67,6 +67,9 @@ def attach_session_log(output_dir, session_filename=None):
     output_dir = Path(output_dir)
     logs_dir = output_dir / constants.LOGS_DIR
     logs_dir.mkdir(parents=True, exist_ok=True)
+    # A native crash leaves its Python stacks next to the session log.
+    from . import crash_log
+    crash_log.enable(logs_dir)
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     log_path = logs_dir / f"zfisher_{timestamp}.log"
@@ -113,6 +116,11 @@ def detach_session_log():
 
     if _file_handler:
         logger.info("=== zFISHer session log ended ===")
+        # The session's crash log goes with it.
+        from . import crash_log
+        session_logs = Path(_file_handler.baseFilename).parent
+        if crash_log.current_path() is not None and crash_log.current_path().parent == session_logs:
+            crash_log.disable()
         root = logging.getLogger()
         root.removeHandler(_file_handler)
         logging.getLogger("zfisher").removeHandler(_file_handler)

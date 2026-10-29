@@ -116,8 +116,7 @@ def test_puncta_csv_transformed_from_disk_equals_the_original_transform(store, r
         "puncta_id": ids, "Nucleus_ID": raw[:, 3], "Intensity": raw[:, 4], "SNR": raw[:, 5],
         "Source": sources}))
     data, out_sources = puncta.transform_puncta_csv(csv, round_id, reg.load_registration())
-    # The CSV's float text loses the last bit (1e-14 voxel); the transform itself is exact.
-    np.testing.assert_allclose(data, expected, rtol=0, atol=1e-9)
+    np.testing.assert_array_equal(data, expected)        # the CSV is read back exactly
     np.testing.assert_array_equal(data[:, 6], expected[:, 6])
     assert list(out_sources) == list(sources)
 

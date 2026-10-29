@@ -49,6 +49,28 @@ def write_puncta_csv(path, coords, features=None):
 # Source. A raw CSV and the aligned CSV made from it share puncta_id, so each
 # aligned punctum can be traced to its detection.
 
+def points_fingerprint(csv_path, with_source=True):
+    """A hash of the puncta in a puncta CSV: each row's ``puncta_id``, Z, Y, X
+    (to 1e-6 voxel) and, with ``with_source``, ``Source``, in id order.
+
+    Two files with the same puncta in the same places have the same
+    fingerprint, whatever their ``Nucleus_ID``, ``Intensity`` and ``SNR``:
+    ``Nucleus_ID`` is re-derived from the consensus mask whenever a session is
+    opened or a report exported, and that rewrite is not an edit."""
+    import hashlib
+    import pandas as pd
+    df = pd.read_csv(csv_path, float_precision="round_trip")
+    ids = pd.to_numeric(df["puncta_id"], errors="coerce") if "puncta_id" in df.columns else pd.Series(range(len(df)))
+    order = np.argsort(ids.to_numpy(float), kind="stable")
+    source = (df["Source"].fillna(constants.PUNCTA_SOURCE_UNKNOWN).astype(str) if "Source" in df.columns
+              else pd.Series([constants.PUNCTA_SOURCE_UNKNOWN] * len(df)))
+    digest = hashlib.sha256()
+    for i in order:
+        row = f"{ids.iloc[i]:.0f},{df['Z'].iloc[i]:.6f},{df['Y'].iloc[i]:.6f},{df['X'].iloc[i]:.6f}"
+        digest.update((row + (f",{source.iloc[i]}" if with_source else "") + "\n").encode())
+    return digest.hexdigest()
+
+
 def record_puncta(csv_path, event, **fields):
     """Record the puncta CSV that zFISHer just wrote at ``csv_path``, with its
     puncta counts by ``Source``; see ``provenance.record_artifact``."""
@@ -522,7 +544,9 @@ def transform_puncta_csv(csv_path, round_id, registration, consensus_mask=None,
     coordinates; ``puncta_id`` and ``Source`` are carried to the output."""
     import pandas as pd
 
-    df = pd.read_csv(csv_path)
+    # round_trip: the default parser can change a float's last bit, so a CSV
+    # rewritten from what it read would differ from the one it was given.
+    df = pd.read_csv(csv_path, float_precision="round_trip")
     n = len(df)
 
     def column(name, default):
@@ -547,6 +571,162 @@ def sources_of(puncta_data, ids, sources):
     by_id = dict(zip(np.asarray(ids, dtype=float), sources))
     return np.array([by_id.get(float(pid), constants.PUNCTA_SOURCE_UNKNOWN)
                      for pid in np.asarray(puncta_data)[:, 6]], dtype=object)
+
+
+def brightest_along_ray(image, start, direction, scale, refine_um=None):
+    """The voxel the Fishing Hook places a punctum on: the brightest voxel of
+    ``image`` (Z, Y, X) on the line through ``start`` (data coordinates, the
+    cursor) along ``direction`` (world, the camera's view direction), then,
+    with ``refine_um``, the brightest voxel within that radius of it. Returns
+    data coordinates, or None when the line misses the image.
+
+    The line is sampled every half voxel across the whole image: at a step of
+    a voxel or more, rounding to planes skips some, and in a 2D view it skips
+    the plane under the cursor, so a punctum went to the plane above or below
+    the spot."""
+    image = np.asarray(image)
+    scale = np.asarray(scale, dtype=float)
+    start = np.asarray(start, dtype=float)
+    step = np.asarray(direction, dtype=float) / scale            # world direction -> voxels
+    if not np.isfinite(step).all() or not np.linalg.norm(step):
+        return None
+    step = step / np.linalg.norm(step)
+    reach = float(np.linalg.norm(image.shape)) + 1
+    points = start + np.outer(np.arange(-reach, reach, 0.5), step)
+    voxels = np.round(points).astype(int)
+    inside = np.all((voxels >= 0) & (voxels < np.asarray(image.shape)), axis=1)
+    if not inside.any():
+        return None
+    points, voxels = points[inside], voxels[inside]
+    values = np.nan_to_num(image[tuple(voxels.T)].astype(float))
+    target = voxels[int(np.argmax(values))]
+    if refine_um:
+        radius = [int(max(1, refine_um / v)) for v in scale]
+        lo = np.maximum(target - radius, 0)
+        local = image[tuple(slice(l, t + r + 1) for l, t, r in zip(lo, target, radius))]
+        if local.size:
+            target = lo + np.array(np.unravel_index(int(np.argmax(local)), local.shape))
+    return target.astype(float)
+
+
+def far_from(coords, kept, scale):
+    """Which of ``coords`` are further than ``PUNCTA_DUPLICATE_DISTANCE_UM``
+    from every punctum in ``kept``: new detections, not duplicates of a kept
+    punctum. Both are (N, 3) voxel coordinates; ``scale`` is the voxel size in
+    µm, so the distance is the same in Z as in XY."""
+    from scipy.spatial import cKDTree
+    coords = np.asarray(coords, dtype=float).reshape(-1, 3)
+    kept = np.asarray(kept, dtype=float).reshape(-1, 3)
+    if len(kept) == 0 or len(coords) == 0:
+        return np.ones(len(coords), dtype=bool)
+    scale = np.asarray(scale, dtype=float)
+    dists, _ = cKDTree(kept * scale).query(coords * scale)
+    return dists > constants.PUNCTA_DUPLICATE_DISTANCE_UM
+
+
+def channel_key(layer_name):
+    """``'R2 - FITC'`` for any image or puncta layer of round R2's FITC channel
+    (``'R2 - FITC'``, ``'Warped R2 - FITC_puncta'``, ``'Aligned R2 - FITC'``),
+    or None if the name does not name a round and channel."""
+    import re
+    name = str(layer_name)
+    if name.endswith(constants.PUNCTA_SUFFIX):
+        name = name[:-len(constants.PUNCTA_SUFFIX)]
+    match = re.fullmatch(rf"(?:(?:{constants.ALIGNED_PREFIX}|{constants.WARPED_PREFIX})\s+)?"
+                         r"(R\d+)\s+-\s+(.+?)\s*", name)
+    return f"{match.group(1)} - {match.group(2)}" if match else None
+
+
+def _channel_ids_on_disk(key):
+    """Every ``puncta_id`` in the session's puncta CSVs of channel ``key``,
+    raw and aligned: the two share ids, so a new id must be new to both."""
+    import pandas as pd
+    from . import session
+    ids = []
+    for name, info in (session.get_data("processed_files", default={}) or {}).items():
+        if channel_key(name) != key or not isinstance(info, dict) or info.get("subtype") != "puncta_csv":
+            continue
+        try:
+            column = pd.read_csv(info["path"], usecols=["puncta_id"])["puncta_id"]
+        except (OSError, KeyError, ValueError):
+            continue
+        ids.extend(pd.to_numeric(column, errors="coerce").dropna().tolist())
+    return ids
+
+
+def allocate_puncta_ids(layer_name, count, existing_ids=()):
+    """``count`` new ``puncta_id`` values for the channel of ``layer_name``,
+    higher than any id the channel has had, so an id never names two puncta.
+
+    The next free id per channel (``channel_key``) is kept in the session's
+    ``puncta_next_id``, so ids deleted or replaced earlier, in this run or a
+    previous one, are not handed out again. Sessions without it start above
+    ``existing_ids`` and the ids in the channel's CSVs. A layer whose name
+    names no round and channel gets ids above ``existing_ids`` only."""
+    import pandas as pd
+    from . import session
+    known = pd.to_numeric(pd.Series(list(existing_ids), dtype=object), errors="coerce").dropna()
+    start = int(known.max()) + 1 if len(known) else 0
+    key = channel_key(layer_name)
+    if key is not None:
+        counters = dict(session.get_data("puncta_next_id", default={}) or {})
+        if key in counters:
+            start = max(start, int(counters[key]))
+        else:
+            on_disk = _channel_ids_on_disk(key)
+            start = max([start] + [int(i) + 1 for i in on_disk])
+        counters[key] = start + count
+        session.update_data("puncta_next_id", counters)
+    return np.arange(start, start + count, dtype=np.int64)
+
+
+def record_detection_settings(layer_name, settings):
+    """Store the settings that made the puncta of ``layer_name``'s channel in
+    the session's ``puncta_params`` under ``channel_key`` (``'R2 - FITC'``),
+    the key batch uses, and drop older entries for the same channel, which GUI
+    detection used to key by image layer (``'Warped R2 - FITC'``). One channel
+    then has one row in the report's Parameters sheet."""
+    from . import session
+    key = channel_key(layer_name) or str(layer_name)
+    params = {k: v for k, v in (session.get_data("puncta_params", default={}) or {}).items()
+              if (channel_key(k) or k) != key}
+    params[key] = dict(settings)
+    session.update_data("puncta_params", params)
+
+
+def detection_settings_row(params, n_puncta, detected_in):
+    """The ``puncta_params`` entry for a detection with ``process_puncta_detection``'s
+    ``params``: the settings the report's Parameters sheet lists."""
+    row = {
+        'algorithm': params.get('method', 'Local Maxima'),
+        'sensitivity': params.get('threshold_rel', constants.PUNCTA_THRESHOLD_REL),
+        'min_distance': params.get('min_distance', constants.PUNCTA_MIN_DISTANCE),
+        'sigma': params.get('sigma', constants.PUNCTA_SIGMA),
+    }
+    if 'z_scale' in params:
+        row['z_scale'] = params['z_scale']
+    row.update({
+        'nuclei_only': params.get('nuclei_only', True),
+        'tophat': params.get('use_tophat', False),
+        'tophat_radius': params.get('tophat_radius', constants.PUNCTA_TOPHAT_RADIUS),
+        'num_puncta': int(n_puncta),
+        'detected_in': detected_in,
+    })
+    return row
+
+
+def detection_settings():
+    """The session's ``puncta_params`` keyed by ``channel_key``. For sessions
+    that hold several entries for one channel (GUI detection on an aligned
+    image before ``record_detection_settings``), the one stored last wins: it
+    describes the detection the channel's current puncta came from."""
+    from . import session
+    out = {}
+    for name, settings in (session.get_data("puncta_params", default={}) or {}).items():
+        key = channel_key(name) or name
+        out.pop(key, None)                  # keep the order in which entries were stored
+        out[key] = settings
+    return out
 
 
 @timed_stage("puncta_detection",

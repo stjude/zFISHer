@@ -4,7 +4,9 @@ from pathlib import Path
 import gc
 import logging
 
-from . import io, registration, segmentation, puncta, analysis, session, provenance
+import pandas as pd
+
+from . import io, registration, segmentation, puncta, analysis, session, stages
 from .. import constants
 from .timing import timed_stage
 
@@ -172,18 +174,19 @@ def run_full_zfisher_pipeline(
             if ch.upper() not in nuc_names_upper
         ]
 
-    # Load per-round nuclear masks for puncta filtering
-    r1_mask_path = io.find_mask(seg_dir, f"R1 - {r1_nuc_ch}{constants.MASKS_SUFFIX}")
-    r2_mask_path = io.find_mask(seg_dir, f"R2 - {r2_nuc_ch}{constants.MASKS_SUFFIX}")
+    # Load per-round nuclear masks for puncta filtering, as registered by
+    # segmentation, once per round rather than once per channel.
+    r1_mask_path = stages.round_mask_path("R1")
+    r2_mask_path = stages.round_mask_path("R2")
     r1_mask = io.read_label_tif(r1_mask_path) if r1_mask_path else None
     r2_mask = io.read_label_tif(r2_mask_path) if r2_mask_path else None
 
-    raw_puncta_results = {}  # {("R1", ch): ndarray, ("R2", ch): ndarray}
+    detected = []  # (round, channel) of every channel whose raw-space CSV was written
     channel_jobs = [(rnd, mask) for rnd, mask in [("R1", r1_mask), ("R2", r2_mask)] for _ in puncta_channels]
     job_count = max(len(channel_jobs), 1)
     job_i = 0
 
-    for rnd, rnd_mask, sess_obj in [("R1", r1_mask, r1_sess), ("R2", r2_mask, r2_sess)]:
+    for rnd, rnd_mask, sess_obj, raw_path in [("R1", r1_mask, r1_sess, r1_path), ("R2", r2_mask, r2_sess, r2_path)]:
         for ch in puncta_channels:
             # Build params for this channel
             if puncta_config and ch in puncta_config:
@@ -202,69 +205,27 @@ def run_full_zfisher_pipeline(
                 }
                 nuclei_only = True
 
-            # Only pass nuclear mask if nuclei_only is True
-            mask_for_detection = rnd_mask if nuclei_only else None
-
             ch_idx = list(sess_obj.channels).index(ch)
-            ch_data = sess_obj.data[:, ch_idx, :, :]
             job_base = 25 + int((job_i / job_count) * 10)
             _update(job_base, f"Detecting puncta (raw): {rnd} {ch}...")
 
-            # The raw-space puncta are kept: the aligned rows share their
-            # puncta_id, and a saved registration can transform them again.
-            raw_layer_name = f"{rnd} - {ch}{constants.PUNCTA_SUFFIX}"
-            raw_reports_dir = output_dir / constants.REPORTS_DIR
-            raw_reports_dir.mkdir(exist_ok=True, parents=True)
-            raw_csv = constants.puncta_csv_path(raw_reports_dir, raw_layer_name)
+            # The same step the GUI re-detects a channel with. It keeps the
+            # raw-space puncta, records them, and stores the channel's
+            # settings for the report; the aligned rows share their puncta_id.
             try:
-                result = puncta.process_puncta_detection(
-                    image_data=ch_data,
-                    mask_data=mask_for_detection,
-                    voxels=sess_obj.voxels,
-                    params=ch_params,
-                    output_path=raw_csv,
-                    layer_name=raw_layer_name,
-                    progress_callback=lambda p, t, _b=job_base: _update(
-                        _b + int(p / 100 * 2), f"{rnd} {ch}: {t}"
-                    )
+                raw_csv = stages.detect_channel(
+                    rnd, ch, params=dict(ch_params, nuclei_only=nuclei_only), run_by="batch",
+                    image=sess_obj.data[:, ch_idx, :, :], image_path=raw_path, voxels=sess_obj.voxels,
+                    mask=rnd_mask,
+                    progress_callback=lambda p, t, _b=job_base: _update(_b + int(p / 100 * 2), f"{rnd} {ch}: {t}"),
                 )
             except Exception as exc:
                 logger.error("Puncta detection failed for %s %s: %s", rnd, ch, exc, exc_info=True)
                 _update(job_base, f"Puncta detection failed for {rnd} {ch}: {exc}")
                 job_i += 1
                 continue
-            raw_puncta_results[(rnd, ch)] = result
-            if raw_csv.exists():
-                session.set_processed_file(raw_layer_name, str(raw_csv), "points", metadata={
-                    'format': 'csv', 'subtype': 'puncta_csv', 'space': 'raw', 'round': rnd})
-                puncta.record_puncta(
-                    raw_csv, "detected", round=rnd, channel=ch, space=f"raw:{rnd}", detected_in="raw",
-                    source_image=provenance.file_identity(r1_path if rnd == "R1" else r2_path),
-                    mask=provenance.file_identity(r1_mask_path if rnd == "R1" else r2_mask_path)
-                    if mask_for_detection is not None else None,
-                    # After detection, which fills in z_scale from the voxel size.
-                    detection_parameters=dict(ch_params, nuclei_only=nuclei_only),
-                    voxel_size=list(map(float, sess_obj.voxels)),
-                    run_by="batch")
-
-            # Persist detection parameters per layer for the final report.
-            # Format: {layer_key: {algorithm, sensitivity, min_distance, ...}}
-            # These sanitized versions are separate from the raw params
-            # and used for reproducibility documentation.
-            # Persist detection parameters for this channel
-            layer_key = f"{rnd} - {ch}"
-            puncta_params_all = session.get_data("puncta_params", default={})
-            puncta_params_all[layer_key] = {
-                'algorithm': ch_params.get('method', 'Local Maxima'),
-                'sensitivity': ch_params.get('threshold_rel', constants.PUNCTA_THRESHOLD_REL),
-                'min_distance': ch_params.get('min_distance', constants.PUNCTA_MIN_DISTANCE),
-                'sigma': ch_params.get('sigma', constants.PUNCTA_SIGMA),
-                'nuclei_only': nuclei_only,
-                'tophat': ch_params.get('use_tophat', False),
-                'tophat_radius': ch_params.get('tophat_radius', constants.PUNCTA_TOPHAT_RADIUS),
-                'num_puncta': len(result),
-            }
-            session.update_data("puncta_params", puncta_params_all)
+            if raw_csv is not None:
+                detected.append((rnd, ch))
 
             job_i += 1
 
@@ -353,54 +314,28 @@ def run_full_zfisher_pipeline(
     reports_dir.mkdir(exist_ok=True, parents=True)
 
     aligned_puncta_layers = []  # Collect for colocalization analysis
-    job_count = max(len(raw_puncta_results), 1)
+    job_count = max(len(detected), 1)
     job_i = 0
-    for (rnd, ch), raw_data in raw_puncta_results.items():
+    for rnd, ch in detected:
         prefix_str = constants.ALIGNED_PREFIX if (rnd == "R1" or bspline_transform is None) else constants.WARPED_PREFIX
         job_base = 70 + int((job_i / job_count) * 15)
-        job_span = max(int(15 / job_count), 1)
         _update(job_base, f"Transforming puncta: {rnd} {ch}...")
 
-        puncta_layer_name = f"{prefix_str} {rnd} - {ch}{constants.PUNCTA_SUFFIX}"
-        csv_out = constants.puncta_csv_path(reports_dir, puncta_layer_name)
-
-        transformed = puncta.transform_puncta_to_aligned_space(
-            raw_puncta=raw_data,
-            round_id=rnd,
-            shift=shift,
-            canvas_offset=canvas_offset,
-            bspline_transform=bspline_transform if rnd == "R2" else None,
-            consensus_mask=merged_mask,
-            remove_extranuclear=remove_extranuclear_puncta,
-            output_path=csv_out,
-            layer_name=puncta_layer_name,
-            progress_callback=lambda p, t, _b=job_base, _s=job_span: _update(
-                _b + int(p / 100 * _s), f"{rnd} {ch}: {t}"
-            )
-        )
-
-        if csv_out.exists():
-            raw_csv = constants.puncta_csv_path(reports_dir, f"{rnd} - {ch}{constants.PUNCTA_SUFFIX}")
-            consensus_file = io.find_mask(output_dir / constants.SEGMENTATION_DIR, constants.CONSENSUS_MASKS_NAME)
-            puncta.record_puncta(
-                csv_out, "transformed", round=rnd, channel=ch, space="aligned", detected_in="raw",
-                derived_from=raw_csv.name if raw_csv.exists() else None,
-                registration=registration.registration_fingerprint(),
-                consensus_mask=provenance.file_identity(consensus_file),
-                remove_extranuclear=remove_extranuclear_puncta, run_by="batch")
+        # The same step the GUI rewarps a re-detected channel with: the raw
+        # CSV through the registration saved at canvas generation.
+        csv_out = stages.transform_channel(rnd, ch, remove_extranuclear=remove_extranuclear_puncta,
+                                           run_by="batch", consensus_mask=merged_mask)
 
         # Build layer data dict for colocalization analysis
+        transformed = pd.read_csv(csv_out, float_precision="round_trip") if csv_out is not None else None
         if transformed is not None and len(transformed) > 0:
-            coords = transformed[:, :3]  # Z, Y, X
-            nuc_ids = transformed[:, 3] if transformed.shape[1] > 3 else None
-            puncta_id = transformed[:, 6] if transformed.shape[1] > 6 else None
             aligned_puncta_layers.append({
-                'name': puncta_layer_name,
-                'data': coords,
+                'name': f"{prefix_str} {rnd} - {ch}{constants.PUNCTA_SUFFIX}",
+                'data': transformed[['Z', 'Y', 'X']].to_numpy(float),
                 'scale': np.array(r1_sess.voxels),
                 'translate': np.zeros(3),
-                'nucleus_ids': nuc_ids,
-                'puncta_id': puncta_id,
+                'nucleus_ids': transformed['Nucleus_ID'].to_numpy(float),
+                'puncta_id': transformed['puncta_id'].to_numpy(float),
             })
 
         job_i += 1
@@ -470,7 +405,7 @@ def run_full_zfisher_pipeline(
             _update(95, f"Colocalization failed: {exc}")
 
     # --- Cleanup ---
-    del r1_sess, r2_sess, r1_dapi, r2_dapi, merged_mask, raw_puncta_results
+    del r1_sess, r2_sess, r1_dapi, r2_dapi, merged_mask
     gc.collect()
 
     # Ensure the session JSON is fully written before exiting

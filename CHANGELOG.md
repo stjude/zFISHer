@@ -2,6 +2,186 @@
 
 All notable changes to zFISHer. Versions follow [semantic versioning](https://semver.org/).
 
+## 2.2.0 — 2026-10-29
+
+### Re-detecting a channel of a reopened session
+
+- **A channel can be re-detected on its original image and warped again**,
+  without registering again, in sessions made with 2.1.0 or later. In Puncta
+  Detection, choose the channel's aligned or warped image layer and keep
+  **Detect on original image, then warp** ticked (the method batch uses): zFISHer
+  reads that channel of the round's raw image (asking where it is if it has
+  moved), detects with the settings in the widget inside the round's own nuclei
+  mask, warps the puncta with the session's saved registration, and replaces
+  the aligned puncta layer in place. Replace keeps the puncta placed by hand,
+  on the raw or the aligned image; Replace All drops them; Merge adds the new
+  puncta to the old ones.
+- Unticked, detection runs on the aligned image itself, as before. For R2 that
+  is the image after resampling, not the method batch uses, so zFISHer asks
+  first.
+- The export section says when the report is out of date and why (a channel
+  was re-detected, puncta were changed, the consensus mask was edited); export
+  again to update it. The status bar says the same after a re-detection.
+- **Puncta can be picked by hand on a channel's original image and warped.**
+  Puncta Picking > Manual > **Pick on Original Image**: choose a channel and
+  press **Open Original Image** to load that channel's raw image and raw puncta
+  over the aligned data (the channel's aligned layers are hidden meanwhile;
+  **Show the round's nuclei mask** adds the round's own mask, about 1.2 GB more
+  memory). Pick or correct puncta with the Puncta Editor, Fishing Hook
+  included, then press **Warp Picks into Aligned Space**: the raw puncta, picks
+  included, go through the session's saved registration onto the aligned
+  puncta layer. **Close Without Warping** keeps the picks in the raw puncta and
+  leaves the aligned puncta marked out of date. For R2 the original image is
+  placed by the rigid shift only, so it sits close to, not exactly on, the
+  warped data.
+- **Sessions made before 2.1.0** have no saved warp, so neither feature above
+  works in them. Puncta Detection says so under the greyed-out box, and so does
+  the picking page: detecting on the aligned image still works, and the report
+  says so; re-running the dataset through batch with zFISHer 2.1 or later makes
+  both available. A folder missing its saved warp file
+  (`aligned/registration_bspline.tfm`) is named as such.
+- When puncta are warped into aligned space with puncta outside nuclei
+  removed, as batch does, puncta placed by hand are kept wherever they are.
+- **The report's Parameters sheet says how each channel was detected**, in a
+  new **Detected on** column after Channel: on the original image and then
+  shifted (R1) or warped (R2) into aligned space, the batch method; or on the
+  aligned image, which for R2 is the image after resampling and differs from
+  batch. It is read from the record of the channel's current puncta, and says
+  "Not recorded" where there is none.
+
+### Puncta IDs and detection settings
+
+- **A `puncta_id` is never given to a second punctum.** Re-running detection
+  with Replace used to number the new puncta from 0 (or from the highest kept
+  manual punctum), so the ids of the puncta it removed were reused for
+  different ones. Replace, Replace All, Merge and points added by hand now take
+  ids higher than any the channel has had. The next free id is kept in the
+  session file (`puncta_next_id`), so this holds after reopening a session too.
+  Sessions without it start above the ids in that channel's puncta CSVs.
+- **One channel has one row in the report's Parameters sheet.** GUI detection
+  stored its settings under the image layer's name (`Warped R2 - FITC`) while
+  batch used `R2 - FITC`, so re-detecting a batch channel added a second row and
+  left the old one. Both now use `R2 - FITC`. In older sessions with several
+  rows for one channel, the report shows the latest.
+  Batch rows now also give `z_scale`, as GUI rows did.
+
+### Provenance
+
+- **Exported reports are recorded in `provenance.jsonl`**, with the puncta
+  CSVs and the consensus mask they were made from. Aligned puncta CSVs also
+  record the hash of the raw CSV they were warped from and a fingerprint of
+  their puncta. From these zFISHer tells whether a channel's aligned puncta or
+  the report are out of date, and whether aligned puncta were edited by hand
+  since they were made. Updating a puncta's `Nucleus_ID` on reload or export
+  does not count as an edit.
+
+### Fixes
+
+- **Export refuses to build a report on nucleus IDs it could not re-derive.**
+  The per-nucleus numbers come from each puncta layer's `Nucleus_ID`, which is
+  re-derived from the consensus mask just before export. If no consensus mask is
+  loaded, or a puncta layer has no `Nucleus_ID` column or a table that does not
+  match its points, the check used to pass silently (`changed=0`) and the report
+  could carry stale assignments. Export now stops and names the problem, and the
+  log warns for each skipped layer.
+- **The Fishing Hook lands on the plane of the spot you click.** It searched
+  the line through the cursor in steps of slightly more than a voxel, and in a
+  2D view that skipped the plane under the cursor: clicking a spot on its own
+  plane put the punctum on the plane above or below (0.3 to 0.5 µm off in Z),
+  or on background for a spot one plane thick. It now searches every half
+  voxel. Puncta placed with the Fishing Hook in 2D before this may sit a plane
+  off.
+- **The capture arrows and the scale bar no longer crash zFISHer on a value
+  they cannot draw.** A corrupt arrow endpoint, or a camera zoom of nan or
+  infinity, raised inside their drawing code; Qt's painter was left open, and
+  the next redraw could end zFISHer with a segmentation fault and no
+  traceback. With a corrupt arrow this happened as soon as the 3D view was
+  drawn, which fits the 3D-rotation crash reports. Such values are now
+  skipped, and the painter is always closed.
+- Undo in the Puncta Editor swaps the points through the same routine as
+  every other change to a puncta layer, which clears napari's drawing cache
+  first; changing the number of points against a stale cache can corrupt what
+  is drawn.
+- Labels with "&" show it again: "Run Analysis & Export Master Report", the
+  "Colocalization & Export" page and "Match & Merge Nuclei" showed a gap
+  instead, because Qt reads a single "&" as a keyboard shortcut.
+- **Replace and Merge judge duplicates in micrometres.** A new punctum within
+  0.3 µm of one already there is the same punctum and is dropped, along Z as
+  along XY. Before, the limit was 3 voxels, which at 0.3 µm Z steps meant
+  0.9 µm in Z: puncta two planes apart were taken for one. Re-detection on the
+  original image uses the same rule.
+- Editing a raw-space puncta layer no longer drops its `space: raw` mark in the
+  session, which made the next reopen draw raw puncta over the aligned images.
+- **A copied output folder uses its own files.** Opening the session of a
+  copied output folder while the original folder still existed kept every
+  mask, puncta CSV, aligned image and report pointing into the original: the
+  GUI showed the original's layers, and removing a layer renamed the
+  original's file to `.bak`. Every file inside the output folder now opens from
+  the folder the session file is in, and a file missing from the copy is
+  reported missing instead of being read from the original. Raw images outside
+  the output folder are opened where they are, as before.
+- **Reset and Load Session leave the open session's files alone.** Clearing
+  the canvas went through the same path as deleting a layer by hand, which
+  backs the layer's file up to `.bak` and drops it from the session file. So
+  Home > Reset renamed every file the open session lists (masks, puncta CSVs,
+  aligned images, reports) and emptied its session file; Load Session did the
+  same to the session it was leaving; and loading the open session again, from
+  the session file the app was writing, found it already emptied and came back
+  without its processed layers. The files and the session file now stay as
+  they are, and New Session clears the canvas the same way. A session this
+  happened to still has its files, renamed with a `.bak` ending, where they
+  were; where an earlier session file exists in its `sessions/` folder,
+  loading that one brings them back, since a listed file that is missing is
+  read from its `.bak`.
+- **Load Session keeps nothing of the session it replaces.** The file being
+  loaded was merged into the session in memory, so a key the file did not
+  have kept the value of whatever session was open before it: a session made
+  before 2.1.0, opened after a newer one, inherited that one's saved
+  registration, canvas scale and nuclear channel, and re-detecting a channel
+  would have warped its puncta with another dataset's transform. The session
+  in memory is now replaced whole.
+- **Batch Process saves the open session's mask edits first.** Mask edits are
+  written a moment after the last stroke; starting a batch replaced the open
+  session before that moment came, so the edit was written into the first
+  batch dataset's folder, or not at all. The pending edits now go to the open
+  session before the batch starts, as they already did before Load Session
+  and New Session.
+
+### Diagnostics
+
+- **A native crash now leaves a Python stack.** A segfault or access violation
+  inside Qt or OpenGL used to end zFISHer with nothing in the session log. Now
+  the Python stack of every thread is written to `crash_<time>.log`, in the
+  session's `logs/` folder (before a session is open: `~/Library/Logs/zFISHer`
+  on macOS, `%LOCALAPPDATA%\zFISHer\Logs` on Windows). A run that ends normally
+  leaves no crash file.
+- **Errors napari catches are logged.** zFISHer hides napari's error
+  pop-ups, and with them every error raised inside a napari event handler.
+  Those errors, with their tracebacks, now go to the session log
+  ("Error caught by napari: ..."); the pop-ups stay hidden.
+
+### Development
+
+- `tools/check_mouse_picking.py` picks puncta with simulated mouse clicks and
+  key presses (napari's add mode, the Fishing Hook) on an original image in
+  zFISHer's real window, and warps them.
+- A regression test for the 3D-rotation crash (`tests/test_3d_rotation.py`)
+  rotates the 3D view of a session with puncta, ID labels and capture arrows in
+  zFISHer's real window and draws every frame; it is skipped on machines
+  without a display. `tools/app_driver.py` drives that window from a script,
+  so GUI changes can be checked without someone at the screen.
+- **Releases are tagged automatically.** When a merge into main brings a
+  version made with `prepare_release.py` (one with no tag yet), the release
+  workflow runs the tests, checks the version and changelog, tags the merge
+  commit and creates the draft release. Releasing is now: run the prepare
+  script, commit and push, merge the pull request, publish the draft. Merges
+  that leave the version alone release nothing, and pushing a tag by hand still
+  works.
+- Batch detects each channel's puncta and transforms them into aligned space
+  with the same core steps (`zfisher/core/stages.py`) that re-detecting a
+  channel of a reopened session will use. Its puncta CSVs, images and masks
+  are unchanged.
+
 ## 2.1.2 — 2026-10-14
 
 ### Fixes

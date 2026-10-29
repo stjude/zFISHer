@@ -43,7 +43,7 @@ class ExportVisualizationWidget(widgets.Container):
         export_toolbox.setStyleSheet(style.NESTED_TOOLBOX_STYLESHEET)
 
         # Add the colocalization widget as a collapsible item.
-        export_toolbox.addItem(self.export_widget.native, "Colocalization & Export")
+        export_toolbox.addItem(self.export_widget.native, "Colocalization && Export")
         export_layout.addWidget(export_toolbox)
         self.toolbox.addItem(export_outer_container, "Export")
 

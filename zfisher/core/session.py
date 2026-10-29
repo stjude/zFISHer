@@ -70,41 +70,48 @@ def _path_exists(path_str):
         return False
 
 
-def _reanchor_path(path_str, stored_root, real_root):
-    """Re-point a path that was saved on another machine onto ``real_root``.
+def _reanchor_path(path_str, stored_root, real_root, keep_existing_original=False):
+    """Re-point a path saved under the session's stored output root onto
+    ``real_root``, the folder the session file actually lives in now.
 
     Makes an output folder portable: a session JSON copied/downloaded from a
     different machine carries that machine's absolute paths, which don't exist
-    locally. We re-anchor each one onto the directory where the session file
-    actually lives now. Preference order:
+    locally, and a folder copied on the same machine carries paths into the
+    folder it was copied from. Preference order:
 
-    1. If the file already exists as-is, keep it (same machine / same path).
-    2. Re-base it from the session's stored output root onto ``real_root`` —
+    1. A path under the stored output root is re-based onto ``real_root`` —
        matching the root case-insensitively and across path separators, so it
-       works between Windows/macOS/Linux and across drive-letter casing.
+       works between Windows/macOS/Linux and across drive-letter casing. This
+       holds even when the old path still exists: a copy must never read or
+       write the files of the folder it was copied from. With
+       ``keep_existing_original`` (for raw inputs, which are only read), the
+       old path is kept when the re-based one is missing and the old one exists.
+    2. A path outside the stored root that exists as-is is kept (an input file
+       that lives outside the output folder).
     3. Else re-anchor from the LAST known output subfolder in the path
        (``reports/``, ``segmentation/``, …) — but only if the result actually
        exists, so we never fabricate a path that points at an unrelated file.
 
-    Falls back to the original string if none apply (e.g. an external input file
-    that lives outside the output folder).
+    Falls back to the original string if none apply.
     """
     if not path_str:
         return path_str
-    try:
-        if Path(path_str).exists():
-            return path_str
-    except OSError:
-        pass
 
     parts = _path_components(path_str)
 
-    # 2) Re-base against the stored output root (OS- and case-insensitive).
+    # 1) Re-base against the stored output root (OS- and case-insensitive).
     if stored_root:
         root = _path_components(stored_root)
         if root and len(parts) > len(root) and \
                 [c.lower() for c in parts[:len(root)]] == [c.lower() for c in root]:
-            return str(Path(real_root).joinpath(*parts[len(root):]))
+            rebased = str(Path(real_root).joinpath(*parts[len(root):]))
+            if keep_existing_original and not _path_exists(rebased) and _path_exists(path_str):
+                return path_str
+            return rebased
+
+    # 2) Keep a path outside the output folder that exists as-is.
+    if _path_exists(path_str):
+        return path_str
 
     # 3) Re-anchor from the LAST recognised output subfolder, if it resolves.
     known = {s.lower() for s in _output_subdirs()}
@@ -360,13 +367,15 @@ def load_session_file(path):
     else:
         out_dir = path.parent
 
-    # Re-anchor every stored path from the originating machine's output root onto
-    # the real one, so relocated/downloaded folders resolve their processed files.
+    # Re-anchor every stored path from the stored output root onto the real one,
+    # so relocated/downloaded folders resolve their processed files and a copied
+    # folder uses its own files, not those of the folder it was copied from.
     stored_out_dir = data.get("output_dir")
     data["output_dir"] = str(out_dir)
     for key in ("r1_path", "r2_path"):
         if data.get(key):
-            data[key] = _reanchor_path(data[key], stored_out_dir, out_dir)
+            # Raw inputs are only read, so one the copy lacks is read from where it was.
+            data[key] = _reanchor_path(data[key], stored_out_dir, out_dir, keep_existing_original=True)
     for name, info in data.get("processed_files", {}).items():
         if isinstance(info, dict) and info.get("path"):
             resolved = _reanchor_path(info["path"], stored_out_dir, out_dir)

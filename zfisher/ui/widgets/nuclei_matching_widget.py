@@ -9,7 +9,7 @@ from ..decorators import require_active_session, error_handler
 from ... import constants
 
 @magicgui(
-    call_button="Match & Merge Nuclei",
+    call_button="Match && Merge Nuclei",
     layout="vertical",
     r1_mask_layer={"label": "R1 Mask (Aligned)", "tooltip": "The aligned nuclei mask from Round 1."},
     r2_mask_layer={"label": "R2 Mask (Warped)", "tooltip": "The nuclei mask from Round 2 after registration."},

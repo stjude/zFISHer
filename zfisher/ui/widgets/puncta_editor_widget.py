@@ -9,7 +9,7 @@ from scipy.spatial import cKDTree
 from ..decorators import require_active_session
 from .. import viewer_helpers
 from ... import constants
-from ...core import timing
+from ...core import puncta, timing
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,6 @@ class _PunctaUndoStack:
                 # then restore the format string once features are valid.
                 was_visible = target.visible
                 target.visible = False
-                target._Points__indices_view = np.empty(0, int)
                 # Save and replace text encoding with safe constant
                 saved_text_format = None
                 try:
@@ -67,8 +66,8 @@ class _PunctaUndoStack:
                     target.text.string.format = ''
                 except AttributeError:
                     pass
-                target.data = data
-                target.features = features
+                # The GL-safe swap: index cache cleared first, features after data.
+                viewer_helpers.set_points_data(target, data, features)
                 # Restore the format string now that features are valid
                 if saved_text_format is not None:
                     target.text.string.format = saved_text_format
@@ -264,11 +263,13 @@ def _seed_next_puncta_id(layer):
 
 
 def _next_puncta_ids(layer, count):
-    """Allocate ``count`` monotonically increasing puncta_ids for ``layer``."""
+    """Allocate ``count`` monotonically increasing puncta_ids for ``layer``,
+    also above every id its channel has had in the session
+    (``puncta.allocate_puncta_ids``), so an id is not reused after a reload."""
     _seed_next_puncta_id(layer)
-    start = int(layer.metadata['next_puncta_id'])
-    layer.metadata['next_puncta_id'] = start + count
-    return list(range(start, start + count))
+    ids = puncta.allocate_puncta_ids(layer.name, count, [int(layer.metadata['next_puncta_id']) - 1])
+    layer.metadata['next_puncta_id'] = int(ids[-1]) + 1 if count else layer.metadata['next_puncta_id']
+    return [int(i) for i in ids]
 
 
 @timing.timed_action("puncta_data_changed")
@@ -425,59 +426,13 @@ def connect_puncta_editor_layer_sync(viewer):
 def calculate_fishing_hook(img_layer, data_pos, viewer, use_optimization=True, radius_um=0.1):
     """Place a punctum by casting a ray through the volume along the camera direction,
     finding the brightest voxel along the ray, then optionally refining to the local
-    intensity peak within radius_um. Ideal for accurate 3D placement from any view angle."""
-    # 1. Get the camera direction (World Space)
+    intensity peak within radius_um (``puncta.brightest_along_ray``). Works from any view angle."""
     try:
-        view_direction = np.array(viewer.camera.view_direction)
-        if view_direction is None or np.any(np.isnan(view_direction)):
-            return None
+        view_direction = np.array(viewer.camera.view_direction, dtype=float)
     except Exception:
         return None
-    
-    # 2. NEW: Convert the direction vector to Data Space (Pixels)
-    data_view_dir = view_direction / img_layer.scale
-    
-    # 3. NEW: Normalize the vector so our 500-pixel steps are mathematically accurate
-    data_view_dir = data_view_dir / np.linalg.norm(data_view_dir)
-    
-    # 4. Apply the corrected pixel vector
-    start_pt = data_pos - data_view_dir * 500
-    end_pt = data_pos + data_view_dir * 500
-    
-    steps = np.linspace(start_pt, end_pt, num=1000) # Increased steps for better sampling
-    
-    intensities = []
-    valid_coords = []
-
-    for s in steps:
-        coords = np.round(s).astype(int)
-        if all(0 <= coords[i] < img_layer.data.shape[i] for i in range(len(coords))):
-            intensities.append(img_layer.data[tuple(coords)])
-            valid_coords.append(s)
-
-    if not intensities:
-        return None
-
-    # Find the coordinate corresponding to the max intensity
-    target_coord_data = valid_coords[np.argmax(np.nan_to_num(intensities))]
-
-    if use_optimization:
-        voxels = img_layer.scale 
-        z_rad, y_rad, x_rad = [int(max(1, radius_um / v)) for v in voxels]
-        z, y, x = np.round(target_coord_data).astype(int)
-        
-        z_s, y_s, x_s = (slice(max(0, z-z_rad), z+z_rad+1), 
-                         slice(max(0, y-y_rad), y+y_rad+1), 
-                         slice(max(0, x-x_rad), x+x_rad+1))
-
-        local_vol = img_layer.data[z_s, y_s, x_s]
-        if local_vol.size > 0:
-            local_peak = np.unravel_index(np.argmax(local_vol), local_vol.shape)
-            target_coord_data = np.array([z_s.start + local_peak[0], 
-                                         y_s.start + local_peak[1], 
-                                         x_s.start + local_peak[2]])
-            
-    return target_coord_data
+    return puncta.brightest_along_ray(img_layer.data, data_pos, view_direction, img_layer.scale,
+                                      refine_um=radius_um if use_optimization else None)
 
 # --- F key state tracking for fishing hook ---
 _f_key_held = False

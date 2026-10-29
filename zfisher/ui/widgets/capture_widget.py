@@ -1,4 +1,5 @@
 import logging
+import math
 import napari
 import numpy as np
 import warnings as _warnings
@@ -17,6 +18,10 @@ from ._shared import make_divider as _make_divider, make_section_header as _make
 logger = logging.getLogger(__name__)
 
 # --- Arrow Overlay (QPainter-based, world-anchored, screen-rendered) ---
+
+# Painted coordinates must fit Qt's int pixels; far beyond any screen is not drawn.
+_MAX_PAINT_PX = 1e7
+
 
 class ArrowOverlay(QWidget):
     """Transparent widget that draws arrows on top of the napari canvas.
@@ -210,12 +215,24 @@ class ArrowOverlay(QWidget):
 
         # Pre-compute slice filter values (only needed in 2D)
         is_2d = self.viewer.dims.ndisplay == 2
+        non_displayed = current_step = None
         if is_2d:
             displayed = set(self.viewer.dims.displayed)
             current_step = self.viewer.dims.current_step
             non_displayed = [d for d in range(self.viewer.dims.ndim) if d not in displayed]
 
+        # An exception in here is swallowed by PySide and leaves the painter
+        # active, and the next repaint can end the process (a native crash with
+        # no traceback): never let one escape, and always end the painter.
         painter = QPainter(self)
+        try:
+            self._paint_arrows(painter, arrows, project, is_2d, non_displayed, current_step)
+        except Exception:
+            logger.exception("Capture arrows could not be painted")
+        finally:
+            painter.end()
+
+    def _paint_arrows(self, painter, arrows, project, is_2d, non_displayed, current_step):
         painter.setRenderHint(QPainter.Antialiasing)
 
         committed_pen = QPen(QColor(255, 255, 255), 2)
@@ -240,6 +257,10 @@ class ArrowOverlay(QWidget):
 
             sx, sy = project(start_data)
             ex, ey = project(end_data)
+            # A corrupt endpoint, or a camera mid-transition, can project to nan
+            # or to values beyond Qt's int pixels: not drawable.
+            if not all(math.isfinite(v) and abs(v) < _MAX_PAINT_PX for v in (sx, sy, ex, ey)):
+                continue
 
             if is_preview:
                 painter.setPen(preview_pen)
@@ -268,8 +289,6 @@ class ArrowOverlay(QWidget):
                 QPointF(bx - head_w * px, by - head_w * py),
             ])
             painter.drawPolygon(triangle)
-
-        painter.end()
 
 
 class ArrowDrawer:
