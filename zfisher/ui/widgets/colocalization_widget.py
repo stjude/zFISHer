@@ -197,7 +197,7 @@ def _on_export():
         # mask on screen before counting anything, so the report reflects the
         # mask as edited, whichever edit path was used.
         dialog.update_progress(5, "Reconciling puncta with the consensus mask...")
-        viewer_helpers.reconcile_puncta_with_consensus(viewer)
+        viewer_helpers.reconcile_puncta_for_report(viewer)
 
         points_data = []
         for l in points_layers:

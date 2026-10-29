@@ -275,6 +275,12 @@ class BatchProcessWidget(Container):
             ):
                 return
 
+        # Edits to the open session's masks must reach its folder before the
+        # batch's sessions take its place in memory; otherwise the debounced
+        # save fires later, into the wrong folder, or not at all.
+        from .mask_editor_widget import flush_pending_mask_saves
+        flush_pending_mask_saves()
+
         output_base.mkdir(parents=True, exist_ok=True)
 
         num_items = len(config["datasets"])

@@ -88,7 +88,7 @@ def test_resync_updates_only_changed_aligned_layers(_qapp):
         calls, originals = _session_output_dir(d)
         try:
             out = viewer_helpers.resync_puncta_nucleus_ids(viewer, mask, remove_extranuclear=False, save_csv=True)
-            assert out == {"updated_layers": 1, "removed_total": 0, "changed_total": 3}
+            assert out == {"updated_layers": 1, "removed_total": 0, "changed_total": 3, "skipped_layers": []}
             assert list(aligned.features["Nucleus_ID"]) == [1, 2, 0]
             assert list(raw.features["Nucleus_ID"]) == [7, 7, 7]
             assert len(aligned.data) == 3                       # nothing removed
@@ -138,3 +138,73 @@ def test_reconcile_finds_consensus_or_returns_none(_qapp):
     out = viewer_helpers.reconcile_puncta_with_consensus(_Viewer([aligned, mask]), save_csv=False)
     assert out["changed_total"] == 1
     assert list(aligned.features["Nucleus_ID"]) == [4]
+
+
+def test_resync_reports_layers_it_cannot_reconcile(_qapp, caplog):
+    """A layer it cannot reconcile (here: no Nucleus_ID column; napari pads a
+    short table, so a row-count mismatch cannot be built through its API) keeps
+    its IDs, but is named in the result and the log instead of passing as
+    ``changed=0``."""
+    from zfisher.ui import viewer_helpers
+    bad = _points("Aligned R1 - CY5_puncta", [10, 20], [9, 9])
+    bad.features = bad.features.drop(columns=["Nucleus_ID"])
+    nocol = _points("Warped R2 - FITC_puncta", [10], [9])
+    nocol.features = nocol.features.drop(columns=["Nucleus_ID"])
+    mask = _consensus({1: 10, 2: 20})
+    with caplog.at_level("WARNING"):
+        out = viewer_helpers.resync_puncta_nucleus_ids(_Viewer([mask, bad, nocol]), mask, save_csv=False)
+    assert out["changed_total"] == 0
+    assert sorted(out["skipped_layers"]) == sorted([bad.name, nocol.name])
+    assert bad.name in caplog.text and nocol.name in caplog.text
+
+
+def test_report_reconcile_refuses_unverifiable_ids(_qapp):
+    from zfisher.ui import viewer_helpers
+    aligned = _points("Aligned R1 - FITC_puncta", [10], [7])
+    with pytest.raises(ValueError, match="No consensus"):
+        viewer_helpers.reconcile_puncta_for_report(_Viewer([aligned]))
+
+    bad = _points("Aligned R1 - CY5_puncta", [10, 20], [9, 9])
+    bad.features = bad.features.drop(columns=["Nucleus_ID"])
+    mask = _consensus({1: 10, 2: 20})
+    with pytest.raises(ValueError, match="CY5"):
+        viewer_helpers.reconcile_puncta_for_report(_Viewer([mask, aligned, bad]))
+
+
+def test_report_counts_follow_the_mask_after_many_edits(_qapp):
+    """The export reads each layer's cached Nucleus_ID, so after the reconcile
+    the per-nucleus sheet must equal the counts read straight off the mask,
+    however stale the cache was (it was wrong for 118 of 120 nuclei before)."""
+    from napari.layers import Labels, Points
+    from zfisher import constants
+    from zfisher.core import analysis
+    from zfisher.ui import viewer_helpers
+    rng = np.random.default_rng(1)
+    mask = np.zeros((4, 200, 200), np.int32)
+    centres = {}
+    for lab in range(1, 41):
+        c = (int(rng.integers(0, 4)), int(rng.integers(8, 192)), int(rng.integers(8, 192)))
+        centres[lab] = c
+        mask[c[0], c[1] - 6:c[1] + 7, c[2] - 6:c[2] + 7] = lab
+    for lab in range(1, 41, 3):                      # delete a third, merge another third
+        mask[mask == lab] = 0
+    for lab in range(2, 41, 3):
+        mask[mask == lab] = lab + 1
+    layer = Labels(mask, name=constants.CONSENSUS_MASKS_NAME)
+    pts = np.array([[c[0], c[1] + rng.integers(-5, 6), c[2] + rng.integers(-5, 6)]
+                    for c in (centres[int(rng.integers(1, 41))] for _ in range(600))], float)
+    stale = rng.integers(0, 60, len(pts))
+    puncta = Points(pts, name="Aligned R1 - CY5_puncta", features=pd.DataFrame({
+        "puncta_id": np.arange(len(pts)), "Nucleus_ID": stale,
+        "Intensity": 1.0, "SNR": 2.0, "Source": "auto"}))
+    viewer_helpers.reconcile_puncta_for_report(_Viewer([layer, puncta]))
+
+    truth = mask[pts[:, 0].astype(int), pts[:, 1].astype(int), pts[:, 2].astype(int)]
+    ids = np.unique(mask)
+    ids = ids[ids > 0]
+    table = analysis.calculate_per_nucleus_counts(
+        [{"name": puncta.name, "data": puncta.data, "nucleus_ids": puncta.features["Nucleus_ID"].values}],
+        nucleus_ids=ids)
+    expected = pd.Series(truth[truth > 0]).value_counts().reindex(ids, fill_value=0)
+    assert list(table['Nuclei_ID']) == list(ids)
+    assert (table[puncta.name].to_numpy() == expected.to_numpy()).all()
