@@ -116,7 +116,9 @@ class NewSessionWidget(Container):
                 popups.show_error_popup(self._viewer.window._qt_window, "Session Exists", "A session already exists in the selected output directory. Please choose a different directory or load the existing session.")
                 return
 
-            self._viewer.layers.clear()
+            # The previous session's layers go; none of its files are touched.
+            from ..events import clear_layers_keeping_files
+            clear_layers_keeping_files(self._viewer)
             load_raw_data_into_viewer(self._viewer, session.get_data("r1_path"), session.get_data("r2_path"), output_dir=session.get_data("output_dir"), progress_callback=dialog.update_progress)
 
             if hasattr(self._viewer.window, 'custom_scale_bar'):

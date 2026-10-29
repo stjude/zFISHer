@@ -168,14 +168,10 @@ class HomeWidget(Container):
         except Exception:
             pass
 
-        # Set programmatic removal so layer-removed events don't delete
-        # output files from disk (they belong to the saved session).
-        from ..events import _set_programmatic_removal
-        _set_programmatic_removal(True)
-        try:
-            self._viewer.layers.clear()
-        finally:
-            _set_programmatic_removal(False)
+        # The layers' files and session entries belong to the saved session:
+        # clear the canvas without backing up or unregistering any of them.
+        from ..events import clear_layers_keeping_files
+        clear_layers_keeping_files(self._viewer)
         session.clear_session()
         if hasattr(self._viewer.window, 'custom_scale_bar'):
             self._viewer.window.custom_scale_bar.hide()

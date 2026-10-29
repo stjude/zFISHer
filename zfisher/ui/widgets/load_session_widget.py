@@ -85,7 +85,10 @@ class LoadSessionWidget(Container):
             from .. import viewer as viewer_module
             viewer_module._suppress_custom_controls = True
             try:
-                self._viewer.layers.clear()
+                # The open session's layers go, but its files and its JSON
+                # stay as they are: it may be the session being loaded.
+                from ..events import clear_layers_keeping_files
+                clear_layers_keeping_files(self._viewer)
 
                 dialog.update_progress(10, "Loading session file...")
                 session.load_session_file(session_file)

@@ -9,14 +9,16 @@ from .. import constants
 
 logger = logging.getLogger(__name__)
 
-# When True, on_layer_removed skips cascade deletion (mask↔IDs).
-# Set by programmatic helpers like add_or_update_label_ids that remove
-# layers only to recreate them immediately.
+# When True, on_layer_removed treats a removal as housekeeping rather than
+# as the user discarding a layer: it skips the cascade deletion (mask↔IDs)
+# and leaves the layer's file and session entry alone. Set by helpers that
+# remove layers only to recreate them, and by clear_layers_keeping_files.
 _programmatic_removal = False
 
 
 def _set_programmatic_removal(value):
-    """Set the programmatic removal flag (prevents file deletion on layer remove)."""
+    """Set the programmatic removal flag: no cascade deletion, and removed
+    layers keep their files and session entries."""
     global _programmatic_removal
     _programmatic_removal = value
 
@@ -258,6 +260,24 @@ def remove_layer_keeping_file(viewer, layer):
         _keep_files_of.discard(layer.name)
 
 
+def clear_layers_keeping_files(viewer):
+    """Remove every layer from the viewer, leaving the session's files alone.
+
+    Home's Reset, Load Session and New Session clear the canvas to start over.
+    The layers' files and their entries in the session JSON belong to the
+    session on disk, which must open again later just as it was, so these
+    removals back nothing up to ``.bak`` and unregister nothing; only a layer
+    the user deletes is treated that way (``_remove_layer_and_file``). With
+    ``install_layer_lock`` in place ``viewer.layers.clear`` is the guarded
+    one, which removes locked layers too."""
+    previous = _programmatic_removal
+    _set_programmatic_removal(True)
+    try:
+        viewer.layers.clear()
+    finally:
+        _set_programmatic_removal(previous)
+
+
 def _remove_layer_and_file(layer_name):
     """Remove a layer's session entry and BACK UP its file on disk.
 
@@ -292,7 +312,8 @@ def on_layer_removed(event, widgets):
 
     Cascade deletion (mask ↔ _IDs) is skipped when _programmatic_removal
     is set, since programmatic helpers remove-then-recreate layers and
-    don't want the partner destroyed.
+    don't want the partner destroyed; so are the file backup and the
+    unregistering, which are for layers the user deletes.
     """
     # Suppress custom controls during cascade deletion to prevent popup flashing
     from .viewer import _suppress_custom_controls
@@ -303,6 +324,12 @@ def on_layer_removed(event, widgets):
     try:
         layer = event.value
         viewer = napari.current_viewer()
+        # A layer the user deletes has its file backed up and its session
+        # entry dropped. One removed by the program (Reset, Load Session and
+        # New Session clearing the canvas, helpers that recreate a layer,
+        # anything while a session is being read) keeps both: they belong to
+        # the session on disk.
+        keep_files = _programmatic_removal or session.is_loading() or layer.name in _keep_files_of
 
         if isinstance(layer, napari.layers.Labels):
             # Cascade: also remove orphan _IDs and _centroids layers
@@ -313,12 +340,13 @@ def on_layer_removed(event, widgets):
                         child_layer = viewer.layers[child_name]
                         child_layer._locked = False
                         viewer.layers.remove(child_layer)
-            _remove_layer_and_file(layer.name)
-            _remove_layer_and_file(f"{layer.name}_IDs")
-            _remove_layer_and_file(f"{layer.name}_centroids")
+            if not keep_files:
+                _remove_layer_and_file(layer.name)
+                _remove_layer_and_file(f"{layer.name}_IDs")
+                _remove_layer_and_file(f"{layer.name}_centroids")
 
         elif isinstance(layer, napari.layers.Points):
-            if layer.name not in _keep_files_of:
+            if not keep_files:
                 _remove_layer_and_file(layer.name)
             detach_puncta_listener(layer)
             # Cascade: also remove the parent mask
