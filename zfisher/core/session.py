@@ -333,7 +333,8 @@ def save_session():
 
 def load_session_file(path):
     """
-    Loads session data from a JSON file into memory.
+    Loads session data from a JSON file into memory, replacing the session
+    that was there: nothing of the previous one is kept.
 
     When loading an existing session, creates a new numbered session file
     (e.g., ``session_2.json``) to avoid overwriting the original. This only
@@ -399,6 +400,11 @@ def load_session_file(path):
     logger.info("Creating new session file: %s", new_name)
 
     with _lock:
+        # Nothing of the previous session may survive into this one: a file
+        # from before a key existed (a saved registration, the canvas scale,
+        # the nuclear channel) would otherwise inherit the value of whatever
+        # session was open before it.
+        _SESSION_DATA.clear()
         _SESSION_DATA.update(data)
         _SESSION_DATA["session_filename"] = new_name
         # output_dir was already re-anchored to the real location above.
