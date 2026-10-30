@@ -613,7 +613,13 @@ def _write_mask_to_disk(layer):
             viewer.status = (f"Could not save mask '{layer.name}': {str(exc).rstrip('.')}. "
                              f"It stays unsaved and will be retried on the next edit.")
         return None
-    session.set_processed_file(layer.name, str(mask_path), layer_type='labels', metadata={'subtype': 'edited_mask'})
+    try:
+        session.set_processed_file(layer.name, str(mask_path), layer_type='labels',
+                                   metadata={'subtype': 'edited_mask'})
+    except session.SessionSaveError as exc:
+        # Saves run from timers, where a raised error would only be printed.
+        from ..events import show_session_save_error
+        show_session_save_error(exc)
     return mask_path
 
 def _do_save():

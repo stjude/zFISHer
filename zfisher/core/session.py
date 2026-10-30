@@ -1,7 +1,9 @@
 import json
 import logging
+import os
 import re
 import threading
+import time
 from pathlib import Path
 
 from .. import constants
@@ -306,22 +308,61 @@ def initialize_new_session(output_dir, r1_path, r2_path, progress_callback=None)
 
     return True
 
+class SessionSaveError(OSError):
+    """The session file could not be written. The previous file is left as it
+    was; the change is kept in memory and goes out with the next save."""
+
+
+_REPLACE_ATTEMPTS = 5      # os.replace can fail briefly on Windows while another
+_REPLACE_WAIT_S = 0.05     # program (a virus scanner, a sync client) has the file open
+
+
+def _write_text_atomic(path, text):
+    """Write ``text`` to ``path`` so that a reader, or a crash, only ever sees
+    the old file or the new one: write a temporary file beside it, flush it to
+    disk, then swap it into place."""
+    path = Path(path)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        for attempt in range(_REPLACE_ATTEMPTS):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                if attempt == _REPLACE_ATTEMPTS - 1:
+                    raise
+                time.sleep(_REPLACE_WAIT_S)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def _save_session_unlocked():
-    """Internal save — caller must already hold _lock."""
+    """Internal save — caller must already hold _lock.
+
+    Raises ``SessionSaveError`` when the file cannot be written, leaving the
+    previous session file whole."""
     out_dir = _SESSION_DATA.get("output_dir")
     if not out_dir:
         return
 
+    out_path = None
     try:
         # The version that last wrote this file; created_with_zfisher keeps the first.
         from .provenance import software_version
         _SESSION_DATA["zfisher_version"] = software_version()
         filename = _SESSION_DATA.get("session_filename", constants.SESSION_FILENAME)
         out_path = _session_save_path(out_dir, filename)
-        with open(out_path, 'w') as f:
-            json.dump(_SESSION_DATA, f, indent=4, default=str)
+        # Serialised first, so a value that cannot be written never touches the file.
+        text = json.dumps(_SESSION_DATA, indent=4, default=str)
+        _write_text_atomic(out_path, text)
     except Exception as e:
-        logger.error("Failed to save session: %s", e)
+        where = out_path or Path(out_dir) / constants.SESSIONS_DIR
+        logger.error("Failed to save session to %s: %s", where, e)
+        raise SessionSaveError(f"Could not save the session file {where}: {e}") from e
 
 def save_session():
     """

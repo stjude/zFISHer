@@ -4,6 +4,17 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ## Unreleased
 
+### Fixes
+
+- **The session file is written whole or not at all.** It was overwritten in
+  place, so a crash, a full disk or a killed process during a save left a
+  truncated session file, which then would not open. It is now written beside
+  the old one and swapped in, so the previous version stays until the new one
+  is complete. A save that fails is no longer only logged: an action started
+  from a button shows the error, and a save made in the background, after a
+  puncta or mask edit, says so in the status bar. The change stays in memory
+  and is written by the next save.
+
 ### Installation
 
 - **The `zfisher` command works after `pip install`.** It pointed at a

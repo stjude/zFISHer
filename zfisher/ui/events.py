@@ -113,7 +113,22 @@ def save_puncta_layer(layer):
     existing = (session.get_data("processed_files", default={}) or {}).get(live_name) or {}
     metadata = {'subtype': 'puncta_csv'}
     metadata.update({k: existing[k] for k in ('space', 'round') if k in existing})
-    session.set_processed_file(live_name, str(csv_path), layer_type='points', metadata=metadata)
+    try:
+        session.set_processed_file(live_name, str(csv_path), layer_type='points', metadata=metadata)
+    except session.SessionSaveError as exc:
+        # Runs from napari's data event, where a raised error is only logged:
+        # say it in the status bar. The CSV itself is written.
+        show_session_save_error(exc)
+
+
+def show_session_save_error(exc):
+    """Tell the user in the status bar that the session file could not be
+    saved, for saves made in the background (after an edit, on a timer),
+    where no error pop-up would show it. Already logged by the session."""
+    viewer = napari.current_viewer()
+    if viewer is not None:
+        viewer.status = (f"{str(exc).rstrip('.')}. Your data files are saved; the session file "
+                         f"will be saved again with the next change.")
 
 
 def attach_puncta_listener(layer, name):
