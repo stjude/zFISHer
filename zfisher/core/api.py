@@ -113,6 +113,13 @@ class Metrics(_Result):
     detection_mix: dict[str, int]
 
 
+class BatchQC(_Result):
+    batch_root: str
+    n_datasets: int
+    flags: list[dict]                # dataset, action, reason, metric, value, expected
+    report: Optional[str] = None     # qc_report.md
+
+
 class CellsResult(_Result):
     folder: str
     n_cells: int
@@ -271,6 +278,20 @@ def get_metrics(s, include_saturation=False):
         return Metrics(**metrics.compute_metrics(include_saturation=include_saturation))
 
 
+def flag_batch(batch_root, thresholds=None, write_report=True, include_saturation=False):
+    """Which datasets under ``batch_root`` need a look (``qc.flag_batch``);
+    writes ``qc_report.md`` there unless told not to. Reads the datasets only."""
+    from . import qc
+    from .params import QCThresholds
+    if isinstance(thresholds, dict):
+        thresholds = QCThresholds.model_validate(thresholds)
+    cohort = qc.cohort_metrics(batch_root, include_saturation=include_saturation)
+    flags = qc.flag_batch(cohort, thresholds)
+    report = qc.write_qc_report(batch_root, cohort, flags, thresholds) if write_report and cohort else None
+    return BatchQC(batch_root=str(batch_root), n_datasets=len(cohort), flags=qc.flags_as_dicts(flags),
+                   report=str(report) if report else None)
+
+
 def check_nucleus_ids(s):
     """How well each aligned puncta CSV's ``Nucleus_ID`` agrees with the saved
     consensus mask (``puncta.check_nucleus_ids``); reads only."""
@@ -360,6 +381,6 @@ def get_decisions(s, name=None):
 
 def schema():
     """The JSON schema of every result model, by name."""
-    models = (SessionInfo, ArtifactState, StageState, DistanceQuery, Metrics, Parameters, NucleusIdCheck, DetectionResult, TransformResult,
+    models = (SessionInfo, ArtifactState, StageState, DistanceQuery, Metrics, BatchQC, Parameters, NucleusIdCheck, DetectionResult, TransformResult,
               ReportResult, CellsResult, PipelineResult)
     return {m.__name__: m.model_json_schema() for m in models}

@@ -293,7 +293,8 @@ class BatchProcessWidget(Container):
         popups.show_info_popup(
             self._viewer.window._qt_window, title,
             f"Processed {len(results)} dataset(s), {len(failed)} failed:\n\n" + "\n".join(lines)
-            + ("\n\nEach dataset's log is in its logs/ folder." if failed else ""))
+            + ("\n\nEach dataset's log is in its logs/ folder." if failed else "")
+            + (f"\n\nQC report: {output_base / 'qc_report.md'}" if (output_base / "qc_report.md").exists() else ""))
 
     def _run_datasets(self, config, output_base, workers):
         """Run the batch on a worker thread (``core.batch.run_batch``) while the

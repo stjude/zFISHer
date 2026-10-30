@@ -65,11 +65,13 @@ def _run_one(job, progress_callback=None, actor=None):
                              seconds=time.monotonic() - start)
 
 
-def run_batch(config, output_base, workers=1, on_progress=None, on_result=None):
+def run_batch(config, output_base, workers=1, on_progress=None, on_result=None, qc=True):
     """Run every dataset of ``config`` into ``output_base`` (see the module
     docstring). ``on_progress(name, percent, text)`` reports within a dataset
     (only when ``workers`` is 1: progress does not cross processes);
-    ``on_result(result)`` is called as each dataset finishes. Returns the
+    ``on_result(result)`` is called as each dataset finishes. With ``qc``,
+    ``qc_report.md`` is written in ``output_base`` when the batch ends
+    (``api.flag_batch``, with the template's QC thresholds). Returns the
     results in the template's order."""
     from . import decisions
     jobs = dataset_jobs(config, output_base)
@@ -92,4 +94,11 @@ def run_batch(config, output_base, workers=1, on_progress=None, on_result=None):
                 results[futures[future]] = result
                 if on_result:
                     on_result(result)
-    return [results[job[0]] for job in jobs]
+    ordered = [results[job[0]] for job in jobs]
+    if qc and any(r.ok for r in ordered):
+        try:
+            from . import api
+            api.flag_batch(output_base, thresholds=config.qc)
+        except Exception as exc:                 # the batch itself finished; say so and go on
+            logger.error("Batch QC failed: %s", exc, exc_info=True)
+    return ordered

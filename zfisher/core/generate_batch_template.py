@@ -15,8 +15,8 @@ import pandas as pd
 from .. import constants
 from . import io
 from .params import (BatchConfig, ColocRule, ColocRuleRow, ConsensusParams, DatasetSpec, DetectionParams,
-                     PunctaRule, RegistrationParams, SegmentationParams, SegMethod, TriColocRule, default,
-                     field_range)
+                     PunctaRule, QCThresholds, RegistrationParams, SegmentationParams, SegMethod, TriColocRule,
+                     default, field_range)
 
 logger = logging.getLogger(__name__)
 
@@ -553,11 +553,16 @@ def build_template_sheets():
     }
     colocalization = pd.DataFrame([c_example1, c_example2] + [dict(c_default) for _ in range(N)])
 
+    # --- QC: the thresholds the batch's QC report flags datasets by ---
+    qc = pd.DataFrame([{"Setting": name, "Value": field.default, "Description": field.description}
+                       for name, field in QCThresholds.model_fields.items()])
+
     return {
         "Instructions": instructions,
         "Datasets": datasets,
         "Puncta": puncta,
         "Colocalization": colocalization,
+        "QC": qc,
     }
 
 
@@ -891,6 +896,16 @@ def parse_batch_config(excel_path):
                 "cutoff": float(cutoff),
             })
 
+    # --- QC sheet (optional): thresholds of the batch's QC report ---
+    qc = QCThresholds()
+    if "QC" in sheets and {"Setting", "Value"} <= set(sheets["QC"].columns):
+        given = {str(row["Setting"]).strip(): row["Value"] for _, row in sheets["QC"].iterrows()
+                 if str(row["Setting"]).strip() in QCThresholds.model_fields and not pd.isna(row["Value"])}
+        try:
+            qc = QCThresholds.model_validate(given)
+        except Exception as exc:
+            errors.append(f"QC sheet: {exc}")
+
     if errors:
         return None, "\n".join(errors)
 
@@ -913,6 +928,7 @@ def parse_batch_config(excel_path):
                 ColocRule(source=r["source"], target=r["target"], cutoff_um=r["cutoff"]) if r["type"] == "pairwise"
                 else TriColocRule(anchor=r["source"], channel_a=r["target"], channel_b=r["channel_b"],
                                   cutoff_um=r["cutoff"]))) for r in coloc_rules],
+            qc=qc,
             warnings=warnings,
         )
     except Exception as exc:                 # a value the checks above let through

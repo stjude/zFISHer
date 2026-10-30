@@ -134,6 +134,8 @@ def batch(template: Path = typer.Argument(..., help="Batch template .xlsx file."
         config, out_base, workers=workers, on_result=finished,
         on_progress=(lambda name, p, text: _stdout_progress(p, f"{name}: {text}")) if workers == 1 else None)
     failed = [r for r in results if not r.ok]
+    if (out_base / "qc_report.md").exists():
+        print(f"\nQC report: {out_base / 'qc_report.md'}")
     print("\n--- Batch summary ---")
     for r in results:
         print(f"  {r.name}: {'OK' if r.ok else 'FAIL: ' + r.error}")
@@ -238,6 +240,27 @@ def metrics(folder: Path = typer.Argument(..., help="A session's output folder o
     if m.saturation:
         for name, fraction in m.saturation.items():
             print(f"  {name}: {100 * fraction:.3f}% saturated")
+
+
+@app.command("flag-batch")
+def flag_batch(batch_root: Path = typer.Argument(..., help="A batch output root holding one folder per dataset."),
+               saturation: bool = typer.Option(False, help="Also check saturated voxels (reads every aligned image)."),
+               as_json: bool = typer.Option(False, "--json", help="Print JSON instead of text.")):
+    """Flag the datasets of a batch that need a look, and write qc_report.md. Reads the datasets only."""
+    from .core import api
+    root = batch_root.expanduser().resolve()
+    if not root.is_dir():
+        print(f"Error: {root} is not a folder.", file=sys.stderr)
+        raise typer.Exit(1)
+    result = api.flag_batch(root, include_saturation=saturation)
+    if as_json:
+        print(json.dumps(result.model_dump(), indent=1))
+        return
+    print(f"{result.n_datasets} datasets, {len({f['dataset'] for f in result.flags})} flagged.")
+    for f in result.flags:
+        print(f"  {f['dataset']}: {f['action']} - {f['reason']}")
+    if result.report:
+        print(f"Report: {result.report}")
 
 
 @app.command("query-distances")

@@ -131,6 +131,14 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   µm³, and with `--saturation` the share of saturated voxels in each aligned
   image. Registration now records its RMSD in µm as well; the RMSD it already
   recorded mixes Z and XY pixel sizes.
+- **Every batch ends with a QC report**, `qc_report.md` in the batch's output
+  folder, listing the datasets that need a look and why: a registration that
+  fell back to the rough shift or whose centroid pairs mostly disagree, a
+  channel with no puncta or detected on the resampled R2 image, a saturated
+  image, and any metric far from the rest of the batch (3.5 robust standard
+  deviations from the batch median, once there are at least 4 datasets).
+  `zfisher-cli flag-batch <batch folder>` writes it for an existing batch;
+  the thresholds can be set in a new QC sheet of the batch template.
 - Each export also writes the report's tables as CSV files beside it:
   `reports/distances.csv` and one file per sheet under `reports/report_sheets/`,
   which scripts and the queries read instead of the workbook.

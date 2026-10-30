@@ -1037,6 +1037,44 @@
      "title": "PunctaRule",
      "type": "object"
     },
+    "QCThresholds": {
+     "additionalProperties": false,
+     "description": "When ``qc.flag_batch`` flags a dataset.",
+     "properties": {
+      "z_threshold": {
+       "default": 3.5,
+       "description": "Robust standard deviations from the batch median at which a metric is flagged.",
+       "exclusiveMinimum": 0,
+       "title": "Z Threshold",
+       "type": "number"
+      },
+      "min_cohort": {
+       "default": 4,
+       "description": "Datasets needed before metrics are compared with the batch.",
+       "minimum": 2,
+       "title": "Min Cohort",
+       "type": "integer"
+      },
+      "min_inlier_fraction": {
+       "default": 0.5,
+       "description": "Least share of centroid pairs that must agree with the registration.",
+       "maximum": 1,
+       "minimum": 0,
+       "title": "Min Inlier Fraction",
+       "type": "number"
+      },
+      "max_saturated_fraction": {
+       "default": 0.01,
+       "description": "Largest share of saturated voxels in an aligned image.",
+       "maximum": 1,
+       "minimum": 0,
+       "title": "Max Saturated Fraction",
+       "type": "number"
+      }
+     },
+     "title": "QCThresholds",
+     "type": "object"
+    },
     "RegistrationParams": {
      "additionalProperties": false,
      "description": "Settings of the R1-R2 registration.",
@@ -1158,6 +1196,15 @@
      "title": "Coloc Rules",
      "type": "array"
     },
+    "qc": {
+     "$ref": "#/$defs/QCThresholds",
+     "default": {
+      "z_threshold": 3.5,
+      "min_cohort": 4,
+      "min_inlier_fraction": 0.5,
+      "max_saturated_fraction": 0.01
+     }
+    },
     "warnings": {
      "default": [],
      "items": {
@@ -1171,6 +1218,44 @@
     "datasets"
    ],
    "title": "BatchConfig",
+   "type": "object"
+  },
+  "QCThresholds": {
+   "additionalProperties": false,
+   "description": "When ``qc.flag_batch`` flags a dataset.",
+   "properties": {
+    "z_threshold": {
+     "default": 3.5,
+     "description": "Robust standard deviations from the batch median at which a metric is flagged.",
+     "exclusiveMinimum": 0,
+     "title": "Z Threshold",
+     "type": "number"
+    },
+    "min_cohort": {
+     "default": 4,
+     "description": "Datasets needed before metrics are compared with the batch.",
+     "minimum": 2,
+     "title": "Min Cohort",
+     "type": "integer"
+    },
+    "min_inlier_fraction": {
+     "default": 0.5,
+     "description": "Least share of centroid pairs that must agree with the registration.",
+     "maximum": 1,
+     "minimum": 0,
+     "title": "Min Inlier Fraction",
+     "type": "number"
+    },
+    "max_saturated_fraction": {
+     "default": 0.01,
+     "description": "Largest share of saturated voxels in an aligned image.",
+     "maximum": 1,
+     "minimum": 0,
+     "title": "Max Saturated Fraction",
+     "type": "number"
+    }
+   },
+   "title": "QCThresholds",
    "type": "object"
   }
  }

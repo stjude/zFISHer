@@ -186,6 +186,17 @@ class TriColocRule(_Params):
         json_schema_extra=_ui("Cutoff (um)", step=0.1))
 
 
+class QCThresholds(_Params):
+    """When ``qc.flag_batch`` flags a dataset."""
+    z_threshold: float = Field(3.5, gt=0, description="Robust standard deviations from the batch median "
+                                                      "at which a metric is flagged.")
+    min_cohort: int = Field(4, ge=2, description="Datasets needed before metrics are compared with the batch.")
+    min_inlier_fraction: float = Field(0.5, ge=0, le=1, description="Least share of centroid pairs that "
+                                                                    "must agree with the registration.")
+    max_saturated_fraction: float = Field(0.01, ge=0, le=1, description="Largest share of saturated voxels "
+                                                                        "in an aligned image.")
+
+
 class DatasetSpec(_Params):
     """One row of the batch template's Datasets sheet."""
     name: str
@@ -222,6 +233,7 @@ class BatchConfig(_Params):
     datasets: list[DatasetSpec]
     puncta_rules: list[PunctaRule] = []
     coloc_rules: list[ColocRuleRow] = []
+    qc: QCThresholds = QCThresholds()
     warnings: list[str] = []
 
 
@@ -279,5 +291,5 @@ def schema():
     """The JSON schema of every model, by name: what tool signatures for other
     front ends are generated from, and what the snapshot test holds fixed."""
     models = (DetectionParams, SegmentationParams, RegistrationParams, ConsensusParams, ColocRule,
-              TriColocRule, DatasetSpec, PunctaRule, ColocRuleRow, BatchConfig)
+              TriColocRule, DatasetSpec, PunctaRule, ColocRuleRow, BatchConfig, QCThresholds)
     return {"schema_version": SCHEMA_VERSION, "models": {m.__name__: m.model_json_schema() for m in models}}
