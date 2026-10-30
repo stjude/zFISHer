@@ -210,6 +210,9 @@ def _build_instructions_rows():
          "Useful for images with uneven illumination or high autofluorescence. "
          "The filter removes large-scale intensity variations while preserving small bright spots. "
          "Defaults to FALSE."),
+        ("Z_Edge_Exclude",
+         "Whole number, 0 to 20. Puncta within this many planes of the first and last Z plane are dropped, "
+         "since spots there are cut by the ends of the stack. 0 (the default) keeps them all."),
         ("Tophat_Radius",
          f"Radius in pixels for the top-hat filter. Only used when Tophat=TRUE. "
          f"Should be larger than your puncta but smaller than background intensity gradients. "
@@ -393,7 +396,8 @@ def add_dropdown_validations(workbook):
     dv.add(f"D2:D{MAX_ROW}")
 
     # Sensitivity (col E) — decimal 0-1
-    dv = _numeric_range(0.0, 1.0, allow_decimal=True, prompt="Relative threshold 0-1. Lower = more sensitive.", title="Sensitivity")
+    dv = _numeric_range(*field_range(DetectionParams, "threshold_rel"), allow_decimal=True,
+                        prompt="Relative threshold 0.01-1. Lower = more sensitive.", title="Sensitivity")
     ws.add_data_validation(dv)
     dv.add(f"E2:E{MAX_ROW}")
 
@@ -421,6 +425,12 @@ def add_dropdown_validations(workbook):
     dv = _numeric_range(1, 50, allow_decimal=False, prompt="Top-hat filter radius in pixels. Range: 1-50.", title="Tophat Radius")
     ws.add_data_validation(dv)
     dv.add(f"J2:J{MAX_ROW}")
+
+    # Z_Edge_Exclude (col K) — integer 0-20
+    dv = _numeric_range(*field_range(DetectionParams, "z_edge_exclude"), allow_decimal=False,
+                        prompt="Planes dropped at each end of the stack. 0 = none. Range: 0-20.", title="Z Edge Exclude")
+    ws.add_data_validation(dv)
+    dv.add(f"K2:K{MAX_ROW}")
 
     # --- Colocalization sheet ---
     ws = workbook["Colocalization"]
@@ -509,6 +519,7 @@ def build_template_sheets():
         "Nuclei_Only": True,
         "Tophat": False,
         "Tophat_Radius": default(DetectionParams, "tophat_radius"),
+        "Z_Edge_Exclude": default(DetectionParams, "z_edge_exclude"),
     }
     p_example2 = {
         "Dataset": f"{_EXAMPLE_PREFIX} FOV1",
@@ -521,6 +532,7 @@ def build_template_sheets():
         "Nuclei_Only": True,
         "Tophat": True,
         "Tophat_Radius": default(DetectionParams, "tophat_radius"),
+        "Z_Edge_Exclude": default(DetectionParams, "z_edge_exclude"),
     }
     p_default = {
         "Dataset": "ALL",
@@ -533,6 +545,7 @@ def build_template_sheets():
         "Nuclei_Only": True,
         "Tophat": False,
         "Tophat_Radius": default(DetectionParams, "tophat_radius"),
+        "Z_Edge_Exclude": default(DetectionParams, "z_edge_exclude"),
     }
     puncta = pd.DataFrame([p_example1, p_example2] + [dict(p_default) for _ in range(N)])
 
@@ -845,6 +858,7 @@ def parse_batch_config(excel_path):
                     "nuclei_only": _bool("Nuclei_Only", True),
                     "use_tophat": _bool("Tophat", False),
                     "tophat_radius": _int("Tophat_Radius", *_detection_field("tophat_radius")),
+                    "z_edge_exclude": _int("Z_Edge_Exclude", *_detection_field("z_edge_exclude")),
                 },
             })
 

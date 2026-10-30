@@ -32,6 +32,7 @@ GUI = {
     (DetectionParams, "min_distance"): ("puncta_widget", "_puncta_widget", "min_distance"),
     (DetectionParams, "sigma"): ("puncta_widget", "_puncta_widget", "sigma"),
     (DetectionParams, "z_scale"): ("puncta_widget", "_puncta_widget", "z_scale"),
+    (DetectionParams, "z_edge_exclude"): ("puncta_widget", "_puncta_widget", "z_edge_exclude"),
     (DetectionParams, "use_tophat"): ("puncta_widget", "_puncta_widget", "use_tophat"),
     (DetectionParams, "tophat_radius"): ("puncta_widget", "_puncta_widget", "tophat_radius"),
     (DetectionParams, "nuclei_only"): ("puncta_widget", "_puncta_widget", "nuclei_only"),

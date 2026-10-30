@@ -104,6 +104,11 @@ class DetectionParams(_Params):
         description="Ratio of Z-step to XY pixel size. Corrects for non-cubic voxels. Auto-computed from image "
                     "metadata when available.",
         json_schema_extra=_ui("Z/XY Scale Ratio", step=0.01, gui_value=1.0))
+    z_edge_exclude: int = Field(
+        0, ge=0, le=20,
+        description="Drop puncta within this many planes of the first and last Z plane, where spots are cut "
+                    "by the stack's ends. 0 keeps them all.",
+        json_schema_extra=_ui("Exclude Z Edge Planes"))
     use_tophat: bool = Field(
         False, description="Apply white top-hat filter to subtract uneven background before detection.",
         json_schema_extra=_ui("Subtract Background (Top-hat)"))
@@ -123,6 +128,8 @@ class DetectionParams(_Params):
         out = self.model_dump(mode="json")
         if out["z_scale"] is None:
             del out["z_scale"]
+        if not out["z_edge_exclude"]:
+            del out["z_edge_exclude"]           # off: the settings detection had before the rule existed
         return out
 
 

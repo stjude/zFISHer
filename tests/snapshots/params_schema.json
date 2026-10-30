@@ -70,6 +70,15 @@
      "step": 0.01,
      "title": "Z Scale"
     },
+    "z_edge_exclude": {
+     "default": 0,
+     "description": "Drop puncta within this many planes of the first and last Z plane, where spots are cut by the stack's ends. 0 keeps them all.",
+     "label": "Exclude Z Edge Planes",
+     "maximum": 20,
+     "minimum": 0,
+     "title": "Z Edge Exclude",
+     "type": "integer"
+    },
     "use_tophat": {
      "default": false,
      "description": "Apply white top-hat filter to subtract uneven background before detection.",
@@ -534,6 +543,15 @@
        "step": 0.01,
        "title": "Z Scale"
       },
+      "z_edge_exclude": {
+       "default": 0,
+       "description": "Drop puncta within this many planes of the first and last Z plane, where spots are cut by the stack's ends. 0 keeps them all.",
+       "label": "Exclude Z Edge Planes",
+       "maximum": 20,
+       "minimum": 0,
+       "title": "Z Edge Exclude",
+       "type": "integer"
+      },
       "use_tophat": {
        "default": false,
        "description": "Apply white top-hat filter to subtract uneven background before detection.",
@@ -592,6 +610,7 @@
       "min_distance": 2,
       "sigma": 0.0,
       "z_scale": null,
+      "z_edge_exclude": 0,
       "use_tophat": false,
       "tophat_radius": 15,
       "nuclei_only": true
@@ -982,6 +1001,15 @@
        "step": 0.01,
        "title": "Z Scale"
       },
+      "z_edge_exclude": {
+       "default": 0,
+       "description": "Drop puncta within this many planes of the first and last Z plane, where spots are cut by the stack's ends. 0 keeps them all.",
+       "label": "Exclude Z Edge Planes",
+       "maximum": 20,
+       "minimum": 0,
+       "title": "Z Edge Exclude",
+       "type": "integer"
+      },
       "use_tophat": {
        "default": false,
        "description": "Apply white top-hat filter to subtract uneven background before detection.",
@@ -1048,6 +1076,7 @@
         "min_distance": 2,
         "sigma": 0.0,
         "z_scale": null,
+        "z_edge_exclude": 0,
         "use_tophat": false,
         "tophat_radius": 15,
         "nuclei_only": true

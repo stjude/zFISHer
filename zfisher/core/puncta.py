@@ -446,6 +446,7 @@ DETECTOR_DEFAULTS = {
     'use_tophat': False,
     'tophat_radius': 10,
     'nuclei_only': True,
+    'z_edge_exclude': 0,
 }
 
 
@@ -817,6 +818,7 @@ def detection_settings_row(params, n_puncta, detected_in):
         'nuclei_only': params['nuclei_only'],
         'tophat': params['use_tophat'],
         'tophat_radius': params['tophat_radius'],
+        **({'z_edge_exclude': int(params['z_edge_exclude'])} if params.get('z_edge_exclude') else {}),
         'num_puncta': int(n_puncta),
         'detected_in': detected_in,
     })
@@ -860,6 +862,15 @@ def process_puncta_detection(image_data, mask_data=None, voxels=None, params=Non
     # filtering. Surviving puncta keep this identity through filtering, the
     # world-space transform, and reloads (the id is persisted in every CSV).
     puncta_ids = np.arange(len(coords), dtype=float)
+
+    # Spots in the first or last planes are cut by the stack's ends.
+    edge = int(params.get('z_edge_exclude') or 0)
+    if edge > 0:
+        keep = (coords[:, 0] >= edge) & (coords[:, 0] <= image_data.shape[0] - 1 - edge)
+        coords, puncta_ids = coords[keep], puncta_ids[keep]
+        if len(coords) == 0:
+            if progress_callback: progress_callback(100, "No spots away from the Z edges.")
+            return np.empty((0, 7))
 
     if progress_callback: progress_callback(50, f"Computing quality metrics for {len(coords)} spots...")
     quality_metrics = calculate_spot_quality(image_data, coords,

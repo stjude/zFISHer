@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
     min_distance=gui_option(DetectionParams, "min_distance"),
     sigma=gui_option(DetectionParams, "sigma"),
     z_scale=gui_option(DetectionParams, "z_scale"),
+    z_edge_exclude=gui_option(DetectionParams, "z_edge_exclude"),
     use_tophat=gui_option(DetectionParams, "use_tophat"),
     tophat_radius=gui_option(DetectionParams, "tophat_radius"),
 )
@@ -36,6 +37,7 @@ def _puncta_widget(
     min_distance: int = default(DetectionParams, "min_distance"),
     sigma: float = default(DetectionParams, "sigma"),
     z_scale: float = default(DetectionParams, "z_scale"),
+    z_edge_exclude: int = default(DetectionParams, "z_edge_exclude"),
     use_tophat: bool = default(DetectionParams, "use_tophat"),
     tophat_radius: int = default(DetectionParams, "tophat_radius"),
 ):
@@ -80,6 +82,8 @@ def _puncta_widget(
         'tophat_radius': tophat_radius,
         'nuclei_only': nuclei_only
     }
+    if z_edge_exclude:
+        params['z_edge_exclude'] = int(z_edge_exclude)
 
     if on_original:
         _redetect_on_original(viewer, image_layer, params, _existing_action)
@@ -172,6 +176,7 @@ def _puncta_widget(
             'nuclei_only': nuclei_only,
             'tophat': use_tophat,
             'tophat_radius': tophat_radius,
+            **({'z_edge_exclude': int(z_edge_exclude)} if z_edge_exclude else {}),
             'num_puncta': len(results),
             'detected_in': 'aligned' if aligned else 'raw',
         })
@@ -503,16 +508,16 @@ _inner.insertWidget(11, _make_divider())
 _inner.insertWidget(12, _params_header)
 _inner.insertWidget(13, _params_desc)
 _inner.insertWidget(14, _nuclei_only_native)
-# threshold(15), min_distance(16), sigma(17), z_scale(18)
+# threshold(15), min_distance(16), sigma(17), z_scale(18), z_edge_exclude(19)
 
 # --- "Background Subtraction" section: use_tophat, tophat_radius ---
 _bg_header = _make_section_header("Background Subtraction")
 _bg_desc = _make_section_desc("Apply top-hat filtering to remove uneven background before detection.")
-_inner.insertWidget(19, _make_spacer())
-_inner.insertWidget(20, _make_divider())
-_inner.insertWidget(21, _bg_header)
-_inner.insertWidget(22, _bg_desc)
-# use_tophat(23), tophat_radius(24), call_button(25)
+_inner.insertWidget(20, _make_spacer())
+_inner.insertWidget(21, _make_divider())
+_inner.insertWidget(22, _bg_header)
+_inner.insertWidget(23, _bg_desc)
+# use_tophat(24), tophat_radius(25), call_button(26)
 
 # --- "Detect on the original image" (aligned and warped image layers only) ---
 from qtpy.QtWidgets import QCheckBox

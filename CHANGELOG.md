@@ -155,6 +155,15 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   how many nuclei it removed. Turning it on for a finished batch folder
   re-runs the consensus mask and what follows from it, nothing earlier.
 
+### Puncta at the ends of the stack
+
+- **Puncta near the first and last Z plane can be dropped at detection**,
+  where spots are cut by the ends of the stack: Exclude Z Edge Planes in
+  Puncta Detection, or the new Z_Edge_Exclude column of the batch template's
+  Puncta sheet (the lab's rule is 5). 0, the default, keeps them all. The
+  puncta kept keep the ids detection gave them, and the setting is listed
+  with the others in the report's Parameters sheet when it is used.
+
 ### Per-nucleus export
 
 - **`zfisher-cli export-cells <folder or batch root>`** writes one OME-TIFF per
