@@ -93,6 +93,12 @@ class ReportResult(_Result):
     sheets: dict[str, int]           # sheet name -> rows
 
 
+class CellsResult(_Result):
+    folder: str
+    n_cells: int
+    paths: list[str]
+
+
 class PipelineResult(_Result):
     output_dir: str
     session_file: str
@@ -265,6 +271,16 @@ def export_report(s, rules=None, tri_rules=None, filename=None):
     return ReportResult(path=str(path), sheets=rows)
 
 
+def export_cells(s, ids=None, padding_um=2.0, with_puncta=True, progress_callback=None):
+    """One OME-TIFF per nucleus of ``s`` (``cells.export_cells``)."""
+    from . import cells
+    with _session.use(s):
+        paths = cells.export_cells(ids=ids, padding_um=padding_um, with_puncta=with_puncta,
+                                   progress_callback=progress_callback)
+        folder = Path(s.get("output_dir")) / cells.CELLS_DIR
+    return CellsResult(folder=str(folder), n_cells=len(paths), paths=[str(p) for p in paths])
+
+
 def run_pipeline(dataset, output_dir, puncta_config=None, pairwise_rules=None, tri_rules=None,
                  progress_callback=None):
     """Run the whole pipeline for one ``params.DatasetSpec`` into ``output_dir``,
@@ -291,5 +307,5 @@ def get_decisions(s, name=None):
 def schema():
     """The JSON schema of every result model, by name."""
     models = (SessionInfo, ArtifactState, StageState, Parameters, NucleusIdCheck, DetectionResult, TransformResult,
-              ReportResult, PipelineResult)
+              ReportResult, CellsResult, PipelineResult)
     return {m.__name__: m.model_json_schema() for m in models}

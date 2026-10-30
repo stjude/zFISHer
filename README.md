@@ -299,6 +299,7 @@ All processing results are saved incrementally:
 - Input files (converted OME-TIFFs and metadata) in `input/`
 - Session state in `sessions/zfisher_session_N.json`; loading a session writes the next number, so earlier states are kept
 - The session log, and the crash log if there was a native crash, in `logs/`
+- One OME-TIFF per nucleus (all aligned channels and its mask, with physical sizes) in `cells/`, written by `zfisher-cli export-cells`
 - `provenance.jsonl` — the record of how each puncta CSV, mask and report was made, from which zFISHer tells when aligned puncta or the report are out of date
 
 Loading a session restores all layers and processing state, so you can close and resume at any point. The saved registration is what lets a reopened session re-detect a channel, or warp puncta picked on the original image, without registering again.

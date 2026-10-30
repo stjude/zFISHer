@@ -94,6 +94,17 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   system can slow an idle app's timers. `-o profile.md` writes it to a file.
   It only reads.
 
+### Per-nucleus export
+
+- **`zfisher-cli export-cells <folder or batch root>`** writes one OME-TIFF per
+  consensus nucleus into `cells/`: every aligned and warped channel cropped
+  around the nucleus (its bounding box plus `--padding` µm, 2 by default) and,
+  as the last channel, that nucleus's mask, with the voxel size in µm and the
+  channel names in the OME header. Beside each, `nucleus_<id>_puncta.csv`
+  lists its puncta from every aligned channel in the crop's voxel coordinates
+  (`--no-puncta` to skip). Given a batch root, it exports every dataset
+  folder in it; `--id` exports chosen nuclei only. The session is not changed.
+
 ### Resuming a batch
 
 - **Running batch again over a folder it finished skips what is up to date.**

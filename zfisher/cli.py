@@ -9,6 +9,7 @@ without a napari viewer:
     zfisher-cli template ./my_template.xlsx
     zfisher-cli status ./output [--json]
     zfisher-cli update ./output
+    zfisher-cli export-cells ./batch_output --padding 2
     zfisher-cli export ./output [--rule "R1 - FITC,R2 - Cy5,1.0"]
     zfisher-cli nucleus-ids ./output [--write]
     zfisher-cli profile D:/zFISHer_runs -o profile.md
@@ -210,6 +211,36 @@ def export(folder: Path = typer.Argument(..., help="A session's output folder or
     print(f"Report written to: {result.path}")
     for name, rows in result.sheets.items():
         print(f"  {name}: {rows} rows")
+
+
+@app.command("export-cells")
+def export_cells(folder: Path = typer.Argument(..., help="A session's output folder, or a batch root holding "
+                                                         "one folder per dataset."),
+                 padding: float = typer.Option(2.0, help="Margin around each nucleus, in µm."),
+                 ids: Optional[List[int]] = typer.Option(None, "--id", help="Only this nucleus; repeat for more."),
+                 no_puncta: bool = typer.Option(False, help="Do not write each nucleus's puncta CSV.")):
+    """Write one OME-TIFF per nucleus (all aligned channels and its mask) into cells/."""
+    from . import constants
+    from .core import api
+    folder = folder.expanduser().resolve()
+    if not folder.is_dir():
+        print(f"Error: {folder} is not a folder.", file=sys.stderr)
+        raise typer.Exit(1)
+    targets = [folder] if (folder / constants.SESSIONS_DIR).exists() else sorted(
+        p for p in folder.iterdir() if (p / constants.SESSIONS_DIR).exists())
+    if not targets:
+        print(f"Error: no session in {folder} or its subfolders.", file=sys.stderr)
+        raise typer.Exit(1)
+    failed = False
+    for target in targets:
+        try:
+            result = api.export_cells(_open(target), ids=ids or None, padding_um=padding, with_puncta=not no_puncta)
+            print(f"{target.name}: {result.n_cells} nuclei -> {result.folder}")
+        except (FileNotFoundError, LookupError, ValueError) as exc:
+            print(f"{target.name}: Error: {exc}", file=sys.stderr)
+            failed = True
+    if failed:
+        raise typer.Exit(1)
 
 
 @app.command()
