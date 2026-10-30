@@ -89,6 +89,10 @@ RANSAC_SEARCH_RADIUS = 100.0
 RANSAC_RESIDUAL_THRESHOLD = 15
 RANSAC_MAX_TRIALS = 2000
 RANSAC_DEVIATION_THRESHOLD = 50.0
+# Seed of RANSAC's random sampling of centroid pairs, recorded with the
+# registration. Unseeded, two registrations of the same images could pick
+# different inlier sets and so different shifts.
+RANSAC_RANDOM_SEED = 1
 DEFORMABLE_DOWNSAMPLE_FACTOR = 16
 DEFORMABLE_MESH_SIZE = 4
 DEFORMABLE_ITERATIONS = 100

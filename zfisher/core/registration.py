@@ -207,7 +207,8 @@ def _calculate_rmsd(src_points, dst_points, model, inliers):
     squared_distances = np.sum((transformed_src - inlier_dst) ** 2, axis=1)
     return np.sqrt(np.mean(squared_distances))
 
-def _refine_shift_with_ransac(src_points, dst_points, residual_threshold=constants.RANSAC_RESIDUAL_THRESHOLD, max_trials=constants.RANSAC_MAX_TRIALS):
+def _refine_shift_with_ransac(src_points, dst_points, residual_threshold=constants.RANSAC_RESIDUAL_THRESHOLD,
+                              max_trials=constants.RANSAC_MAX_TRIALS, seed=constants.RANSAC_RANDOM_SEED):
     """
     Refines the transformation using RANSAC to find a robust affine shift.
 
@@ -221,6 +222,8 @@ def _refine_shift_with_ransac(src_points, dst_points, residual_threshold=constan
         Maximum distance for a data point to be considered an inlier.
     max_trials : int, optional
         The maximum number of RANSAC iterations.
+    seed : int, optional
+        Seed of the random sampling, so the same points give the same model.
 
     Returns
     -------
@@ -235,7 +238,8 @@ def _refine_shift_with_ransac(src_points, dst_points, residual_threshold=constan
             warnings.filterwarnings("ignore", message="No inliers found")
             model, inliers = ransac(
                 (src_points, dst_points), _TranslationTransform3D, min_samples=1,
-                residual_threshold=residual_threshold, max_trials=max_trials
+                residual_threshold=residual_threshold, max_trials=max_trials,
+                rng=np.random.default_rng(seed),
             )
     except np.linalg.LinAlgError as e:
         # This can happen with degenerate point sets
@@ -327,6 +331,7 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, voxel
         if progress_callback: progress_callback(100, "Done (RANSAC failed, using rough shift).")
         return _rough("ransac_failed")
 
+    details["ransac_seed"] = constants.RANSAC_RANDOM_SEED
     details["n_inliers"] = int(np.count_nonzero(inliers))
     details["inlier_fraction"] = details["n_inliers"] / len(src)
     rmsd = _calculate_rmsd(src, dst, model, inliers)

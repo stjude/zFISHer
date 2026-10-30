@@ -6,6 +6,11 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Fixes
 
+- **Registering the same images twice gives the same shift.** RANSAC's random
+  choice of centroid pairs was not seeded, so two registrations of the same
+  rounds could keep different inliers and give slightly different shifts, and
+  every aligned coordinate with them; the B-spline fit was already seeded.
+  RANSAC is now seeded too, and the seed is recorded with the registration.
 - New `puncta_id` values are handed out under the session's lock, so a
   detection running in the background and a point placed by hand at the same
   moment can no longer be given the same ids.
