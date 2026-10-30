@@ -116,18 +116,21 @@ def test_decorator_keeps_the_wrapped_signature():
     assert f.__name__ == "f"
 
 
-@pytest.mark.skipif(timing.psutil is None, reason="psutil not installed")
-def test_sampler_sees_a_transient_allocation(timing_log):
-    # Random bytes written inside the stage. A constant block is compressed by
-    # macOS within a fraction of a second when memory is short, as late in a
-    # full test run, and compressed pages are not resident (the sampler saw
-    # 10-20 MB of 100); a copy of bytes made earlier can share their pages.
+def test_sampler_sees_a_transient_allocation(timing_log, monkeypatch):
+    """The sampler thread reads memory while a stage runs, so a peak that is
+    gone by the end of the stage is still reported. Memory is scripted: how
+    much a real allocation adds to resident memory depends on what the
+    allocator kept from earlier (late in a test run, often nothing), which is
+    not what this checks."""
+    readings = {"mb": 100.0}
+    monkeypatch.setattr(timing, "_rss_mb", lambda: readings["mb"])
     with timing.stage_timer("alloc"):
-        block = np.random.default_rng(0).integers(0, 256, 100 * 1024 * 1024, dtype=np.uint8)
-        time.sleep(0.4)
-        del block
+        readings["mb"] = 900.0                     # the peak, seen only by the sampler
+        time.sleep(4 * timing.SAMPLE_INTERVAL_S)
+        readings["mb"] = 120.0
     (line,) = _only(timing_log(), "STAGE")
-    assert float(line["peak_rss_mb"]) - float(line["rss_start_mb"]) >= 50
+    assert (float(line["rss_start_mb"]), float(line["peak_rss_mb"]), float(line["rss_end_mb"])) == \
+        (100.0, 900.0, 120.0)
 
 
 def test_add_stage_fields_targets_innermost_stage_on_this_thread(timing_log):
