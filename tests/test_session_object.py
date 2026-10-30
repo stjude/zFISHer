@@ -143,3 +143,21 @@ def test_a_pipeline_run_leaves_the_open_session_and_its_log_alone(tmp_path):
         log_config.detach_session_log()
         for name, level in levels.items():
             logging.getLogger(name).setLevel(level)
+
+
+def test_a_pipeline_run_writes_its_session_at_stage_boundaries(tmp_path, writes):
+    """The session file is written once per stage, not once per registered file."""
+    import logging
+    from synthetic_rounds import run_batch, write_rounds
+    root = tmp_path / "rounds"
+    root.mkdir()
+    write_rounds(root)
+    levels = {n: logging.getLogger(n).level for n in ("zfisher", "stdout", "stderr")}
+    try:
+        run_batch(root, tmp_path / "out")
+    finally:
+        for name, level in levels.items():
+            logging.getLogger(name).setLevel(level)
+    registered = _file(tmp_path / "out")["processed_files"]
+    # 44 writes before, for this run; now one per stage plus the session's setup.
+    assert len(registered) >= 15 and len(writes) <= 16, (len(registered), len(writes))

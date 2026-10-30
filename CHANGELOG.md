@@ -106,7 +106,9 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   process, and `Session.batch_writes()` writes the file once for a run of
   changes instead of after each one. `session.use(s)` makes `s` the session
   the module functions act on for a block, per thread; the pipeline runs that
-  way, so no core function needed a new argument.
+  way, so no core function needed a new argument. A pipeline run writes its
+  session file at the end of each stage instead of after every file it
+  registers: 15 writes instead of 44 for the synthetic test dataset.
 - Every setting a person or a batch template chooses (detection, segmentation,
   registration, consensus, colocalization) is described once, in
   `zfisher/core/params.py`, with its default, range, choices, label and
