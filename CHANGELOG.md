@@ -63,6 +63,16 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 - The example dataset's DOI in `examples/README.md` reads 10.5281/zenodo.20288536,
   the record its link opens; the number shown before is not a registered DOI.
 
+### Diagnostics
+
+- **`zfisher-cli profile <folders or log files>`** reads session logs and
+  writes a one-page profile: the machines, minutes per dataset for batch runs,
+  seconds per pipeline stage and per GUI action (median, 90th percentile,
+  worst, total), and the longest main-thread blocks with what was running.
+  Blocks while zFISHer was in the background are counted apart, since the
+  system can slow an idle app's timers. `-o profile.md` writes it to a file.
+  It only reads.
+
 ### Installation
 
 - **The `zfisher` command works after `pip install`.** It pointed at a

@@ -9,6 +9,7 @@ requiring a napari viewer. Invoke as ``zfisher-cli`` once installed, or as
     zfisher-cli batch template.xlsx -o ./batch_output
     zfisher-cli template ./my_template.xlsx
     zfisher-cli nucleus-ids ./output [--write]
+    zfisher-cli profile D:/zFISHer_runs -o profile.md
 """
 import argparse
 import logging
@@ -199,6 +200,22 @@ def _cmd_nucleus_ids(args):
     return 0 if all_agree or args.write else 2
 
 
+def _cmd_profile(args):
+    """Write the one-page profile of the session logs under the given paths."""
+    from .core import log_profile
+
+    runs = log_profile.profile(args.paths)
+    text = log_profile.format_markdown(runs)
+    if args.output:
+        out = Path(args.output).expanduser().resolve()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text, encoding="utf-8")
+        print(f"Profile of {len(runs)} session logs written to: {out}")
+    else:
+        print(text)
+    return 0 if runs else 1
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="zfisher-cli",
@@ -246,6 +263,13 @@ def main(argv=None):
     p_nuc.add_argument("--write", action="store_true",
                        help="Write repaired copies (*.nucleus_ids_repaired.csv) beside the originals.")
     p_nuc.set_defaults(func=_cmd_nucleus_ids)
+
+    # --- profile ---
+    p_prof = subparsers.add_parser(
+        "profile", help="Summarise run times, GUI actions and stalls from session logs (read only).")
+    p_prof.add_argument("paths", nargs="+", help="Log files, or folders to search for zfisher_*.log files.")
+    p_prof.add_argument("-o", "--output", help="Write the profile to this Markdown file instead of printing it.")
+    p_prof.set_defaults(func=_cmd_profile)
 
     args = parser.parse_args(argv)
 
