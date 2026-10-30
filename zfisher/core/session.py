@@ -1,9 +1,11 @@
+import copy
 import json
 import logging
 import os
 import re
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from .. import constants
@@ -12,11 +14,8 @@ from .timing import timed_stage
 
 logger = logging.getLogger(__name__)
 
-# Thread-safety lock for all session state access
-_lock = threading.Lock()
-
-# Private global state
-_SESSION_DATA = {
+# The keys every session starts with.
+_DEFAULTS = {
     "output_dir": None,
     "r1_path": None,
     "r2_path": None,
@@ -26,6 +25,12 @@ _SESSION_DATA = {
     "tri_colocalization_rules": [],
     "puncta_params": {},
 }
+
+
+def _fresh():
+    return copy.deepcopy(_DEFAULTS)
+
+
 _is_loading = False
 
 
@@ -152,6 +157,189 @@ def is_loading():
     """
     return _is_loading
 
+class Session:
+    """One analysis session: its settings and registry of files, the lock that
+    guards them, and the session JSON they are saved to.
+
+    A change saves the file at once, as zFISHer always has, unless it is made
+    inside ``batch_writes()``, which saves once at the end. ``dirty`` says
+    whether there are changes the file does not have yet.
+
+    The module-level functions (``get_data``, ``update_data``, ...) act on one
+    default instance, ``current()``; code that runs several sessions in one
+    process, or should not touch the GUI's, makes its own ``Session``.
+    """
+
+    def __init__(self, data=None):
+        self._data = _fresh() if data is None else data
+        self._lock = threading.RLock()
+        self._dirty = False
+        self._deferred = 0
+
+    # --- reading -----------------------------------------------------------
+    def get(self, key, default=None):
+        """The value of ``key``, or ``default``."""
+        with self._lock:
+            return self._data.get(key, default)
+
+    def snapshot(self):
+        """A deep copy of every key: safe to keep or change."""
+        with self._lock:
+            return copy.deepcopy(self._data)
+
+    @property
+    def output_dir(self):
+        """The session's output folder as a ``Path``, or None before one is set."""
+        value = self.get("output_dir")
+        return Path(value) if value else None
+
+    @property
+    def dirty(self):
+        """True while changes are waiting for ``save()``."""
+        return self._dirty
+
+    def nuclear_channel(self):
+        """The nuclear channel's name; ``constants.DAPI_CHANNEL_NAME`` for
+        sessions made before it was stored."""
+        return self.get("nuclear_channel", constants.DAPI_CHANNEL_NAME)
+
+    # --- changing ----------------------------------------------------------
+    def set(self, key, value):
+        """Set ``key`` to ``value`` and save (see ``batch_writes``)."""
+        with self._lock:
+            self._data[key] = value
+            self._changed()
+
+    def update_nested(self, key, subkey, value):
+        """Set ``self[key][subkey] = value``, the dict under ``key`` created if
+        missing: the read-change-write of a dict-valued key in one step under
+        the lock, so two threads cannot lose each other's change."""
+        with self._lock:
+            inner = self._data.get(key)
+            if not isinstance(inner, dict):
+                inner = {}
+            inner = dict(inner)
+            inner[subkey] = value
+            self._data[key] = inner
+            self._changed()
+
+    def set_processed_file(self, layer_name, path, layer_type, metadata=None):
+        """Register the file of ``layer_name`` (its path, layer type and any
+        ``metadata``) and save."""
+        with self._lock:
+            files = self._data.setdefault("processed_files", {})
+            file_info = {'path': str(path), 'type': layer_type}
+            if metadata:
+                file_info.update(metadata)
+            files[layer_name] = file_info
+            self._changed()
+
+    def remove_processed_file(self, layer_name):
+        """Drop ``layer_name`` from the registry and save."""
+        with self._lock:
+            self._data.get("processed_files", {}).pop(layer_name, None)
+            self._changed()
+
+    def reset(self):
+        """Back to an empty session, in memory only."""
+        with self._lock:
+            self._data.clear()
+            self._data.update(_fresh())
+            self._dirty = False
+
+    # --- saving ------------------------------------------------------------
+    def _changed(self):
+        self._dirty = True
+        if not self._deferred:
+            self.save()
+
+    @contextmanager
+    def batch_writes(self):
+        """Inside this block changes are kept in memory; the file is written
+        once when the outermost block ends, also when it ends with an error."""
+        with self._lock:
+            self._deferred += 1
+        failed = False
+        try:
+            yield self
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            with self._lock:
+                self._deferred -= 1
+                if not self._deferred and self._dirty:
+                    try:
+                        self.save()
+                    except SessionSaveError:
+                        if not failed:
+                            raise
+                        logger.exception("Session not saved after an error inside batch_writes")
+
+    def save(self):
+        """Write the session JSON now (atomically; see ``_write_text_atomic``).
+        Does nothing before an output folder is set. Raises
+        ``SessionSaveError``, leaving the previous file whole."""
+        with self._lock:
+            out_dir = self._data.get("output_dir")
+            if not out_dir:
+                return
+            out_path = None
+            try:
+                # The version that last wrote this file; created_with_zfisher keeps the first.
+                from .provenance import software_version
+                self._data["zfisher_version"] = software_version()
+                filename = self._data.get("session_filename", constants.SESSION_FILENAME)
+                out_path = _session_save_path(out_dir, filename)
+                # Serialised first, so a value that cannot be written never touches the file.
+                text = json.dumps(self._data, indent=4, default=str)
+                _write_text_atomic(out_path, text)
+            except Exception as e:
+                where = out_path or Path(out_dir) / constants.SESSIONS_DIR
+                logger.error("Failed to save session to %s: %s", where, e)
+                raise SessionSaveError(f"Could not save the session file {where}: {e}") from e
+            self._dirty = False
+
+    def load_into(self, path):
+        """Replace this session with the session file at ``path``, saved under
+        the next free number (``zfisher_session_<n>.json``) so the file read
+        is never overwritten. Returns the session's data. See
+        ``load_session_file`` for how paths are re-anchored."""
+        data, new_name = _read_session_file(Path(path))
+        from .params import SCHEMA_VERSION
+        with self._lock:
+            # Nothing of the previous session may survive into this one: a file
+            # from before a key existed (a saved registration, the canvas scale,
+            # the nuclear channel) would otherwise inherit the value of whatever
+            # session was open before it.
+            self._data.clear()
+            self._data.update(data)
+            self._data["session_filename"] = new_name
+            # Ensure keys added after the session was originally saved are present
+            self._data.setdefault("colocalization_rules", [])
+            self._data.setdefault("tri_colocalization_rules", [])
+            self._data.setdefault("processed_files", {})
+            self._data.setdefault("puncta_params", {})
+            # Sessions from before the field are format 1, the format this writes.
+            self._data.setdefault("schema_version", SCHEMA_VERSION)
+            # Save immediately to create the new session file
+            self.save()
+            return self._data
+
+
+# --- The default session and the module-level functions on it -------------------
+
+_default = Session()
+# Older names for the default session's state, kept for code that used them.
+_SESSION_DATA = _default._data
+_lock = _default._lock
+
+
+def current():
+    """The default session: the one the GUI and the module-level functions use."""
+    return _default
+
+
 def get_data(key=None, default=None):
     """
     Retrieves a value from the session data dictionary.
@@ -160,7 +348,8 @@ def get_data(key=None, default=None):
     ----------
     key : str, optional
         The key of the data to retrieve. If None, returns the entire
-        session data dictionary.
+        session data dictionary (live: changing it changes the session; use
+        ``current().snapshot()`` for a copy).
     default : any, optional
         The default value to return if the key is not found.
 
@@ -169,25 +358,15 @@ def get_data(key=None, default=None):
     any
         The requested value or the entire session dictionary.
     """
-    with _lock:
-        if key:
-            return _SESSION_DATA.get(key, default)
-        return _SESSION_DATA
+    if key:
+        return _default.get(key, default)
+    return _default._data
+
 
 def update_data(key, value):
-    """
-    Updates a key-value pair in the session data and saves the session.
+    """Updates a key-value pair in the session data and saves the session."""
+    _default.set(key, value)
 
-    Parameters
-    ----------
-    key : str
-        The key of the data to update.
-    value : any
-        The new value to set.
-    """
-    with _lock:
-        _SESSION_DATA[key] = value
-        _save_session_unlocked()
 
 def set_processed_file(layer_name, path, layer_type: str, metadata: dict = None):
     """
@@ -204,33 +383,14 @@ def set_processed_file(layer_name, path, layer_type: str, metadata: dict = None)
     metadata : dict, optional
         An optional dictionary for additional metadata (e.g., subtype).
     """
-    with _lock:
-        if "processed_files" not in _SESSION_DATA:
-            _SESSION_DATA["processed_files"] = {}
-
-        file_info = {
-            'path': str(path),
-            'type': layer_type, # e.g., 'points', 'labels', 'image', 'vectors', 'report'
-        }
-        if metadata:
-            file_info.update(metadata)
-
-        _SESSION_DATA["processed_files"][layer_name] = file_info
-        _save_session_unlocked()
+    _default.set_processed_file(layer_name, path, layer_type, metadata)
     logger.info("Saved processed file: %s (%s) -> %s", layer_name, layer_type, path)
 
-def remove_processed_file(layer_name):
-    """
-    Removes a layer's entry from the session's processed_files registry and saves.
 
-    Parameters
-    ----------
-    layer_name : str
-        The name of the layer to remove.
-    """
-    with _lock:
-        _SESSION_DATA.get("processed_files", {}).pop(layer_name, None)
-        _save_session_unlocked()
+def remove_processed_file(layer_name):
+    """Removes a layer's entry from the session's processed_files registry and saves."""
+    _default.remove_processed_file(layer_name)
+
 
 def get_nuclear_channel():
     """
@@ -246,20 +406,8 @@ def clear_session():
     """
     Resets the in-memory session data to its default, empty state.
     """
-    global _SESSION_DATA
     detach_session_log()
-    with _lock:
-        _SESSION_DATA.clear()
-        _SESSION_DATA.update({
-            "output_dir": None,
-            "r1_path": None,
-            "r2_path": None,
-            "shift": None,
-            "processed_files": {},
-            "colocalization_rules": [],
-            "tri_colocalization_rules": [],
-            "puncta_params": {},
-        })
+    _default.reset()
 
 @timed_stage("session_init")
 def initialize_new_session(output_dir, r1_path, r2_path, progress_callback=None):
@@ -342,57 +490,17 @@ def _write_text_atomic(path, text):
         tmp.unlink(missing_ok=True)
 
 
-def _save_session_unlocked():
-    """Internal save — caller must already hold _lock.
-
-    Raises ``SessionSaveError`` when the file cannot be written, leaving the
-    previous session file whole."""
-    out_dir = _SESSION_DATA.get("output_dir")
-    if not out_dir:
-        return
-
-    out_path = None
-    try:
-        # The version that last wrote this file; created_with_zfisher keeps the first.
-        from .provenance import software_version
-        _SESSION_DATA["zfisher_version"] = software_version()
-        filename = _SESSION_DATA.get("session_filename", constants.SESSION_FILENAME)
-        out_path = _session_save_path(out_dir, filename)
-        # Serialised first, so a value that cannot be written never touches the file.
-        text = json.dumps(_SESSION_DATA, indent=4, default=str)
-        _write_text_atomic(out_path, text)
-    except Exception as e:
-        where = out_path or Path(out_dir) / constants.SESSIONS_DIR
-        logger.error("Failed to save session to %s: %s", where, e)
-        raise SessionSaveError(f"Could not save the session file {where}: {e}") from e
-
 def save_session():
     """
     Saves the current in-memory session state to a JSON file.
     """
-    with _lock:
-        _save_session_unlocked()
+    _default.save()
 
-def load_session_file(path):
-    """
-    Loads session data from a JSON file into memory, replacing the session
-    that was there: nothing of the previous one is kept.
 
-    When loading an existing session, creates a new numbered session file
-    (e.g., ``session_2.json``) to avoid overwriting the original. This only
-    applies when loading -- new sessions always start as ``session_1.json``.
-
-    Parameters
-    ----------
-    path : str or Path
-        The path to a ``zfisher_session*.json`` file.
-
-    Returns
-    -------
-    dict
-        The loaded session data.
-    """
-    path = Path(path)
+def _read_session_file(path):
+    """Read and check the session JSON at ``path``, re-anchor its paths onto
+    the folder it is in now, and pick the name it will be saved under.
+    Returns ``(data, new_name)``."""
     with open(path, 'r') as f:
         data = json.load(f)
     from .params import SCHEMA_VERSION
@@ -447,27 +555,31 @@ def load_session_file(path):
         n += 1
     new_name = f"zfisher_session_{n}.json"
     logger.info("Creating new session file: %s", new_name)
+    return data, new_name
 
-    with _lock:
-        # Nothing of the previous session may survive into this one: a file
-        # from before a key existed (a saved registration, the canvas scale,
-        # the nuclear channel) would otherwise inherit the value of whatever
-        # session was open before it.
-        _SESSION_DATA.clear()
-        _SESSION_DATA.update(data)
-        _SESSION_DATA["session_filename"] = new_name
-        # output_dir was already re-anchored to the real location above.
-        # Ensure keys added after the session was originally saved are present
-        _SESSION_DATA.setdefault("colocalization_rules", [])
-        _SESSION_DATA.setdefault("tri_colocalization_rules", [])
-        _SESSION_DATA.setdefault("processed_files", {})
-        _SESSION_DATA.setdefault("puncta_params", {})
-        # Sessions from before the field are format 1, the format this writes.
-        _SESSION_DATA.setdefault("schema_version", SCHEMA_VERSION)
-        # Save immediately to create the new session file
-        _save_session_unlocked()
 
-    attach_session_log(out_dir, session_filename=new_name)
+def load_session_file(path):
+    """
+    Loads session data from a JSON file into memory, replacing the session
+    that was there: nothing of the previous one is kept.
+
+    When loading an existing session, creates a new numbered session file
+    (e.g., ``session_2.json``) to avoid overwriting the original. This only
+    applies when loading -- new sessions always start as ``session_1.json``.
+
+    Parameters
+    ----------
+    path : str or Path
+        The path to a ``zfisher_session*.json`` file.
+
+    Returns
+    -------
+    dict
+        The loaded session data.
+    """
+    path = Path(path)
+    data = _default.load_into(path)
+    new_name = data["session_filename"]
+    attach_session_log(Path(data["output_dir"]), session_filename=new_name)
     logger.info("Session loaded from %s → new session file: %s", path.name, new_name)
-
-    return _SESSION_DATA
+    return data

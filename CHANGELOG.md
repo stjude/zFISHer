@@ -92,6 +92,12 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Development
 
+- A session is now a `Session` object (`zfisher/core/session.py`) that owns
+  its settings, file registry, lock and JSON file; the module-level functions
+  act on one default instance, so nothing that called them changes, and the
+  files written are byte for byte the same. Several sessions can live in one
+  process, and `Session.batch_writes()` writes the file once for a run of
+  changes instead of after each one.
 - Every setting a person or a batch template chooses (detection, segmentation,
   registration, consensus, colocalization) is described once, in
   `zfisher/core/params.py`, with its default, range, choices, label and
