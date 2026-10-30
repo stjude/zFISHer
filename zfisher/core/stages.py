@@ -679,3 +679,119 @@ def export_report(rules=None, tri_rules=None, filename=None):
     if path is None:
         raise ValueError("No puncta to analyse; nothing was written.")
     return Path(path)
+
+
+# --- Stage records: what each pipeline stage was run with -----------------------------
+#
+# Each stage of the pipeline (restructuring plan 2f) stores one record in the
+# session under "stages": its fingerprint (the stage and its version, its
+# settings, the identity of its input files and the fingerprints of the stages
+# it used), and the size and modification time of every file it wrote. A
+# stage whose fingerprint is unchanged and whose files are as it left them
+# need not run again; a file changed since (a hand edit) makes what was made
+# from it stale, but is not made again itself.
+
+STAGE_VERSIONS = {"segment": 1, "detect": 1, "register": 1, "canvas": 1, "consensus": 1, "transform": 1,
+                  "report": 1}
+
+
+def file_state(path):
+    """``[size, mtime_ns]`` of the file at ``path``, or None when it is missing."""
+    try:
+        stat = Path(path).stat()
+    except (OSError, TypeError):
+        return None
+    return [stat.st_size, stat.st_mtime_ns]
+
+
+def _stage_id(stage, key=""):
+    return f"{stage}:{key}" if key else stage
+
+
+def stage_records():
+    return dict(session.get_data("stages", default={}) or {})
+
+
+def stage_record(stage, key=""):
+    return stage_records().get(_stage_id(stage, key))
+
+
+def made_from(stage, key=""):
+    """The fingerprint downstream stages use for this stage: its own, and the
+    current state of its files, so a hand edit to them changes it."""
+    import hashlib
+    import json
+    record = stage_record(stage, key)
+    if record is None:
+        return None
+    states = {p: file_state(_absolute(p)) for p in sorted(record.get("outputs", {}))}
+    return hashlib.sha256(json.dumps([record["fingerprint"], states], sort_keys=True).encode()).hexdigest()[:16]
+
+
+def _absolute(stored):
+    out = session.get_data("output_dir")
+    return Path(out) / stored if out and not Path(stored).is_absolute() else Path(stored)
+
+
+def _relative(path):
+    out = session.get_data("output_dir")
+    path = Path(path)
+    try:
+        return str(path.resolve().relative_to(Path(out).resolve())) if out else str(path)
+    except ValueError:
+        return str(path)
+
+
+def stage_fingerprint(stage, key="", params=None, inputs=(), upstream=()):
+    """The fingerprint a run of ``stage`` for ``key`` with ``params``, reading
+    the files ``inputs`` and the stages ``upstream`` (``(stage, key)`` pairs),
+    would have now."""
+    import hashlib
+    import json
+    body = {"stage": stage, "version": STAGE_VERSIONS[stage], "params": params or {},
+            # By name, size and time, not full path: a copied folder is the same run.
+            "inputs": [[Path(p).name, file_state(p)] for p in inputs],
+            "upstream": {_stage_id(s, k): made_from(s, k) for s, k in upstream}}
+    return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+def stage_is_fresh(stage, key, fingerprint):
+    """True when ``stage`` for ``key`` last ran with ``fingerprint`` and its
+    files are still there."""
+    record = stage_record(stage, key)
+    return bool(record and record["fingerprint"] == fingerprint
+                and all(file_state(_absolute(p)) is not None for p in record.get("outputs", {})))
+
+
+def record_stage(stage, key, fingerprint, params=None, inputs=(), upstream=(), outputs=()):
+    """Store the record of a stage that has just run, with its files' state now."""
+    import datetime
+    stored = {_relative(p): file_state(p) for p in outputs if p is not None}
+    session.update_nested("stages", _stage_id(stage, key), {
+        "fingerprint": fingerprint, "params": params or {}, "inputs": [str(p) for p in inputs],
+        "upstream": [_stage_id(s, k) for s, k in upstream], "outputs": stored,
+        "time": datetime.datetime.now().isoformat(timespec="seconds")})
+
+
+def stage_status():
+    """Every recorded stage of the open session, in run order: ``fresh``, ``stale``
+    (its settings' inputs or upstream stages changed since it ran),
+    ``edited`` (a file it wrote was changed since, by hand or by another
+    tool) or ``missing`` (a file it wrote is gone)."""
+    out = []
+    records = stage_records()
+    for sid, record in records.items():
+        stage, _, key = sid.partition(":")
+        outputs = {p: file_state(_absolute(p)) for p in record.get("outputs", {})}
+        upstream = [tuple(u.partition(":")[::2]) for u in record.get("upstream", [])]
+        now = stage_fingerprint(stage, key, record.get("params"), record.get("inputs", []), upstream)
+        if any(state is None for state in outputs.values()):
+            state = MISSING
+        elif now != record["fingerprint"]:
+            state = STALE
+        elif any(outputs[p] != record["outputs"][p] for p in outputs):
+            state = "edited"
+        else:
+            state = FRESH
+        out.append({"stage": stage, "key": key, "state": state, "time": record.get("time")})
+    return out

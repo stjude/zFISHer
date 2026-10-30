@@ -89,6 +89,22 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   system can slow an idle app's timers. `-o profile.md` writes it to a file.
   It only reads.
 
+### Resuming a batch
+
+- **Running batch again over a folder it finished skips what is up to date.**
+  Each pipeline stage (segmentation, detection per channel, registration, the
+  canvas, the consensus mask, the warp per channel, the report) records the
+  settings, input images and earlier stages it used, and the files it wrote.
+  A second run over the same folder runs only the stages whose settings or
+  inputs changed, and what depends on them, reading the rest from disk; a run
+  that finished runs nothing. A file changed by hand since (a nucleus deleted
+  from the consensus mask, say) is kept, and what was made from it is made
+  again. Batch used to refuse an output folder that already had a session; it
+  still refuses one whose session was not made by such a run (a GUI session,
+  a batch from before this version), so hand-made work there is not touched.
+- New sessions' ND2 images are converted to OME-TIFF once; batch converted
+  them twice.
+
 ### Decisions log
 
 - **Each session keeps `decisions.jsonl`**, beside `provenance.jsonl`: one

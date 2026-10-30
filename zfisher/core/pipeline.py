@@ -99,90 +99,103 @@ def _run_full_zfisher_pipeline(
         if progress_callback:
             progress_callback(pct, msg)
 
-    # --- 1. Session Init ---
+    # --- 1. Session: a new one, or the one a previous run left here -------------
     _update(2, "Initializing session...")
-    ok = session.initialize_new_session(output_dir, r1_path, r2_path)
-    if not ok:
+    resumed = _open_previous_run(output_dir, r1_path, r2_path)
+    if not resumed and not session.initialize_new_session(output_dir, r1_path, r2_path):
         raise RuntimeError(
-            f"Session already exists in {output_dir}. "
-            "Remove the existing session or choose a different output directory."
+            f"Session already exists in {output_dir} and was not made by a pipeline run that can be "
+            "resumed. Remove the existing session or choose a different output directory."
         )
+    if resumed:
+        logger.info("Resuming the pipeline run in %s: stages whose inputs and settings are unchanged "
+                    "are skipped.", output_dir)
+    session.update_data("pipeline_settings", {
+        "seg_method": seg_method, "merge_splits": merge_splits, "r1_nuclear_channel": r1_nuclear_channel,
+        "r2_nuclear_channel": r2_nuclear_channel, "puncta_config": puncta_config,
+        "pairwise_rules": pairwise_rules, "tri_rules": tri_rules, "apply_warp": apply_warp,
+        "max_ransac_distance": max_ransac_distance, "overlap_method": overlap_method,
+        "match_threshold": match_threshold, "remove_extranuclear_puncta": remove_extranuclear_puncta})
+    ran = []          # the stages this run executed, for the log and the caller
+
+    # Raw images are read only when a stage that runs needs them.
+    loaded = {}
+
+    def round_session(rnd):
+        if rnd not in loaded:
+            path = r1_path if rnd == "R1" else r2_path
+            try:
+                _update(5 if rnd == "R1" else 8, f"Loading Round {rnd[1]}...")
+                loaded[rnd] = io.load_image_session(path)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to load image files. Check that the files exist and are valid "
+                    f"ND2 or TIFF images.\n  R1: {r1_path}\n  R2: {r2_path}\n  Error: {exc}"
+                ) from exc
+        return loaded[rnd]
 
     # From here on the session is written at each stage boundary, not after
     # every file a stage registers: one run used to rewrite it some forty times
     # for a single puncta channel.
     with session.current().batch_writes():
-        # --- 2. Load & Convert Raw Images ---
-        try:
-            _update(5, "Loading Round 1...")
-            r1_sess = io.load_image_session(r1_path)
-            _update(8, "Loading Round 2...")
-            r2_sess = io.load_image_session(r2_path)
-        except Exception as exc:
-            raise RuntimeError(
-                f"Failed to load image files. Check that the files exist and are valid "
-                f"ND2 or TIFF images.\n  R1: {r1_path}\n  R2: {r2_path}\n  Error: {exc}"
-            ) from exc
-
-        input_dir = output_dir / constants.INPUT_DIR
-        try:
-            if str(r1_path).lower().endswith('.nd2'):
-                _update(10, "Converting R1 to OME-TIF...")
-                io.convert_nd2_to_ome(r1_sess, input_dir, "R1")
-            if str(r2_path).lower().endswith('.nd2'):
-                _update(12, "Converting R2 to OME-TIF...")
-                io.convert_nd2_to_ome(r2_sess, input_dir, "R2")
-        except Exception as exc:
-            raise RuntimeError(f"Failed to convert ND2 to OME-TIFF: {exc}") from exc
+        # --- 2. Load the raw images (a new session; a resumed one reads them only if needed) ---
+        # A new session's ND2 files were converted to OME-TIFF when it was
+        # created (session.initialize_new_session); they used to be converted
+        # a second time here.
+        if not resumed:
+            round_session("R1")
+            round_session("R2")
 
         # --- 2b. Resolve nuclear channels (may differ between rounds) ---
-        if r1_nuclear_channel:
-            r1_nuc_ch = r1_nuclear_channel
-        else:
-            r1_nuc_ch = io.find_nuclear_channel(r1_sess.channels)
-            if r1_nuc_ch is None:
-                r1_nuc_ch = r1_sess.channels[0]
-                logger.warning("No known nuclear stain found in R1. Falling back to first channel: %s", r1_nuc_ch)
-
-        if r2_nuclear_channel:
-            r2_nuc_ch = r2_nuclear_channel
-        else:
-            r2_nuc_ch = io.find_nuclear_channel(r2_sess.channels)
-            if r2_nuc_ch is None:
-                r2_nuc_ch = r2_sess.channels[0]
-                logger.warning("No known nuclear stain found in R2. Falling back to first channel: %s", r2_nuc_ch)
+        r1_channels = _channels(r1_path, loaded.get("R1"))
+        r2_channels = _channels(r2_path, loaded.get("R2"))
+        r1_nuc_ch = _nuclear_channel(r1_nuclear_channel, r1_channels, "R1")
+        r2_nuc_ch = _nuclear_channel(r2_nuclear_channel, r2_channels, "R2")
 
         # Store the R1 nuclear channel as the session's primary nuclear channel
         # (used downstream by layer naming, report generation, etc.)
         nuc_ch = r1_nuc_ch
         session.update_data("nuclear_channel", nuc_ch)
 
+        def r1_voxels():
+            """R1's voxel size: the aligned canvas's, which a finished canvas stage stored."""
+            stored = session.get_data("canvas_scale")
+            return tuple(stored) if stored else tuple(round_session("R1").voxels)
+
         session.save_session()
         # --- 3. Nuclear Segmentation ---
-        r1_dapi = io.get_channel_data(r1_sess, r1_nuc_ch)
-        r2_dapi = io.get_channel_data(r2_sess, r2_nuc_ch)
-
-        # Map batch config method names to process_session_dapi convention
         method_key = "cellpose" if seg_method.lower() == "cellpose" else "classical"
-
-        try:
-            seg_results = segmentation.process_session_dapi(
-                r1_data=r1_dapi, r2_data=r2_dapi, output_dir=output_dir,
-                progress_callback=lambda p, t: _update(15 + int(p * 0.10), t),
-                method=method_key, merge_splits=merge_splits,
-                voxel_spacing=r1_sess.voxels,
-                nuclear_channels={"R1": r1_nuc_ch, "R2": r2_nuc_ch},
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                f"Nuclear segmentation failed: {exc}\n"
-                f"Method: {method_key}, Merge splits: {merge_splits}"
-            ) from exc
+        seg_params = {"method": method_key, "merge_splits": bool(merge_splits),
+                      "channels": {"R1": r1_nuc_ch, "R2": r2_nuc_ch}}
+        seg_fp = stages.stage_fingerprint("segment", "", seg_params, inputs=(r1_path, r2_path))
+        seg_dir = output_dir / constants.SEGMENTATION_DIR
+        if stages.stage_is_fresh("segment", "", seg_fp):
+            seg_results = {rnd: (None, np.load(seg_dir / f"{rnd} - {ch}{constants.CENTROIDS_SUFFIX}.npy"))
+                           for rnd, ch in (("R1", r1_nuc_ch), ("R2", r2_nuc_ch))}
+        else:
+            r1_dapi = io.get_channel_data(round_session("R1"), r1_nuc_ch)
+            r2_dapi = io.get_channel_data(round_session("R2"), r2_nuc_ch)
+            try:
+                seg_results = segmentation.process_session_dapi(
+                    r1_data=r1_dapi, r2_data=r2_dapi, output_dir=output_dir,
+                    progress_callback=lambda p, t: _update(15 + int(p * 0.10), t),
+                    method=method_key, merge_splits=merge_splits,
+                    voxel_spacing=round_session("R1").voxels,
+                    nuclear_channels={"R1": r1_nuc_ch, "R2": r2_nuc_ch},
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Nuclear segmentation failed: {exc}\n"
+                    f"Method: {method_key}, Merge splits: {merge_splits}"
+                ) from exc
+            del r1_dapi, r2_dapi
+            stages.record_stage("segment", "", seg_fp, seg_params, inputs=(r1_path, r2_path), outputs=[
+                seg_dir / f"{rnd} - {ch}{suffix}" for rnd, ch in (("R1", r1_nuc_ch), ("R2", r2_nuc_ch))
+                for suffix in (constants.MASKS_SUFFIX + io.MASK_EXTENSION, constants.CENTROIDS_SUFFIX + ".npy")])
+            ran.append("segment")
 
         session.save_session()
         # --- 4. Puncta Detection on Raw Images (per-round masks) ---
-        seg_dir = output_dir / constants.SEGMENTATION_DIR
-
         # Determine which channels to detect puncta on and their parameters
         if puncta_config:
             # Use channels and params from batch config
@@ -190,24 +203,22 @@ def _run_full_zfisher_pipeline(
         else:
             # Default: all non-nuclear channels with default params
             nuc_names_upper = {r1_nuc_ch.upper(), r2_nuc_ch.upper()}
-            puncta_channels = [
-                ch for ch in r1_sess.channels
-                if ch.upper() not in nuc_names_upper
-            ]
+            puncta_channels = [ch for ch in r1_channels if ch.upper() not in nuc_names_upper]
 
-        # Load per-round nuclear masks for puncta filtering, as registered by
-        # segmentation, once per round rather than once per channel.
-        r1_mask_path = stages.round_mask_path("R1")
-        r2_mask_path = stages.round_mask_path("R2")
-        r1_mask = io.read_label_tif(r1_mask_path) if r1_mask_path else None
-        r2_mask = io.read_label_tif(r2_mask_path) if r2_mask_path else None
+        masks = {}            # per-round nuclear masks, read once per round when a detection runs
+
+        def round_mask(rnd):
+            if rnd not in masks:
+                path = stages.round_mask_path(rnd)
+                masks[rnd] = io.read_label_tif(path) if path else None
+            return masks[rnd]
 
         detected = []  # (round, channel) of every channel whose raw-space CSV was written
-        channel_jobs = [(rnd, mask) for rnd, mask in [("R1", r1_mask), ("R2", r2_mask)] for _ in puncta_channels]
-        job_count = max(len(channel_jobs), 1)
+        job_count = max(2 * len(puncta_channels), 1)
         job_i = 0
+        reports_dir = output_dir / constants.REPORTS_DIR
 
-        for rnd, rnd_mask, sess_obj, raw_path in [("R1", r1_mask, r1_sess, r1_path), ("R2", r2_mask, r2_sess, r2_path)]:
+        for rnd, raw_path, channels in [("R1", r1_path, r1_channels), ("R2", r2_path, r2_channels)]:
             for ch in puncta_channels:
                 # Build params for this channel
                 chosen = bool(puncta_config and ch in puncta_config)
@@ -229,21 +240,31 @@ def _run_full_zfisher_pipeline(
                     }
                     nuclei_only = True
 
-                ch_idx = list(sess_obj.channels).index(ch)
                 job_base = 25 + int((job_i / job_count) * 10)
+                params = dict(ch_params, nuclei_only=nuclei_only)
+                upstream = [("segment", "")] if nuclei_only else []
+                fp = stages.stage_fingerprint("detect", f"{rnd} - {ch}", params, inputs=(raw_path,),
+                                              upstream=upstream)
+                raw_csv = constants.puncta_csv_path(reports_dir, stages.raw_puncta_name(rnd, ch))
+                if stages.stage_is_fresh("detect", f"{rnd} - {ch}", fp):
+                    detected.append((rnd, ch))
+                    job_i += 1
+                    continue
                 _update(job_base, f"Detecting puncta (raw): {rnd} {ch}...")
 
                 # The same step the GUI re-detects a channel with. It keeps the
                 # raw-space puncta, records them, and stores the channel's
                 # settings for the report; the aligned rows share their puncta_id.
                 try:
+                    sess_obj = round_session(rnd)
+                    ch_idx = list(sess_obj.channels).index(ch)
                     # Settings from a Puncta row were chosen by a person; the
                     # built-in ones, for a channel without a row, by nobody.
                     with (contextlib.nullcontext() if chosen else decisions.use_actor(decisions.DEFAULT)):
                         raw_csv = stages.detect_channel(
-                            rnd, ch, params=dict(ch_params, nuclei_only=nuclei_only), run_by="batch",
+                            rnd, ch, params=params, run_by="batch",
                             image=sess_obj.data[:, ch_idx, :, :], image_path=raw_path, voxels=sess_obj.voxels,
-                            mask=rnd_mask,
+                            mask=round_mask(rnd),
                             progress_callback=lambda p, t, _b=job_base: _update(_b + int(p / 100 * 2),
                                                                                 f"{rnd} {ch}: {t}"),
                         )
@@ -254,63 +275,79 @@ def _run_full_zfisher_pipeline(
                     continue
                 if raw_csv is not None:
                     detected.append((rnd, ch))
+                    stages.record_stage("detect", f"{rnd} - {ch}", fp, params, inputs=(raw_path,),
+                                        upstream=upstream, outputs=[raw_csv])
+                    ran.append(f"detect {rnd} - {ch}")
 
                 job_i += 1
+        masks.clear()
 
         session.save_session()
         # --- 5. Registration (RANSAC) ---
-        shift, _ = registration.calculate_session_registration(
-            seg_results['R1'][1], seg_results['R2'][1],
-            voxels=r1_sess.voxels,
-            max_distance=max_ransac_distance,
-            progress_callback=lambda p, t: _update(35 + int(p * 0.1), t)
-        )
-        if shift is None:
-            raise RuntimeError(
-                "Registration failed: could not calculate a valid shift. "
-                "Check that both rounds have sufficient nuclear signal."
+        reg_params = {"max_distance": max_ransac_distance}
+        reg_fp = stages.stage_fingerprint("register", "", reg_params, upstream=[("segment", "")])
+        if stages.stage_is_fresh("register", "", reg_fp) and session.get_data("shift") is not None:
+            shift = np.asarray(session.get_data("shift"), dtype=float)
+        else:
+            shift, _ = registration.calculate_session_registration(
+                seg_results['R1'][1], seg_results['R2'][1],
+                voxels=r1_voxels(),
+                max_distance=max_ransac_distance,
+                progress_callback=lambda p, t: _update(35 + int(p * 0.1), t)
             )
+            if shift is None:
+                raise RuntimeError(
+                    "Registration failed: could not calculate a valid shift. "
+                    "Check that both rounds have sufficient nuclear signal."
+                )
+            stages.record_stage("register", "", reg_fp, reg_params, upstream=[("segment", "")])
+            ran.append("register")
 
         session.save_session()
         # --- 6. Canvas Generation (Rigid + Deformable Warping) ---
-        r1_layers = [
-            {'name': f"R1 - {ch}", 'data': r1_sess.data[:, i, :, :],
-             'scale': r1_sess.voxels, 'is_label': False}
-            for i, ch in enumerate(r1_sess.channels)
-        ]
-        r2_layers = [
-            {'name': f"R2 - {ch}", 'data': r2_sess.data[:, i, :, :],
-             'scale': r2_sess.voxels, 'is_label': False}
-            for i, ch in enumerate(r2_sess.channels)
-        ]
-
-        for prefix, sess_obj, layer_list, round_nuc in [
-            ("R1", r1_sess, r1_layers, r1_nuc_ch),
-            ("R2", r2_sess, r2_layers, r2_nuc_ch),
-        ]:
-            mask_name = f"{prefix} - {round_nuc}{constants.MASKS_SUFFIX}"
-            mask_path = io.find_mask(seg_dir, mask_name)
-            if mask_path:
-                layer_list.append({
-                    'name': mask_name,
-                    'data': io.read_label_tif(mask_path),
-                    'scale': sess_obj.voxels,
-                    'is_label': True
-                })
-
         aligned_dir = output_dir / constants.ALIGNED_DIR
-        try:
-            _, bspline_transform, canvas_offset = registration.generate_global_canvas(
-                r1_layers_data=r1_layers, r2_layers_data=r2_layers,
-                shift=shift, output_dir=aligned_dir, apply_warp=apply_warp,
-                progress_callback=lambda p, t: _update(45 + int(p * 0.15), t),
-                r2_channel_names={r1_nuc_ch: r2_nuc_ch},
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                f"Canvas generation (alignment + warping) failed: {exc}"
-            ) from exc
-        session.update_data("canvas_scale", r1_sess.voxels)
+        canvas_params = {"apply_warp": bool(apply_warp), "r2_channel_names": {r1_nuc_ch: r2_nuc_ch}}
+        canvas_up = [("segment", ""), ("register", "")]
+        canvas_fp = stages.stage_fingerprint("canvas", "", canvas_params, inputs=(r1_path, r2_path),
+                                             upstream=canvas_up)
+        if stages.stage_is_fresh("canvas", "", canvas_fp):
+            canvas_record = (session.get_data("registration", default={}) or {}).get("canvas") or {}
+            bspline_transform = canvas_record.get("bspline")
+        else:
+            before = _registered_paths()
+            layer_lists = {}
+            for prefix, round_nuc in (("R1", r1_nuc_ch), ("R2", r2_nuc_ch)):
+                sess_obj = round_session(prefix)
+                layers = [{'name': f"{prefix} - {ch}", 'data': sess_obj.data[:, i, :, :],
+                           'scale': sess_obj.voxels, 'is_label': False} for i, ch in enumerate(sess_obj.channels)]
+                mask_name = f"{prefix} - {round_nuc}{constants.MASKS_SUFFIX}"
+                mask_path = io.find_mask(seg_dir, mask_name)
+                if mask_path:
+                    layers.append({'name': mask_name, 'data': io.read_label_tif(mask_path),
+                                   'scale': sess_obj.voxels, 'is_label': True})
+                layer_lists[prefix] = layers
+            try:
+                _, bspline_transform, canvas_offset = registration.generate_global_canvas(
+                    r1_layers_data=layer_lists["R1"], r2_layers_data=layer_lists["R2"],
+                    shift=shift, output_dir=aligned_dir, apply_warp=apply_warp,
+                    progress_callback=lambda p, t: _update(45 + int(p * 0.15), t),
+                    r2_channel_names={r1_nuc_ch: r2_nuc_ch},
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Canvas generation (alignment + warping) failed: {exc}"
+                ) from exc
+            del layer_lists
+            session.update_data("canvas_scale", round_session("R1").voxels)
+            outputs = sorted(_registered_paths() - before)
+            bspline_file = aligned_dir / constants.REGISTRATION_TRANSFORM_FILE
+            stages.record_stage("canvas", "", canvas_fp, canvas_params, inputs=(r1_path, r2_path),
+                                upstream=canvas_up,
+                                outputs=outputs + ([bspline_file] if bspline_file.exists() else []))
+            ran.append("canvas")
+        # The raw images are not needed past this point.
+        loaded.clear()
+        gc.collect()
 
         session.save_session()
         # --- 7. Consensus Nuclei ---
@@ -319,30 +356,37 @@ def _run_full_zfisher_pipeline(
         if not r2_warped_mask.exists():
             r2_warped_mask = aligned_dir / f"Aligned_R2_{r2_nuc_ch}{constants.MASKS_SUFFIX}.tif"
 
-        if not (r1_aligned_mask.exists() and r2_warped_mask.exists()):
-            raise RuntimeError(
-                "Consensus failed: aligned masks not found. "
-                "Canvas generation may have failed."
-            )
-
-        try:
-            merged_mask, _ = segmentation.process_consensus_nuclei(
-                mask1=tifffile.imread(r1_aligned_mask),
-                mask2=tifffile.imread(r2_warped_mask),
-                output_dir=output_dir,
-                threshold=match_threshold or None,
-                method=overlap_method,
-                voxel_size=r1_sess.voxels,
-                progress_callback=lambda p, t: _update(60 + int(p * 0.1), t)
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                f"Consensus nuclei matching failed: {exc}"
-            ) from exc
+        consensus_params = {"method": overlap_method, "match_threshold": match_threshold or 0}
+        consensus_fp = stages.stage_fingerprint("consensus", "", consensus_params, upstream=[("canvas", "")])
+        consensus_file = io.mask_path(seg_dir, constants.CONSENSUS_MASKS_NAME)
+        if stages.stage_is_fresh("consensus", "", consensus_fp):
+            merged_mask = io.read_label_tif(consensus_file)
+        else:
+            if not (r1_aligned_mask.exists() and r2_warped_mask.exists()):
+                raise RuntimeError(
+                    "Consensus failed: aligned masks not found. "
+                    "Canvas generation may have failed."
+                )
+            try:
+                merged_mask, _ = segmentation.process_consensus_nuclei(
+                    mask1=tifffile.imread(r1_aligned_mask),
+                    mask2=tifffile.imread(r2_warped_mask),
+                    output_dir=output_dir,
+                    threshold=match_threshold or None,
+                    method=overlap_method,
+                    voxel_size=r1_voxels(),
+                    progress_callback=lambda p, t: _update(60 + int(p * 0.1), t)
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Consensus nuclei matching failed: {exc}"
+                ) from exc
+            stages.record_stage("consensus", "", consensus_fp, consensus_params, upstream=[("canvas", "")],
+                                outputs=[consensus_file])
+            ran.append("consensus")
 
         session.save_session()
         # --- 8. Transform Puncta to Aligned Space ---
-        reports_dir = output_dir / constants.REPORTS_DIR
         reports_dir.mkdir(exist_ok=True, parents=True)
 
         aligned_puncta_layers = []  # Collect for colocalization analysis
@@ -351,20 +395,30 @@ def _run_full_zfisher_pipeline(
         for rnd, ch in detected:
             prefix_str = constants.ALIGNED_PREFIX if (rnd == "R1" or bspline_transform is None) else constants.WARPED_PREFIX
             job_base = 70 + int((job_i / job_count) * 15)
-            _update(job_base, f"Transforming puncta: {rnd} {ch}...")
-
-            # The same step the GUI rewarps a re-detected channel with: the raw
-            # CSV through the registration saved at canvas generation.
-            csv_out = stages.transform_channel(rnd, ch, remove_extranuclear=remove_extranuclear_puncta,
-                                               run_by="batch", consensus_mask=merged_mask)
+            key = f"{rnd} - {ch}"
+            transform_params = {"remove_extranuclear": bool(remove_extranuclear_puncta)}
+            transform_up = [("detect", key), ("canvas", ""), ("consensus", "")]
+            fp = stages.stage_fingerprint("transform", key, transform_params, upstream=transform_up)
+            name = f"{prefix_str} {rnd} - {ch}{constants.PUNCTA_SUFFIX}"
+            if stages.stage_is_fresh("transform", key, fp):
+                csv_out = constants.puncta_csv_path(reports_dir, name)
+            else:
+                _update(job_base, f"Transforming puncta: {rnd} {ch}...")
+                # The same step the GUI rewarps a re-detected channel with: the raw
+                # CSV through the registration saved at canvas generation.
+                csv_out = stages.transform_channel(rnd, ch, remove_extranuclear=remove_extranuclear_puncta,
+                                                   run_by="batch", consensus_mask=merged_mask)
+                stages.record_stage("transform", key, fp, transform_params, upstream=transform_up,
+                                    outputs=[csv_out] if csv_out is not None else [])
+                ran.append(f"transform {key}")
 
             # Build layer data dict for colocalization analysis
             transformed = pd.read_csv(csv_out, float_precision="round_trip") if csv_out is not None else None
             if transformed is not None and len(transformed) > 0:
                 aligned_puncta_layers.append({
-                    'name': f"{prefix_str} {rnd} - {ch}{constants.PUNCTA_SUFFIX}",
+                    'name': name,
                     'data': transformed[['Z', 'Y', 'X']].to_numpy(float),
-                    'scale': np.array(r1_sess.voxels),
+                    'scale': np.array(r1_voxels()),
                     'translate': np.zeros(3),
                     'nucleus_ids': transformed['Nucleus_ID'].to_numpy(float),
                     'puncta_id': transformed['puncta_id'].to_numpy(float),
@@ -375,7 +429,11 @@ def _run_full_zfisher_pipeline(
         session.save_session()
         # --- 9. Colocalization Analysis ---
         has_coloc = (pairwise_rules and len(pairwise_rules) > 0) or (tri_rules and len(tri_rules) > 0)
-        if has_coloc and aligned_puncta_layers:
+        report_params = {"pairwise": pairwise_rules or [], "tri": tri_rules or []}
+        report_up = [("transform", f"{rnd} - {ch}") for rnd, ch in detected] + [("consensus", "")]
+        report_fp = stages.stage_fingerprint("report", "", report_params, upstream=report_up)
+        report_filename = f"zFISHer_Report{constants.EXCEL_SUFFIX}"
+        if has_coloc and aligned_puncta_layers and not stages.stage_is_fresh("report", "", report_fp):
             _update(85, "Running colocalization analysis...")
 
             # Map user-friendly rule names to actual aligned layer names.
@@ -419,9 +477,8 @@ def _run_full_zfisher_pipeline(
                 nucleus_ids = None
                 total_nuclei = None
 
-            report_filename = f"zFISHer_Report{constants.EXCEL_SUFFIX}"
             try:
-                analysis.run_colocalization_analysis(
+                report_path = analysis.run_colocalization_analysis(
                     layers_data=aligned_puncta_layers,
                     rules=resolved_pairwise,
                     filename=report_filename,
@@ -433,16 +490,68 @@ def _run_full_zfisher_pipeline(
                     nucleus_ids=nucleus_ids,
                 )
                 _update(95, "Colocalization report saved.")
+                if report_path is not None:
+                    stages.record_stage("report", "", report_fp, report_params, upstream=report_up,
+                                        outputs=[report_path])
+                    ran.append("report")
             except Exception as exc:
                 logger.error("Colocalization analysis failed: %s", exc, exc_info=True)
                 _update(95, f"Colocalization failed: {exc}")
 
     # --- Cleanup ---
-    del r1_sess, r2_sess, r1_dapi, r2_dapi, merged_mask
+    del merged_mask
     gc.collect()
 
     # Ensure the session JSON is fully written before exiting
     session.save_session()
 
     _update(100, "Done.")
-    logger.info("Pipeline complete for %s", output_dir)
+    logger.info("Pipeline complete for %s; stages run: %s", output_dir, ", ".join(ran) or "none")
+    return ran
+
+
+def _registered_paths():
+    """The paths the session's file registry points to now."""
+    return {Path(info["path"]) for info in (session.get_data("processed_files", default={}) or {}).values()
+            if isinstance(info, dict) and info.get("path")}
+
+
+def _channels(path, loaded_session=None):
+    """The channel names of the image at ``path``, without reading its pixels."""
+    if loaded_session is not None:
+        return list(loaded_session.channels)
+    names = io.peek_channel_names(path)
+    if names is None:
+        return list(io.load_image_session(path).channels)
+    return list(names)
+
+
+def _nuclear_channel(requested, channels, round_id):
+    if requested:
+        return requested
+    found = io.find_nuclear_channel(channels)
+    if found is None:
+        found = channels[0]
+        logger.warning("No known nuclear stain found in %s. Falling back to first channel: %s", round_id, found)
+    return found
+
+
+def _open_previous_run(output_dir, r1_path, r2_path):
+    """Open the session a previous pipeline run left in ``output_dir``, for
+    the same two images, so stages that are up to date are not run again.
+    False when there is no session there, or one that no pipeline run with
+    stage records made (a GUI session, a batch run of zFISHer before 3.0),
+    which is not touched."""
+    folder = output_dir / constants.SESSIONS_DIR
+    files = sorted(folder.glob("zfisher_session_*.json"), key=lambda p: int(p.stem.rsplit("_", 1)[-1])
+                   if p.stem.rsplit("_", 1)[-1].isdigit() else -1) if folder.exists() else []
+    if not files:
+        return False
+    import json
+    data = json.loads(files[-1].read_text())
+    same_inputs = all(Path(data.get(k) or "").name == Path(p).name for k, p in (("r1_path", r1_path),
+                                                                                ("r2_path", r2_path)))
+    if not data.get("stages") or "pipeline_settings" not in data or not same_inputs:
+        return False
+    session.load_session_file(files[-1])
+    return True
