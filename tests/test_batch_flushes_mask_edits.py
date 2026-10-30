@@ -85,8 +85,6 @@ def gui(tmp_path, monkeypatch):
     config = BatchConfig(datasets=[DatasetSpec(name="ds1", r1=tmp_path / "r1.nd2", r2=tmp_path / "r2.nd2")])
     monkeypatch.setattr(bpw, "parse_batch_config", lambda path: (config, None))
     monkeypatch.setattr(bpw, "validate_channels", lambda cfg: [])
-    monkeypatch.setattr(bpw, "resolve_puncta_for_dataset", lambda name, rules: {})
-    monkeypatch.setattr(bpw, "resolve_coloc_for_dataset", lambda name, rules: ([], []))
     monkeypatch.setattr(popups, "show_yes_no_popup", lambda parent, title, text: True)
     monkeypatch.setattr(popups, "BatchProgressDialog", _Dialog)
     infos, errors = [], []
@@ -130,7 +128,7 @@ def test_pending_mask_edits_reach_the_open_session_before_the_batch_starts(gui):
     gui.widget._on_batch_run()
     _let_the_timers_fire()
 
-    assert gui.errors == [] and gui.infos and "ds1: Success" in gui.infos[0]
+    assert gui.errors == [] and gui.infos and "ds1: done in" in gui.infos[0]
     assert gui.seen["mask_saved_before"], "the mask must be on disk before the pipeline replaces the session"
     assert io.read_label_tif(gui.mask_file)[0, 5, 5] == 3
     assert not (gui.batch_dir / "ds1" / constants.SEGMENTATION_DIR).exists()   # nothing strayed into the batch's folder

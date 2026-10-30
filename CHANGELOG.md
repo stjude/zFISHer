@@ -120,6 +120,13 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   a batch from before this version), so hand-made work there is not touched.
 - New sessions' ND2 images are converted to OME-TIFF once; batch converted
   them twice.
+- **Several datasets at once.** Batch Process has a Workers setting, and
+  `zfisher-cli batch` a `--workers N` option: that many datasets are processed
+  at the same time, each in its own process. Each holds both of its rounds in
+  memory, so the number is bounded by memory; the default stays 1. The window
+  stays responsive while a batch runs, and the summary at the end says which
+  datasets failed and why, where before every dataset that reached the end
+  was reported as a success.
 - `zfisher-cli status <folder>` lists each pipeline stage as fresh, stale,
   edited or missing, and `zfisher-cli update <folder>` runs again, with the
   settings the folder was made with, the stages that are not fresh.

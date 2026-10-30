@@ -98,11 +98,15 @@ def run(r1: Path = typer.Argument(..., help="Round 1 image file (.nd2 or .tif/.o
 @app.command()
 def batch(template: Path = typer.Argument(..., help="Batch template .xlsx file."),
           output: Path = typer.Option(..., "-o", "--output", help="Batch output root directory."),
-          force: bool = typer.Option(False, help="Continue past validation warnings.")):
-    """Run the pipeline on every dataset of a batch Excel template."""
-    from .core import api
-    from .core.generate_batch_template import (parse_batch_config, resolve_coloc_for_dataset,
-                                               resolve_puncta_for_dataset, validate_channels)
+          force: bool = typer.Option(False, help="Continue past validation warnings."),
+          workers: int = typer.Option(1, min=1, help="Datasets processed at the same time, each in its own "
+                                                     "process; bounded by memory.")):
+    """Run the pipeline on every dataset of a batch Excel template.
+
+    Running it again over the same output folder skips the stages that are
+    up to date (see ``update``)."""
+    from .core import batch as batch_runner
+    from .core.generate_batch_template import parse_batch_config, validate_channels
 
     template, out_base = template.expanduser().resolve(), output.expanduser().resolve()
     if not template.exists():
@@ -120,23 +124,20 @@ def batch(template: Path = typer.Argument(..., help="Batch template .xlsx file."
         if not force:
             print("Pass --force to continue anyway.", file=sys.stderr)
             raise typer.Exit(1)
-    out_base.mkdir(parents=True, exist_ok=True)
-    results = []
-    for i, ds in enumerate(config.datasets, 1):
-        item_out = ds.output_dir or (out_base / ds.name)
-        print(f"\n[{i}/{len(config.datasets)}] {ds.name} -> {item_out}")
-        pairwise, tri = resolve_coloc_for_dataset(ds.name, config.coloc_rules)
-        try:
-            api.run_pipeline(ds, item_out, puncta_config=resolve_puncta_for_dataset(ds.name, config.puncta_rules),
-                             pairwise_rules=pairwise, tri_rules=tri, progress_callback=_stdout_progress)
-            results.append((ds.name, "OK"))
-        except Exception as exc:
-            logging.error("Dataset '%s' failed: %s", ds.name, exc, exc_info=True)
-            results.append((ds.name, f"FAIL: {exc}"))
+    print(f"{len(config.datasets)} dataset(s) -> {out_base}" + (f", {workers} at a time" if workers > 1 else ""))
+
+    def finished(result):
+        state = f"done in {result.seconds / 60:.1f} min" if result.ok else f"FAILED - {result.error}"
+        print(f"  {result.name}: {state}", flush=True)
+
+    results = batch_runner.run_batch(
+        config, out_base, workers=workers, on_result=finished,
+        on_progress=(lambda name, p, text: _stdout_progress(p, f"{name}: {text}")) if workers == 1 else None)
+    failed = [r for r in results if not r.ok]
     print("\n--- Batch summary ---")
-    for name, state in results:
-        print(f"  {name}: {state}")
-    if not all(state == "OK" for _, state in results):
+    for r in results:
+        print(f"  {r.name}: {'OK' if r.ok else 'FAIL: ' + r.error}")
+    if failed:
         raise typer.Exit(1)
 
 

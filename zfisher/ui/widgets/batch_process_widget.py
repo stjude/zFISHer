@@ -1,19 +1,16 @@
-from magicgui.widgets import Container, PushButton, FileEdit, Label
+from magicgui.widgets import Container, PushButton, FileEdit, Label, SpinBox
 from pathlib import Path
 import logging
 import napari
 import pandas as pd
 from qtpy.QtWidgets import QFileDialog
 
-from ...core import pipeline
+from ...core import pipeline  # noqa: F401  (the batch runs through it)
 from ...core.generate_batch_template import (
     build_template_sheets,
     add_dropdown_validations,
     parse_batch_config,
-    pipeline_kwargs,
     validate_channels,
-    resolve_puncta_for_dataset,
-    resolve_coloc_for_dataset,
 )
 from .. import popups
 from ._shared import make_divider as _make_divider
@@ -52,6 +49,11 @@ class BatchProcessWidget(Container):
             value=Path.home() / "zFISHer_Batch_Output",
             tooltip="Base output directory. Each dataset gets its own subfolder."
         )
+        import os
+        self._workers = SpinBox(
+            label="Workers:", value=1, min=1, max=max(1, os.cpu_count() or 1),
+            tooltip="Datasets processed at the same time, each in its own process. Each holds both of its "
+                    "rounds in memory, so raise this only as far as memory allows.")
         self._generate_template_btn = PushButton(text="Generate Template")
         self._generate_template_btn.tooltip = "Create a template Excel file to configure batch processing with dataset paths and analysis parameters."
         self._generate_template_btn.native.setMinimumWidth(0)
@@ -69,7 +71,7 @@ class BatchProcessWidget(Container):
         self._batch_form.native.layout().setContentsMargins(0, 10, 0, 0)
 
         self._out_form = Container(labels=True)
-        self._out_form.extend([self._batch_output_dir])
+        self._out_form.extend([self._batch_output_dir, self._workers])
         self._out_form.native.layout().setContentsMargins(0, 10, 0, 20)
 
         self._desc = QLabel(
@@ -282,52 +284,56 @@ class BatchProcessWidget(Container):
         flush_pending_mask_saves()
 
         output_base.mkdir(parents=True, exist_ok=True)
+        results = self._run_datasets(config, output_base, int(self._workers.value))
 
-        num_items = len(config.datasets)
-        results = []
-
-        with popups.BatchProgressDialog(
-            self._viewer.window._qt_window,
-            title="Batch Processing",
-            text="Preparing..."
-        ) as dialog:
-            for i, ds in enumerate(config.datasets):
-                name = ds.name
-                item_output = ds.output_dir or (output_base / name)
-
-                batch_pct = int((i / num_items) * 100)
-                dialog.update_batch_progress(
-                    batch_pct,
-                    f"Batch: {i + 1} / {num_items} — {name}"
-                )
-                dialog.update_item_progress(0, f"Starting {name}...")
-
-                # Resolve per-dataset puncta and colocalization config
-                puncta_config = resolve_puncta_for_dataset(name, config.puncta_rules)
-                pairwise_rules, tri_rules = resolve_coloc_for_dataset(name, config.coloc_rules)
-
-                try:
-                    pipeline.run_full_zfisher_pipeline(
-                        output_dir=item_output,
-                        puncta_config=puncta_config,
-                        pairwise_rules=pairwise_rules,
-                        tri_rules=tri_rules,
-                        progress_callback=dialog.update_item_progress,
-                        **pipeline_kwargs(ds),
-                    )
-                    results.append((name, "Success"))
-                    logger.info("Batch item '%s' completed successfully.", name)
-                except Exception as exc:
-                    logger.error("Batch item '%s' failed: %s", name, exc, exc_info=True)
-                    results.append((name, f"Failed: {exc}"))
-
-            dialog.update_batch_progress(100, "Batch complete.")
-
-        # Summary popup
-        lines = [f"  {name}: {status}" for name, status in results]
-        summary = "\n".join(lines)
+        # Summary popup: what each dataset came to, failures said as such.
+        failed = [r for r in results if not r.ok]
+        lines = [f"  {r.name}: " + (f"done in {r.seconds / 60:.1f} min" if r.ok else f"FAILED - {r.error}")
+                 for r in results]
+        title = "Batch Processing Complete" if not failed else f"Batch Finished: {len(failed)} Failed"
         popups.show_info_popup(
-            self._viewer.window._qt_window,
-            "Batch Processing Complete",
-            f"Processed {num_items} item(s):\n\n{summary}"
-        )
+            self._viewer.window._qt_window, title,
+            f"Processed {len(results)} dataset(s), {len(failed)} failed:\n\n" + "\n".join(lines)
+            + ("\n\nEach dataset's log is in its logs/ folder." if failed else ""))
+
+    def _run_datasets(self, config, output_base, workers):
+        """Run the batch on a worker thread (``core.batch.run_batch``) while the
+        progress dialog stays live; returns the results in the template's order."""
+        import threading
+        from collections import deque
+        from qtpy.QtWidgets import QApplication
+        from ...core import batch
+
+        n = len(config.datasets)
+        events, done, holder = deque(), [], {}
+
+        def run():
+            try:
+                holder["results"] = batch.run_batch(
+                    config, output_base, workers=workers,
+                    on_progress=lambda name, p, text: events.append(("item", name, p, text)),
+                    on_result=lambda result: events.append(("done", result)))
+            except Exception as exc:                 # reported below, on this thread
+                holder["error"] = exc
+
+        with popups.BatchProgressDialog(self._viewer.window._qt_window, title="Batch Processing",
+                                        text="Preparing...") as dialog:
+            dialog.update_batch_progress(0, f"Batch: 0 / {n} done" + (f", {workers} at a time" if workers > 1 else ""))
+            thread = threading.Thread(target=run, daemon=True)
+            thread.start()
+            while thread.is_alive() or events:
+                thread.join(timeout=0.05)
+                while events:
+                    event = events.popleft()
+                    if event[0] == "item":
+                        _, name, p, text = event
+                        dialog.update_item_progress(p, f"{name}: {text}")
+                    else:
+                        done.append(event[1])
+                        dialog.update_batch_progress(int(100 * len(done) / n), f"Batch: {len(done)} / {n} done")
+                        dialog.update_item_progress(0, f"{event[1].name}: {'done' if event[1].ok else 'failed'}")
+                QApplication.processEvents()
+            dialog.update_batch_progress(100, "Batch complete.")
+        if "error" in holder:
+            raise holder["error"]
+        return holder["results"]
