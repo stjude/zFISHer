@@ -426,7 +426,7 @@ def segment_nuclei_cellpose(image_data, gpu=True, merge_splits=True, progress_ca
     """
     Segment 3D nuclei using Cellpose in 2D-per-slice mode with cross-slice stitching.
 
-    Runs the 'nuclei' model on each Z-slice independently, then stitches labels
+    Runs Cellpose 4's default model (cpsam) on each Z-slice independently, then stitches labels
     across Z using IoU overlap. Slower than classical watershed but more accurate
     for dense or touching nuclei.
 

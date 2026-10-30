@@ -25,7 +25,7 @@ All intermediate results (aligned TIFFs, segmentation masks, puncta CSVs) are sa
 Segments nuclei from the nuclear stain channel using one of two methods:
 
 - **Classical (Fast)** — Otsu thresholding + watershed on a downsampled MIP, then expanded back to full resolution. Fast and parameter-free. Best for most datasets.
-- **Cellpose (Deep Learning)** — GPU-accelerated deep learning segmentation using the Cellpose `nuclei` model. More accurate for dense or irregular nuclei but slower. Requires cellpose to be installed.
+- **Cellpose (Deep Learning)** — GPU-accelerated deep learning segmentation using Cellpose 4's default model, `cpsam`. More accurate for dense or irregular nuclei but slower. Requires cellpose to be installed.
 
 Options:
 - **Merge Over-segmented Nuclei** — Automatically merges nuclei fragments that were incorrectly split by the segmentation algorithm (default: on).

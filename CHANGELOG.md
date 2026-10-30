@@ -35,6 +35,13 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   puncta or mask edit, says so in the status bar. The change stays in memory
   and is written by the next save.
 
+### Documentation
+
+- The README names the Cellpose model zFISHer runs, Cellpose 4's default
+  `cpsam`; it said `nuclei`.
+- The example dataset's DOI in `examples/README.md` reads 10.5281/zenodo.20288536,
+  the record its link opens; the number shown before is not a registered DOI.
+
 ### Installation
 
 - **The `zfisher` command works after `pip install`.** It pointed at a
