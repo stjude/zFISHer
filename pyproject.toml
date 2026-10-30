@@ -50,6 +50,8 @@ dependencies = [
     "psutil==7.2.2",
     # The typed setting models (zfisher/core/params.py); napari needs pydantic 2 as well.
     "pydantic>=2.4,<3",
+    # zfisher-cli; napari needs it as well.
+    "typer>=0.12",
 ]
 
 [project.optional-dependencies]

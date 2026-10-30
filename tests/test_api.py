@@ -101,3 +101,37 @@ def test_the_report_counts_puncta_per_nucleus_from_the_mask(folder):
     table.to_csv(csv, index=False)
     second = pd.read_excel(api.export_report(s, rules=rule).path, sheet_name=constants.PER_NUCLEI_SHEET)
     pd.testing.assert_frame_equal(first, second)
+
+
+def test_the_cli_status_and_export_commands(folder, capsys):
+    from zfisher import cli
+    before = _session_files(folder)
+    assert cli.main(["status", str(folder)]) == 0
+    text = capsys.readouterr().out
+    assert "zfisher_session_1.json" in text and f"R1 - {CHANNEL}, R2 - {CHANNEL}" in text and ": fresh" in text
+    assert _session_files(folder) == before                          # status reads only
+    assert cli.main(["status", str(folder), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["session"]["has_saved_registration"] is True
+    assert cli.main(["export", str(folder), "--rule", f"{CHANNEL},R2 - {CHANNEL},1.0"]) == 1
+    assert "could mean" in capsys.readouterr().err
+    assert cli.main(["export", str(folder), "--rule", f"R1 - {CHANNEL},R2 - {CHANNEL},1.0"]) == 0
+    assert "Colocalization:" in capsys.readouterr().out
+    assert cli.main(["export", str(folder), "--rule", "only-two,parts"]) == 1
+    assert cli.main(["no-such-command"]) != 0
+
+
+def test_the_cli_says_what_is_wrong_instead_of_a_traceback(tmp_path, capsys):
+    from zfisher import cli
+    assert cli.main(["status", str(tmp_path / "nothing")]) == 1
+    assert "Error:" in capsys.readouterr().err
+
+
+def test_the_cli_verbose_flag_reaches_zfishers_loggers(folder):
+    from zfisher import cli
+    log = logging.getLogger("zfisher")
+    level = log.level
+    try:
+        assert cli.main(["-v", "status", str(folder)]) == 0
+        assert log.level == logging.DEBUG
+    finally:
+        log.setLevel(level)

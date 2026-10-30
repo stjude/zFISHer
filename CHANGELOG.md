@@ -97,7 +97,12 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   the package; `python -m zfisher` does the same, and `python main.py` still
   works in a source checkout.
 - **`zfisher-cli`** runs the headless pipeline (`run`, `batch`, `template`),
-  as `python -m zfisher.cli` did. Its `-v` now shows zFISHer's debug messages;
+  as `python -m zfisher.cli` did, and has two new commands: `status <folder>`
+  describes a session and says what in it is out of date, reading only
+  (`--json` for a machine-readable answer), and `export <folder>` writes its
+  colocalization report from the files on disk, with the session's rules or
+  `--rule "R1 - FITC,R2 - Cy5,1.0"`. Every command goes through the same core
+  operations a script or another front end would use. Its `-v` now shows zFISHer's debug messages;
   it set the level on a logger zFISHer's messages do not pass through.
 
 ### Development
