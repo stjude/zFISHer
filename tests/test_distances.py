@@ -119,3 +119,23 @@ def test_bins_from_the_template_reach_the_report(tmp_path):
     config, error = gbt.parse_batch_config(book)
     assert error is None and config.datasets[0].distribution_bins == [0, 2, 4]
     assert gbt.pipeline_kwargs(config.datasets[0])["distribution_bins"] == [0, 2, 4]
+
+
+def test_a_batch_sessions_report_uses_the_runs_rules(finished, tmp_path):
+    """A session a pipeline run made keeps its rules in the run's settings,
+    not where the GUI keeps them; exporting without rules uses the run's."""
+    out = tmp_path / "out"
+    shutil.copytree(finished / "out", out)
+    factory = logging.getLogRecordFactory()
+    logging.setLogRecordFactory(logging.LogRecord)
+    try:
+        s = api.open_session(out, read_only=False)
+        settings = dict(s.get("pipeline_settings"))
+        settings["pairwise_rules"] = [{"source": f"R1 - {CHANNEL}", "target": f"R2 - {CHANNEL}", "threshold": 1.0}]
+        s.set("pipeline_settings", settings)
+        assert not s.get("colocalization_rules")
+        report = api.export_report(s)
+        assert report.sheets[constants.COLOCALIZATION_SHEET] > 0
+    finally:
+        session.clear_session()
+        logging.setLogRecordFactory(factory)

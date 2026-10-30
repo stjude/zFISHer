@@ -701,8 +701,9 @@ def export_report(rules=None, tri_rules=None, filename=None):
     """Write the colocalization report of the open session from its files:
     the aligned puncta CSVs and the consensus mask on disk, the same analysis
     batch runs. ``rules`` and ``tri_rules`` default to the session's own
-    (``colocalization_rules``, ``tri_colocalization_rules``); a rule may name a
-    layer, a round and channel, or a channel only one round has
+    (``colocalization_rules``, ``tri_colocalization_rules``, which the GUI
+    keeps), or else to the rules of the pipeline run that made it; a rule may
+    name a layer, a round and channel, or a channel only one round has
     (``resolve_layer``). Returns the report's path."""
     from . import analysis
     layers, mask = report_layers()
@@ -710,8 +711,11 @@ def export_report(rules=None, tri_rules=None, filename=None):
         raise ValueError(f"The report needs at least two aligned puncta channels; the session has {len(layers)}.")
     names = [layer["name"] for layer in layers]
     given_rules = rules is not None or tri_rules is not None
-    rules = session.get_data("colocalization_rules", default=[]) if rules is None else rules
-    tri_rules = session.get_data("tri_colocalization_rules", default=[]) if tri_rules is None else tri_rules
+    run_pairwise, run_tri = _pipeline_rules()
+    if rules is None:
+        rules = session.get_data("colocalization_rules", default=[]) or run_pairwise
+    if tri_rules is None:
+        tri_rules = session.get_data("tri_colocalization_rules", default=[]) or run_tri
     pairwise = [{"source": resolve_layer(r["source"], names), "target": resolve_layer(r["target"], names),
                  "threshold": float(r["threshold"])} for r in rules]
     tri = [{"anchor": resolve_layer(r["anchor"], names), "channel_a": resolve_layer(r["channel_a"], names),
@@ -730,6 +734,17 @@ def export_report(rules=None, tri_rules=None, filename=None):
     if path is None:
         raise ValueError("No puncta to analyse; nothing was written.")
     return Path(path)
+
+
+def _pipeline_rules():
+    """``(pairwise, tri)`` rules of the pipeline run that made the open session,
+    in the form ``export_report`` takes; empty for a session no run made."""
+    settings = session.get_data("pipeline_settings", default={}) or {}
+    pairwise = [{"source": r["source"], "target": r["target"], "threshold": r["threshold"]}
+                for r in settings.get("pairwise_rules") or []]
+    tri = [{"anchor": r["source"], "channel_a": r["target"], "channel_b": r["channel_b"],
+            "threshold": r["threshold"]} for r in settings.get("tri_rules") or []]
+    return pairwise, tri
 
 
 # --- Stage records: what each pipeline stage was run with -----------------------------

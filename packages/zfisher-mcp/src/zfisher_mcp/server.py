@@ -6,11 +6,14 @@ function's typed result with paths made relative. The server keeps no state
 between calls, so any number of clients can share it.
 
 The server starts in a mode, and only that mode's tools exist: a client
-cannot call what it is not shown. ``query`` has the read-only tools.
+cannot call what it is not shown. ``query`` has the read-only tools;
+``triage`` adds flagging a batch and proposing changes; ``operate`` adds
+changing settings and running stages and batches (``acting``).
 """
 import contextlib
 import json
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal, Optional
@@ -23,6 +26,7 @@ from pydantic import BaseModel, Field
 from zfisher.core import api
 
 from . import __version__
+from .acting import ActingTools
 from .paths import Roots
 
 logger = logging.getLogger(__name__)
@@ -36,7 +40,7 @@ LOG_KINDS = Literal["STAGE", "ACTION", "STALL", "ENV"]
 Limit = Annotated[int, Field(ge=1, description="Most items to return; the server caps it at its page size.")]
 Offset = Annotated[int, Field(ge=0, description="How many items to skip.")]
 
-MODES = {"query": ("read",)}
+MODES = {"query": ("read",), "triage": ("read", "triage"), "operate": ("read", "triage", "operate")}
 """The tool groups each mode exposes."""
 
 INSTRUCTIONS = """\
@@ -53,8 +57,28 @@ has segmented, registered and measured. Each analysis is a session folder.
   extranuclear and hand-placed fractions, nucleus volumes).
 - Paths in results are relative to the configured root, except inside provenance records,
   which name files relative to their session folder.
-- Results come from the files on disk; nothing here changes them.
+- Results come from the files on disk.
 """
+
+INSTRUCTIONS_BY_GROUP = {
+    "read": "",
+    "triage": """
+Triage:
+- flag_batch compares each dataset of a batch with the rest and with fixed floors, and says
+  which need a look and why.
+- propose logs a suggested change for a person to accept or dismiss; it changes nothing else.
+""",
+    "operate": """
+Operate (this server may change files under its folders):
+- Every tool that writes takes dry_run, true by default: first call it as a dry run, which
+  says what would be written, what would go out of date and which stages would run.
+- set_param changes one pipeline setting for the next update and refuses values outside the
+  setting's range. update then reruns what is due. detect_channel, transform_channel and
+  export_report rerun single steps.
+- Every change is logged in the session's decisions log with your justification.
+- Work on copies of datasets made for the purpose, not on the only copy.
+""",
+}
 
 _READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True,
                              open_world_hint=False)
@@ -71,6 +95,8 @@ class ServerConfig:
     page_size: int = 200          # the most rows or records one call returns
     max_depth: int = 3            # how far below a root list_sessions looks
     log_level: str = "WARNING"    # of the server's own messages, to stderr
+    actor: str = "agent"          # stamped on every decision a tool logs, as decisions.jsonl's actor
+    max_workers: int = 1          # the most datasets run_batch runs at once
 
 
 # --- Result models of the server's own (the rest are zfisher.core.api's) --------------
@@ -102,23 +128,27 @@ def build_server(config):
     """The ``MCPServer`` for ``config``."""
     if config.mode not in MODES:
         raise ValueError(f"No mode '{config.mode}'; the modes are {', '.join(MODES)}.")
-    server = MCPServer("zfisher", title="zFISHer", version=__version__, instructions=INSTRUCTIONS,
+    groups = MODES[config.mode]
+    instructions = INSTRUCTIONS + "".join(INSTRUCTIONS_BY_GROUP[g] for g in groups)
+    server = MCPServer("zfisher", title="zFISHer", version=__version__, instructions=instructions,
                        log_level=config.log_level)
     tools = _Tools(config)
-    for group in MODES[config.mode]:
-        for fn in tools.group(group):
-            server.add_tool(fn, annotations=_READ_ONLY if group == "read" else None)
+    for group in groups:
+        for fn, annotations in tools.group(group):
+            server.add_tool(fn, annotations=annotations)
     _add_resources(server, tools)
-    _add_prompts(server)
+    _add_prompts(server, groups)
     return server
 
 
-class _Tools:
+class _Tools(ActingTools):
     """The tool functions, bound to one configuration."""
 
     def __init__(self, config):
         self.config = config
         self.roots = config.roots
+        self._locks = {}                      # one writer lock per folder (acting)
+        self._locks_lock = threading.Lock()
 
     # --- plumbing ---------------------------------------------------------------------
 
@@ -156,9 +186,14 @@ class _Tools:
         return text
 
     def group(self, name):
-        return {"read": [self.list_sessions, self.get_session_info, self.get_status, self.get_parameters,
-                         self.get_metrics, self.query_distances, self.query_report, self.get_provenance,
-                         self.get_decisions, self.read_log]}[name]
+        """``(tool function, annotations)`` of the tools of group ``name``."""
+        if name == "triage":
+            return self.triage_tools()
+        if name == "operate":
+            return self.operate_tools()
+        return [(fn, _READ_ONLY) for fn in (
+            self.list_sessions, self.get_session_info, self.get_status, self.get_parameters, self.get_metrics,
+            self.query_distances, self.query_report, self.get_provenance, self.get_decisions, self.read_log)]
 
     # --- tier 1: read-only -------------------------------------------------------------
     # The annotations in the signatures are what the client sees as each tool's input schema.
@@ -300,7 +335,44 @@ Explain the state of the zFISHer session "{session}" to the biologist who ran it
 Name channels as the session does ("R1 - FITC"). Do not guess at causes the tools do not give."""
 
 
-def _add_prompts(server):
+TRIAGE_BATCH = """\
+Triage the zFISHer batch "{batch}" for the biologist who ran it.
+
+1. Call flag_batch for it.
+2. For each dataset it flags, say in one line what is unusual, using the metric, its value and
+   what the batch expected, and what the person should look at first.
+3. Where a setting change would plausibly help, call propose with the setting, the value and a
+   one-sentence justification. Propose nothing you cannot justify from the numbers.
+4. End with the datasets that need no attention, as a single list.
+
+Change nothing: this is triage."""
+
+TUNE_CHANNEL = """\
+Tune puncta detection for channel "{channel}" of the zFISHer session "{session}".
+
+1. Call get_metrics and get_parameters for the session to see the channel's current counts,
+   SNR and settings.
+2. Call threshold_sweep for the channel in each round it was detected in, and read where the
+   counts level off.
+3. If the suggested sensitivity differs from the current one, call set_param as a dry run with
+   it, then for real with a justification that cites the sweep. Then call update as a dry run,
+   and for real.
+4. Call get_metrics again and report the counts and SNR before and after.
+
+Work only on a session that is a copy made for tuning. Change one setting at a time."""
+
+
+def _add_prompts(server, groups=("read",)):
     @server.prompt(description="Explain what is out of date in a session, and why.")
     def explain_status(session: str) -> str:
         return EXPLAIN_STATUS.format(session=session)
+
+    if "triage" in groups:
+        @server.prompt(description="Say which datasets of a batch need a look, and propose changes.")
+        def triage_batch(batch: str = "") -> str:
+            return TRIAGE_BATCH.format(batch=batch or "at the root")
+
+    if "operate" in groups:
+        @server.prompt(description="Tune a channel's detection sensitivity from a threshold sweep.")
+        def tune_channel(session: str, channel: str) -> str:
+            return TUNE_CHANNEL.format(session=session, channel=channel)

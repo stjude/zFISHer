@@ -115,8 +115,8 @@ def test_query_mode_offers_the_read_only_tools_only(server):
     assert {t.name for t in tools} == READ_TOOLS
     assert all(t.annotations.read_only_hint and not t.annotations.destructive_hint for t in tools)
     assert all(t.output_schema and t.description for t in tools)
-    with pytest.raises(ValueError, match="no mode 'operate'|No mode 'operate'"):
-        build_server(ServerConfig(roots=Roots.parse([str(os.getcwd())]), mode="operate"))
+    with pytest.raises(ValueError, match="No mode 'admin'"):
+        build_server(ServerConfig(roots=Roots.parse([str(os.getcwd())]), mode="admin"))
 
 
 def test_sessions_are_listed_by_their_path_below_the_root(server):
@@ -258,7 +258,8 @@ def test_the_command_serves_over_stdio(root, tmp_path):
 
 def test_the_command_says_what_is_wrong_with_its_options(tmp_path, capsys):
     for argv, expected in ((["--root", str(tmp_path / "missing")], "not a folder"),
-                           (["--root", str(tmp_path), "--mode", "operate"], "no mode 'operate'"),
+                           (["--root", str(tmp_path), "--mode", "admin"], "no mode 'admin'"),
+                           (["--root", str(tmp_path), "--actor", "human"], "--actor names the agent"),
                            (["--root", str(tmp_path), "--page-size", "0"], "--page-size")):
         with pytest.raises(SystemExit) as exit_:
             main(argv)

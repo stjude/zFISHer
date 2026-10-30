@@ -277,7 +277,7 @@ zfisher
 
 or `python -m zfisher`; from a source checkout, `python main.py` does the same. The headless pipeline runs with `zfisher-cli` (`zfisher-cli --help`).
 
-An MCP client can ask questions about finished sessions through the server in `packages/zfisher-mcp` (`zfisher-mcp --root <folder>`), which reads them and writes nothing; see [its README](packages/zfisher-mcp/README.md).
+An MCP client can ask questions about finished sessions through the server in `packages/zfisher-mcp` (`zfisher-mcp --root <folder>`), which by default reads them and writes nothing; started in its triage or operate mode it can also flag a batch's datasets and, on copies set aside for it, change settings and rerun stages. See [its README](packages/zfisher-mcp/README.md).
 
 This opens the napari viewer with the zFISHer sidebar containing all five workflow steps.
 

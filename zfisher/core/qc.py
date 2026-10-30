@@ -30,6 +30,9 @@ class Flag:
     expected: object = None
 
 
+QC_REPORT = "qc_report.md"
+
+
 def dataset_folders(batch_root):
     """The dataset folders under ``batch_root``: those with a session file."""
     root = Path(batch_root)
@@ -161,7 +164,7 @@ def write_qc_report(batch_root, cohort, flags, thresholds=None):
         lines += ["No dataset was flagged."]
     lines += ["", "## Batch medians", "", "| metric | median | robust SD | datasets |", "|---|---|---|---|"]
     lines += [f"| {k} | {m:.4g} | {sd:.3g} | {n} |" for k, (m, sd, n) in sorted(priors.items())]
-    return outputs.write_text(Path(batch_root) / "qc_report.md", "\n".join(lines) + "\n")
+    return outputs.write_text(Path(batch_root) / QC_REPORT, "\n".join(lines) + "\n")
 
 
 def flags_as_dicts(flags):

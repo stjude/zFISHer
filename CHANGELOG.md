@@ -237,6 +237,27 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   under a folder, a page of report rows filtered by column values, a session's
   provenance records and log timing lines, and one channel's detection
   settings.
+- **The MCP server can triage a batch and tune settings, when started to.**
+  `zfisher-mcp --mode triage` adds flagging the datasets of a batch that need a
+  look and proposing changes for a person to accept; `--mode operate` adds
+  changing a pipeline setting (refused outside its range), rerunning what is
+  out of date, re-detecting, warping and exporting a channel, the threshold
+  sweep, per-nucleus export and running a batch template. Every one of these
+  is a dry run unless the client says otherwise, and says what it would write,
+  what it would leave out of date and which stages would run. Every change is
+  logged in the session's decisions log with its justification, the server's
+  actor and the client's name.
+- **What a settings change would rerun can be known before running it.** The
+  core API can say which pipeline stages an update would run with given
+  settings, without running any, from the same stage table the run uses; it
+  can change one pipeline setting after checking it against the setting's
+  range, and say what re-detecting, warping or exporting would write and
+  leave out of date. The decisions log records proposals, and the client a
+  tool server's call came from.
+- **Exporting a batch session's report uses the batch's colocalization
+  rules** when none are given; they were only taken from where the GUI keeps
+  them, so a report exported again from a batch session had no colocalization
+  sheets.
 
 ### Installation
 

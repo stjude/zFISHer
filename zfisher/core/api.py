@@ -12,8 +12,9 @@ Read-only use: ``open_session(path)`` reads a session without writing anything
 Operations that change files need a session opened with ``read_only=False``,
 which, as Load Session does, writes the next numbered session file.
 """
+import copy
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -73,6 +74,33 @@ class ReportPage(_Result):
     total_rows: int                  # rows matching ``where``, before paging
     offset: int
     rows: list[dict]
+
+
+class StagePlan(_Result):
+    operation: str
+    writes: list[str]                # files the operation writes
+    makes_stale: list[str]           # outputs out of date afterwards, until made again
+
+
+class ParamChange(_Result):
+    scope: str                       # segmentation, registration, consensus, detection or report
+    name: str
+    channel: Optional[str] = None
+    old: Any = None                  # None: not set, the built-in value applies
+    new: Any = None
+    applied: bool                    # False for a dry run or a value that was already set
+    would_run: list[str]             # the stages ``update`` runs after the change
+
+
+class BatchPlan(_Result):
+    output_base: str
+    datasets: list[dict]             # name, output_dir, r1, r2, new, would_run
+
+
+class BatchRun(_Result):
+    output_base: str
+    datasets: list[dict]             # name, output_dir, ok, error, seconds, stages_run
+    qc_report: Optional[str] = None
 
 
 class NucleusIdCheck(_Result):
@@ -263,6 +291,170 @@ def update(s, progress_callback=None):
         raise LookupError("This session was not made by a pipeline run, so there is nothing to update from.")
     return pipeline.run_full_zfisher_pipeline(s.get("r1_path"), s.get("r2_path"), s.get("output_dir"),
                                               progress_callback=progress_callback, **settings)
+
+
+def plan_update(s, settings=None):
+    """The stages ``update`` would run on ``s`` (``pipeline.plan_full_zfisher_pipeline``),
+    with its stored pipeline settings or with ``settings`` instead. Runs and
+    writes nothing."""
+    from . import pipeline
+    stored = s.get("pipeline_settings")
+    if not stored:
+        raise LookupError("This session was not made by a pipeline run, so there is nothing to update from.")
+    return pipeline.plan_full_zfisher_pipeline(s.get("r1_path"), s.get("r2_path"), s.get("output_dir"),
+                                               **(settings if settings is not None else stored))
+
+
+def _setting_scopes():
+    """``{scope: (model, {model field: pipeline setting})}`` of the settings
+    ``set_param`` changes, other than detection and report ones."""
+    from .params import ConsensusParams, RegistrationParams, SegmentationParams
+    return {
+        "segmentation": (SegmentationParams, {"method": "seg_method", "merge_splits": "merge_splits"}),
+        "registration": (RegistrationParams, {"max_ransac_distance": "max_ransac_distance",
+                                              "apply_warp": "apply_warp"}),
+        "consensus": (ConsensusParams, {"overlap_method": "overlap_method", "match_threshold": "match_threshold",
+                                        "remove_extranuclear_puncta": "remove_extranuclear_puncta",
+                                        "remove_border_nuclei": "remove_border_nuclei"}),
+    }
+
+
+SETTING_SCOPES = ("segmentation", "registration", "consensus", "detection", "report")
+
+
+def set_param(s, scope, name, value, channel=None, justification=None, dry_run=False):
+    """Change one pipeline setting of ``s`` for its next ``update``, after
+    checking ``value`` against the setting's allowed range or choices (the
+    models of ``params``). ``scope`` is segmentation, registration, consensus,
+    detection (with ``channel``) or report (``distribution_bins``). The change
+    is stored in the session and logged in ``decisions.jsonl`` with
+    ``justification``, unless ``dry_run``; either way the result says which
+    stages ``update`` would then run. Raises ``ValueError`` for a setting that
+    does not exist or a value outside its range, and ``LookupError`` for a
+    session no pipeline run made."""
+    from . import analysis, decisions, pipeline
+    settings = s.get("pipeline_settings")
+    if not settings:
+        raise LookupError("This session was not made by a pipeline run, so it has no settings to change.")
+    new_settings = copy.deepcopy(settings)
+    key = name
+    if scope == "detection":
+        if not channel:
+            raise ValueError("A detection setting needs the channel it applies to.")
+        fields = DetectionParams.model_fields
+        key = "threshold_rel" if name == "sensitivity" else name
+        if key not in fields:
+            raise ValueError(f"No detection setting '{name}'; they are {', '.join(fields)}.")
+        config = pipeline.effective_puncta_config(**{"r1_path": s.get("r1_path"), "r2_path": s.get("r2_path"),
+                                                     **settings})
+        if channel not in config:
+            raise ValueError(f"No detection settings for channel '{channel}'; the channels are "
+                             f"{', '.join(config) or 'none'}.")
+        current = dict(config[channel])
+        old = current.get(key)
+        checked = DetectionParams.model_validate({**{k: v for k, v in current.items() if k in fields}, key: value})
+        new = checked.model_dump(mode="json")[key]
+        if (key == "z_scale" and new is None) or (key == "z_edge_exclude" and not new):
+            current.pop(key, None)                  # as detection_kwargs leaves them out when off
+        else:
+            current[key] = new
+        config[channel] = current
+        new_settings["puncta_config"] = config
+    elif scope == "report":
+        if name != "distribution_bins":
+            raise ValueError(f"No report setting '{name}'; the one there is is distribution_bins.")
+        old = settings.get("distribution_bins")
+        if not isinstance(value, (list, tuple)) or not all(isinstance(v, int) and not isinstance(v, bool)
+                                                            for v in value):
+            raise ValueError("distribution_bins is a list of whole numbers, the lower edges of the bins.")
+        new = list(value)
+        analysis.distribution_bins(new)             # raises unless they start at 0 and rise
+        new_settings["distribution_bins"] = new
+    elif scope in _setting_scopes():
+        model, keys = _setting_scopes()[scope]
+        if name not in keys:
+            raise ValueError(f"No {scope} setting '{name}'; they are {', '.join(keys)}.")
+        current = {f: settings[k] for f, k in keys.items() if settings.get(k) is not None}
+        if scope == "segmentation" and "method" in current:
+            from .params import SegMethod
+            current["method"] = SegMethod.parse(current["method"])
+        old = settings.get(keys[name])
+        new = model.model_validate({**current, name: value}).model_dump(mode="json")[name]
+        new_settings[keys[name]] = new
+    else:
+        raise ValueError(f"No setting scope '{scope}'; the scopes are {', '.join(SETTING_SCOPES)}.")
+    would_run = plan_update(s, new_settings)
+    unchanged = new_settings == settings or (scope == "detection" and new_settings["puncta_config"] == (
+        pipeline.effective_puncta_config(**{"r1_path": s.get("r1_path"), "r2_path": s.get("r2_path"), **settings})))
+    applied = not dry_run and not unchanged
+    if applied:
+        with _session.use(s):
+            s.set("pipeline_settings", new_settings)
+            decisions.record(key, new, old=old, scope={"stage": scope, **({"channel": channel} if channel else {})},
+                             justification=justification)
+    return ParamChange(scope=scope, name=key, channel=channel, old=old, new=new, applied=applied,
+                       would_run=would_run)
+
+
+def plan_operation(s, operation, round_id=None, channel=None):
+    """What an operation on ``s`` would write and leave out of date, without
+    running it: ``detect`` a channel (its raw-space CSV; its aligned CSV and
+    the report go stale), ``transform`` it (its aligned CSV; the report goes
+    stale), ``report`` (the report and its tables) or ``cells`` (the per-nucleus
+    folder)."""
+    from . import analysis, cells, stages
+    with _session.use(s):
+        artifacts = stages.status()
+        out = Path(s.get("output_dir"))
+        reports = out / constants.REPORTS_DIR
+        report = next((a for a in artifacts if a.kind == "report"), None)
+        existing_report = [str(report.path)] if report is not None and report.path else []
+
+        def aligned():
+            found = next((a for a in artifacts if a.kind == "aligned_puncta" and a.round == round_id
+                          and a.channel == channel), None)
+            return found.path if found is not None and found.path else None
+
+        if operation in ("detect", "transform"):
+            if not (round_id and channel):
+                raise ValueError(f"Say which round and channel to {operation}.")
+        if operation == "detect":
+            raw = constants.puncta_csv_path(reports, stages.raw_puncta_name(round_id, channel))
+            writes, stale = [str(raw)], ([str(aligned())] if aligned() else []) + existing_report
+        elif operation == "transform":
+            target = aligned()
+            if target is None:
+                from . import registration
+                try:
+                    name = stages.aligned_puncta_name(round_id, channel, registration.load_registration())
+                except (LookupError, FileNotFoundError):
+                    name = f"{constants.ALIGNED_PREFIX} {round_id} - {channel}{constants.PUNCTA_SUFFIX}"
+                target = constants.puncta_csv_path(reports, name)
+            writes, stale = [str(target)], existing_report
+        elif operation == "report":
+            from .report import next_free_path             # an export never overwrites a report
+            writes = [str(next_free_path(reports / f"{stages.REPORT_NAME}{constants.EXCEL_SUFFIX}")),
+                      str(reports / analysis.DISTANCES_SIDECAR), str(reports / analysis.SHEETS_DIR)]
+            stale = []
+        elif operation == "cells":
+            writes, stale = [str(out / cells.CELLS_DIR)], []
+        else:
+            raise ValueError(f"No operation '{operation}'; they are detect, transform, report and cells.")
+        return StagePlan(operation=operation, writes=writes, makes_stale=stale)
+
+
+def propose(s, name, value, scope=None, justification=None):
+    """Log a suggested change of setting ``name`` to ``value`` in ``s``'s
+    ``decisions.jsonl`` with ``status: "proposed"``, for a person to accept or
+    dismiss; nothing else changes. Works on a read-only session. Returns the
+    record."""
+    from . import decisions
+    with _session.use(s):
+        entry = decisions.record(name, value, scope=scope or {}, justification=justification, status="proposed",
+                                 even_read_only=True)
+    if entry is None:
+        raise LookupError("The session has no folder to log the proposal in.")
+    return entry
 
 
 def get_parameters(s, channel=None):
@@ -469,6 +661,57 @@ def run_pipeline(dataset, output_dir, puncta_config=None, pairwise_rules=None, t
                           report=report.get("path") if isinstance(report, dict) else None)
 
 
+def read_batch_template(path):
+    """The ``params.BatchConfig`` of the batch template (``.xlsx``) at ``path``.
+    Raises ``SchemaError`` saying what is wrong with it."""
+    from .errors import SchemaError
+    from .generate_batch_template import parse_batch_config
+    config, error = parse_batch_config(path)
+    if error:
+        raise SchemaError(f"The batch template cannot be used: {error}")
+    return config
+
+
+def plan_batch(config, output_base):
+    """For each dataset of ``config`` (a ``BatchConfig``, or a template's
+    path), its input images, output folder, and the stages a batch run into
+    ``output_base`` would run there: every stage for a folder with no run yet
+    (``new``), else those not up to date. Runs and writes nothing."""
+    from . import batch, pipeline
+    from .generate_batch_template import pipeline_kwargs
+    if not isinstance(config, BaseModel):
+        config = read_batch_template(config)
+    datasets = []
+    for name, ds, out, puncta_config, pairwise, tri in batch.dataset_jobs(config, output_base):
+        entry = {"name": name, "output_dir": str(out), "r1": str(ds.r1), "r2": str(ds.r2), "new": True,
+                 "would_run": ["every stage"]}
+        try:
+            entry["would_run"] = pipeline.plan_full_zfisher_pipeline(
+                output_dir=out, puncta_config=puncta_config, pairwise_rules=pairwise, tri_rules=tri,
+                **pipeline_kwargs(ds))
+            entry["new"] = False
+        except LookupError:
+            pass
+        datasets.append(entry)
+    return BatchPlan(output_base=str(output_base), datasets=datasets)
+
+
+def run_batch(config, output_base, workers=1):
+    """Run every dataset of ``config`` (a ``BatchConfig``, or a template's
+    path) into ``output_base`` (``batch.run_batch``), then write the batch's
+    ``qc_report.md``. A dataset that fails is reported, not raised."""
+    from . import batch
+    from .qc import QC_REPORT
+    if not isinstance(config, BaseModel):
+        config = read_batch_template(config)
+    results = batch.run_batch(config, output_base, workers=workers)
+    report = Path(output_base) / QC_REPORT
+    return BatchRun(output_base=str(output_base),
+                    datasets=[{"name": r.name, "output_dir": r.output_dir, "ok": r.ok, "error": r.error,
+                               "seconds": round(r.seconds, 1), "stages_run": list(r.stages_run)} for r in results],
+                    qc_report=str(report) if report.exists() else None)
+
+
 def get_decisions(s, name=None):
     """Who set which parameter of ``s``, oldest first (``decisions.jsonl``);
     only the decisions about ``name`` if given."""
@@ -500,6 +743,6 @@ def read_log(s, kind=None):
 
 def schema():
     """The JSON schema of every result model, by name."""
-    models = (SessionInfo, ArtifactState, StageState, DistanceQuery, Metrics, BatchQC, ThresholdSweep, Parameters, ReportPage, NucleusIdCheck, DetectionResult, TransformResult,
+    models = (SessionInfo, ArtifactState, StageState, DistanceQuery, Metrics, BatchQC, ThresholdSweep, Parameters, ReportPage, StagePlan, ParamChange, BatchPlan, BatchRun, NucleusIdCheck, DetectionResult, TransformResult,
               ReportResult, CellsResult, PipelineResult)
     return {m.__name__: m.model_json_schema() for m in models}
