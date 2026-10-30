@@ -416,8 +416,11 @@ _layout.addWidget(_make_spacer())
 _layout.addWidget(_make_divider())
 _layout.addWidget(_make_section_header("Export"))
 _layout.addWidget(_make_section_desc("Run analysis on all rules and export the master Excel report."))
-_layout.addWidget(_filename.native)
-_layout.addWidget(_bins.native)
+# In a labelled form, so each field shows what it is.
+_export_form = Container(labels=True)
+_export_form.extend([_filename, _bins])
+_export_form.native.layout().setContentsMargins(0, 4, 0, 0)
+_layout.addWidget(_export_form.native)
 _layout.addWidget(_make_spacer())
 from qtpy.QtWidgets import QLabel as _QLabel
 _report_note = _QLabel("")
