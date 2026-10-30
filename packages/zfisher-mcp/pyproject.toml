@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zfisher-mcp"
+dynamic = ["version"]
+description = "Model Context Protocol server that answers questions about zFISHer results"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10,<3.11"
+authors = [
+    {name = "Seth Staller", email = "Seth.Staller@STJUDE.ORG"},
+]
+dependencies = [
+    # zFISHer's core from this repository. It is not on PyPI: install it first,
+    # from the repository root, with `pip install -e .`.
+    "zfisher",
+    "mcp>=2.3,<3",
+    "pydantic>=2.12",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+zfisher-mcp = "zfisher_mcp.__main__:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "zfisher_mcp.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

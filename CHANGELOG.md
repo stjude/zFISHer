@@ -222,6 +222,22 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   registration, the canvas, the consensus mask and colocalization rules are
   recorded, from the GUI, batch and scripts alike.
 
+### Questions from an MCP client
+
+- **`packages/zfisher-mcp`: an MCP server over finished sessions.** Any client
+  that speaks the Model Context Protocol, a chat assistant or a script, can
+  list the sessions under a folder and ask what a session holds, what is out of
+  date and why, how a file was made, who set which parameter, its
+  quality-control numbers, rows of its report, its run times, and how many
+  puncta have a neighbour within a distance. The server reads only: sessions
+  are opened read-only, nothing outside the folders it is given can be opened,
+  and no answer names a folder above them. Install it beside zFISHer with
+  `pip install -e packages/zfisher-mcp` and run `zfisher-mcp --root <folder>`;
+  see its README. The core API gained the calls it uses: finding the sessions
+  under a folder, a page of report rows filtered by column values, a session's
+  provenance records and log timing lines, and one channel's detection
+  settings.
+
 ### Installation
 
 - **The `zfisher` command works after `pip install`.** It pointed at a

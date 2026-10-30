@@ -80,6 +80,28 @@ def read_log(path):
     return run
 
 
+TIMING_KINDS = ("STAGE", "ACTION", "STALL", "ENV")
+
+
+def timing_records(paths, kind=None):
+    """Every timing line of the logs at ``paths``, in order, as a dict of its
+    fields plus ``kind``, ``time`` (the line's timestamp) and ``log`` (the
+    file's name); only lines of ``kind`` if given."""
+    if kind is not None and kind not in TIMING_KINDS:
+        raise ValueError(f"No timing lines of kind '{kind}'; the kinds are {', '.join(TIMING_KINDS)}.")
+    out = []
+    for path in map(Path, paths):
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                parsed = parse_timing_line(line)
+                if parsed is None or (kind is not None and parsed[0] != kind):
+                    continue
+                stamp = _TIMESTAMP.match(line)
+                out.append({**parsed[1], "kind": parsed[0], "time": stamp.group(1) if stamp else None,
+                            "log": path.name})
+    return out
+
+
 def find_logs(paths):
     """Every session log under ``paths``: files as given, folders searched for
     ``zfisher_*.log`` (the name session logs are written under)."""

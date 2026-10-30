@@ -45,11 +45,15 @@ jobs:
       - name: Install zFISHer
         run: python -m pip install -e ".[test]"
 
+      # After zFISHer, so its dependency on zfisher is already met (zfisher is not on PyPI).
+      - name: Install the MCP server package
+        run: python -m pip install -e packages/zfisher-mcp
+
       - name: Lint
         run: python -m ruff check .
 
       - name: Run tests
-        run: python -m pytest tests -q -rfE --junitxml=test-results.xml
+        run: python -m pytest tests packages/zfisher-mcp/tests -q -rfE --junitxml=test-results.xml
 
       - name: Keep the test results
         if: always()

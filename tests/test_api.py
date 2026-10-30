@@ -135,3 +135,56 @@ def test_the_cli_verbose_flag_reaches_zfishers_loggers(folder):
         assert log.level == logging.DEBUG
     finally:
         log.setLevel(level)
+
+
+def test_finding_the_sessions_under_a_folder(folder, tmp_path):
+    batch = tmp_path / "batch"
+    shutil.copytree(folder, batch / "dataset_a")
+    shutil.copytree(folder, batch / "group" / "dataset_b")
+    (batch / "empty").mkdir()
+    (batch / "too" / "deep" / "down").mkdir(parents=True)
+    shutil.copytree(folder, batch / "too" / "deep" / "down" / "dataset_c")
+    (batch / "dataset_a" / "nested").mkdir()                          # below an output folder: not searched
+    assert api.find_sessions(batch) == [batch / "dataset_a", batch / "group" / "dataset_b"]
+    assert api.find_sessions(batch, max_depth=4)[-1] == batch / "too" / "deep" / "down" / "dataset_c"
+    assert api.find_sessions(batch / "dataset_a") == [batch / "dataset_a"]
+
+
+def test_parameters_of_one_channel(folder):
+    s = api.open_session(folder)
+    assert set(api.get_parameters(s, f"R2 - {CHANNEL}").detection) == {f"R2 - {CHANNEL}"}
+    with pytest.raises(ValueError, match="could mean"):
+        api.get_parameters(s, CHANNEL)
+
+
+def test_a_page_of_a_report_sheet(folder):
+    s = api.open_session(folder, read_only=False)
+    api.export_report(s, rules=[{"source": f"R1 - {CHANNEL}", "target": f"R2 - {CHANNEL}", "threshold": 1.0}])
+    everything = api.query_report(s, constants.DISTANCES_SHEET)
+    page = api.report_page(s, constants.DISTANCES_SHEET, limit=5, offset=2)
+    assert page.total_rows == len(everything) and page.rows == everything[2:7] and page.offset == 2
+    nucleus = everything[0]["Nucleus_ID"]
+    same = api.report_page(s, constants.DISTANCES_SHEET, where={"Nucleus_ID": nucleus}, limit=1000)
+    assert same.total_rows == sum(r["Nucleus_ID"] == nucleus for r in everything)
+    assert all(r["Nucleus_ID"] == nucleus for r in same.rows)
+    either = api.report_page(s, constants.DISTANCES_SHEET, where={"Nucleus_ID": [nucleus, -1]}, limit=1000)
+    assert either.total_rows == same.total_rows
+    with pytest.raises(ValueError, match="no column 'Nope'"):
+        api.report_page(s, constants.DISTANCES_SHEET, where={"Nope": 1})
+    with pytest.raises(ValueError, match="no sheet"):
+        api.report_page(s, "Nope")
+
+
+def test_provenance_and_log_records(folder):
+    s = api.open_session(folder)
+    csv = f"{constants.REPORTS_DIR}/Aligned_R1_-_{CHANNEL}_puncta.csv"
+    records = api.get_provenance(s, csv)
+    assert records and all(r["path"] == csv for r in records)
+    assert len(api.get_provenance(s)) > len(records)
+    stages_run = api.read_log(s, "STAGE")
+    assert stages_run and {r["kind"] for r in stages_run} == {"STAGE"}
+    assert all(r["log"].startswith("zfisher_") and r["time"] for r in stages_run)
+    assert "duration_s" in stages_run[0] and "stage" in stages_run[0]
+    assert {r["kind"] for r in api.read_log(s)} >= {"STAGE", "ENV"}
+    with pytest.raises(ValueError, match="kinds are"):
+        api.read_log(s, "NOPE")

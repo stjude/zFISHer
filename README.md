@@ -277,6 +277,8 @@ zfisher
 
 or `python -m zfisher`; from a source checkout, `python main.py` does the same. The headless pipeline runs with `zfisher-cli` (`zfisher-cli --help`).
 
+An MCP client can ask questions about finished sessions through the server in `packages/zfisher-mcp` (`zfisher-mcp --root <folder>`), which reads them and writes nothing; see [its README](packages/zfisher-mcp/README.md).
+
 This opens the napari viewer with the zFISHer sidebar containing all five workflow steps.
 
 ### Typical Workflow
@@ -323,6 +325,7 @@ zFISHer/
       analysis.py            # Colocalization distances, per-nucleus aggregation
       report.py              # Excel report generation
       session.py             # Session state management and persistence
+      api.py                 # The operations every front end calls (CLI, MCP server), with typed results
       io.py                  # ND2/TIFF file I/O, channel splitting, metadata extraction
       generate_batch_template.py  # Batch Excel template generation and parsing
       stages.py              # Re-detect a channel from its original image and warp it with the saved registration; what is out of date
@@ -359,6 +362,8 @@ zFISHer/
         refilter_puncta_widget.py  # Post-edit puncta cleanup by mask
         capture_widget.py          # Screenshot, region capture, arrow annotations, scale bar
         _shared.py                 # Shared UI helpers (dividers, headers, nuclear channel detection)
+  packages/
+    zfisher-mcp/             # MCP server over the core API (`zfisher-mcp`), installed separately
 ```
 
 ## Technical Details

@@ -63,7 +63,7 @@ Repository = "https://github.com/stjude/zFISHer"
 Issues = "https://github.com/stjude/zFISHer/issues"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "packages/zfisher-mcp/tests"]
 addopts = "-q"
 # The repository root, so tests import this checkout's zfisher even when it is
 # not installed, and tests/, so tests can share fixtures from sibling modules.
@@ -83,6 +83,7 @@ select = ["E9", "F"]
 # Fixtures imported from a sibling test module are used as test arguments,
 # which pyflakes reads as redefinitions.
 "tests/*" = ["F811"]
+"packages/*/tests/*" = ["F811"]
 
 [project.scripts]
 zfisher = "zfisher.__main__:main"

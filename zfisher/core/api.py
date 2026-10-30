@@ -67,6 +67,14 @@ class Parameters(_Result):
     registration: dict               # the saved registration record (shift, rmsd, method, ...)
 
 
+class ReportPage(_Result):
+    sheet: str
+    columns: list[str]
+    total_rows: int                  # rows matching ``where``, before paging
+    offset: int
+    rows: list[dict]
+
+
 class NucleusIdCheck(_Result):
     file: str
     rows: int
@@ -147,8 +155,7 @@ def open_session(path, read_only=True):
     or in the output folder ``path`` (its newest session file)."""
     path = Path(path)
     if path.is_dir():
-        files = sorted((path / constants.SESSIONS_DIR).glob("zfisher_session_*.json"), key=_session_number) \
-            or sorted(path.glob("zfisher_session_*.json"), key=_session_number)
+        files = session_files(path)
         if not files:
             raise FileNotFoundError(f"No zfisher_session_*.json in {path} or its sessions/ folder.")
         path = files[-1]
@@ -157,11 +164,44 @@ def open_session(path, read_only=True):
     return s
 
 
+def session_files(folder):
+    """The session files of the output folder ``folder``, oldest number first:
+    those in ``sessions/``, or beside it for folders from before that."""
+    folder = Path(folder)
+    return sorted((folder / constants.SESSIONS_DIR).glob("zfisher_session_*.json"), key=_session_number) \
+        or sorted(folder.glob("zfisher_session_*.json"), key=_session_number)
+
+
 def _session_number(path):
     try:
         return int(Path(path).stem.rsplit("_", 1)[-1])
     except ValueError:
         return -1
+
+
+def find_sessions(root, max_depth=3):
+    """The output folders under ``root``, ``root`` included, at most
+    ``max_depth`` folders down: those with a session file in ``sessions/`` or,
+    from before that folder, beside them. The search does not go below an
+    output folder, into hidden folders or through symbolic links."""
+    found = []
+
+    def walk(folder, depth):
+        if session_files(folder):
+            found.append(folder)
+            return
+        if depth >= max_depth:
+            return
+        try:
+            children = sorted(p for p in folder.iterdir()
+                              if p.is_dir() and not p.is_symlink() and not p.name.startswith("."))
+        except OSError:
+            return
+        for child in children:
+            walk(child, depth + 1)
+
+    walk(Path(root), 0)
+    return found
 
 
 def create_session(output_dir, r1_path, r2_path, progress_callback=None):
@@ -225,11 +265,17 @@ def update(s, progress_callback=None):
                                               progress_callback=progress_callback, **settings)
 
 
-def get_parameters(s):
-    """The settings ``s`` was made with."""
-    from . import puncta
+def get_parameters(s, channel=None):
+    """The settings ``s`` was made with; the detection settings of one
+    channel only if ``channel`` names one (``'R1 - FITC'``, or a channel only
+    one round has)."""
+    from . import puncta, stages
     with _session.use(s):
-        return Parameters(detection=puncta.detection_settings(),
+        detection = puncta.detection_settings()
+        if channel is not None:
+            key = stages.resolve_layer(channel, sorted(detection))
+            detection = {key: detection[key]}
+        return Parameters(detection=detection,
                           colocalization_rules=list(s.get("colocalization_rules", []) or []),
                           tri_colocalization_rules=list(s.get("tri_colocalization_rules", []) or []),
                           registration=dict(s.get("registration", {}) or {}))
@@ -239,6 +285,39 @@ def query_report(s, sheet, limit=None):
     """The rows of one sheet of ``s``'s latest report, as dicts (at most
     ``limit``), read from the CSV sidecar written beside the report; reports
     exported before sidecars existed are read from the workbook."""
+    table = _report_table(s, sheet)
+    if limit is not None:
+        table = table.head(int(limit))
+    return _records(table)
+
+
+def report_page(s, sheet, where=None, limit=200, offset=0):
+    """One page of a sheet of ``s``'s latest report: the rows whose columns
+    equal the values in ``where`` (a list matches any of its values), from
+    row ``offset``, at most ``limit`` of them, and how many matched."""
+    import pandas as pd
+    table = _report_table(s, sheet)
+    for column, wanted in (where or {}).items():
+        if column not in table.columns:
+            raise ValueError(f"The {sheet} sheet has no column '{column}'; it has "
+                             f"{', '.join(map(str, table.columns))}.")
+        values = wanted if isinstance(wanted, (list, tuple)) else [wanted]
+        if values and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
+            match = pd.to_numeric(table[column], errors="coerce").isin(values)
+        else:
+            match = table[column].astype(str).isin([str(v) for v in values])
+        table = table[match]
+    offset, limit = max(0, int(offset)), max(0, int(limit))
+    return ReportPage(sheet=sheet, columns=[str(c) for c in table.columns], total_rows=len(table),
+                      offset=offset, rows=_records(table.iloc[offset:offset + limit]))
+
+
+def _records(table):
+    return table.astype(object).where(table.notna(), None).to_dict(orient="records")
+
+
+def _report_table(s, sheet):
+    """The sheet ``sheet`` of ``s``'s latest report as a table."""
     import pandas as pd
     from . import analysis, stages
     sidecars = Path(s.get("output_dir")) / constants.REPORTS_DIR / analysis.SHEETS_DIR
@@ -258,9 +337,7 @@ def query_report(s, sheet, limit=None):
         if sheet not in sheets:
             raise ValueError(f"The report has no sheet '{sheet}'; it has {', '.join(sheets)}.")
         table = pd.read_excel(path, sheet_name=sheet)
-    if limit is not None:
-        table = table.head(int(limit))
-    return table.astype(object).where(table.notna(), None).to_dict(orient="records")
+    return table
 
 
 def query_distances(s, source, target, max_um, bin_um=None):
@@ -400,8 +477,29 @@ def get_decisions(s, name=None):
         return decisions.records(name)
 
 
+def get_provenance(s, path=None):
+    """How the files of ``s`` were made (``provenance.jsonl``), oldest first;
+    only the records of ``path`` if given, relative to the session's folder
+    or absolute."""
+    from . import provenance
+    with _session.use(s):
+        if path is not None and not Path(path).is_absolute():
+            path = Path(s.get("output_dir")) / path
+        return provenance.records(path)
+
+
+def read_log(s, kind=None):
+    """The timing lines of ``s``'s session logs (``logs/zfisher_*.log``),
+    oldest log first: each a dict of its fields with ``kind`` (STAGE, ACTION,
+    STALL or ENV), ``time`` and ``log``, the log file's name. Only lines of
+    ``kind`` if given."""
+    from . import log_profile
+    logs = Path(s.get("output_dir")) / constants.LOGS_DIR
+    return log_profile.timing_records(log_profile.find_logs([logs]) if logs.is_dir() else [], kind)
+
+
 def schema():
     """The JSON schema of every result model, by name."""
-    models = (SessionInfo, ArtifactState, StageState, DistanceQuery, Metrics, BatchQC, ThresholdSweep, Parameters, NucleusIdCheck, DetectionResult, TransformResult,
+    models = (SessionInfo, ArtifactState, StageState, DistanceQuery, Metrics, BatchQC, ThresholdSweep, Parameters, ReportPage, NucleusIdCheck, DetectionResult, TransformResult,
               ReportResult, CellsResult, PipelineResult)
     return {m.__name__: m.model_json_schema() for m in models}
