@@ -474,9 +474,10 @@ def segment_nuclei_cellpose(image_data, gpu=True, merge_splits=True, progress_ca
 
     # 3. Run 2D eval with stitching
     if progress_callback: progress_callback(15, "Running Cellpose (2D + stitch)...")
+    # No ``channels``: Cellpose 4 deprecated it and cpsam ignores it (same
+    # masks with and without it, checked on the synthetic rounds).
     masks_small, _, _ = model.eval(
         small_data,
-        channels=[0, 0],
         diameter=constants.NUC_SEG_CP2D_DIAMETER,
         do_3D=False,
         stitch_threshold=constants.NUC_SEG_CP2D_STITCH_THRESH,

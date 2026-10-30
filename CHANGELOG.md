@@ -166,6 +166,9 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Development
 
+- Cellpose segmentation no longer passes the `channels` argument Cellpose 4
+  deprecated; its default model ignores it, and the masks are the same with
+  and without it.
 - Errors zFISHer raises on purpose derive from `zfisher.core.errors`
   (`SessionError`, `InputError`, `SchemaError`, `RegistrationError`,
   `DetectionError`, `StaleError`) and keep the built-in type they had, so
