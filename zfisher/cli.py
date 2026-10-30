@@ -68,6 +68,7 @@ def _cmd_batch(args):
     from .core import pipeline
     from .core.generate_batch_template import (
         parse_batch_config,
+        pipeline_kwargs,
         validate_channels,
         resolve_puncta_for_dataset,
         resolve_coloc_for_dataset,
@@ -85,8 +86,7 @@ def _cmd_batch(args):
         print(f"Batch validation failed: {error}", file=sys.stderr)
         return 1
 
-    warnings = config.pop("_warnings", [])
-    warnings.extend(validate_channels(config))
+    warnings = list(config.warnings) + validate_channels(config)
     if warnings:
         print("Warnings during validation:")
         for w in warnings:
@@ -97,34 +97,24 @@ def _cmd_batch(args):
 
     out_base.mkdir(parents=True, exist_ok=True)
 
-    datasets = config["datasets"]
+    datasets = config.datasets
     results = []
     for i, ds in enumerate(datasets, 1):
-        name = ds["name"]
-        item_out = ds["output_dir"] or (out_base / name)
+        name = ds.name
+        item_out = ds.output_dir or (out_base / name)
         print(f"\n[{i}/{len(datasets)}] {name} -> {item_out}")
 
-        puncta_cfg = resolve_puncta_for_dataset(name, config["puncta_rules"])
-        pairwise, tri = resolve_coloc_for_dataset(name, config["coloc_rules"])
+        puncta_cfg = resolve_puncta_for_dataset(name, config.puncta_rules)
+        pairwise, tri = resolve_coloc_for_dataset(name, config.coloc_rules)
 
         try:
             pipeline.run_full_zfisher_pipeline(
-                r1_path=ds["r1"],
-                r2_path=ds["r2"],
                 output_dir=item_out,
-                seg_method=ds["seg_method"],
-                merge_splits=ds["merge_splits"],
-                r1_nuclear_channel=ds["r1_nuclear_channel"],
-                r2_nuclear_channel=ds["r2_nuclear_channel"],
                 puncta_config=puncta_cfg,
                 pairwise_rules=pairwise,
                 tri_rules=tri,
-                apply_warp=ds.get("apply_warp", True),
-                max_ransac_distance=ds.get("max_ransac_distance", 0),
-                overlap_method=ds.get("overlap_method", "Intersection"),
-                match_threshold=ds.get("match_threshold", 0),
-                remove_extranuclear_puncta=ds.get("remove_extranuclear_puncta", True),
                 progress_callback=_stdout_progress,
+                **pipeline_kwargs(ds),
             )
             results.append((name, "OK"))
         except Exception as exc:

@@ -10,6 +10,7 @@ from ...core.generate_batch_template import (
     build_template_sheets,
     add_dropdown_validations,
     parse_batch_config,
+    pipeline_kwargs,
     validate_channels,
     resolve_puncta_for_dataset,
     resolve_coloc_for_dataset,
@@ -246,7 +247,7 @@ class BatchProcessWidget(Container):
             return
 
         # Collect all warnings: parse warnings + channel validation warnings
-        all_warnings = config.pop("_warnings", [])
+        all_warnings = list(config.warnings)
 
         # Deep validation: check file channels match config
         channel_warnings = validate_channels(config)
@@ -269,7 +270,7 @@ class BatchProcessWidget(Container):
             if not popups.show_yes_no_popup(
                 self._viewer.window._qt_window,
                 "Batch Validation Passed",
-                f"All {len(config['datasets'])} dataset(s) validated successfully.\n\n"
+                f"All {len(config.datasets)} dataset(s) validated successfully.\n\n"
                 "Start batch processing?",
             ):
                 return
@@ -282,7 +283,7 @@ class BatchProcessWidget(Container):
 
         output_base.mkdir(parents=True, exist_ok=True)
 
-        num_items = len(config["datasets"])
+        num_items = len(config.datasets)
         results = []
 
         with popups.BatchProgressDialog(
@@ -290,9 +291,9 @@ class BatchProcessWidget(Container):
             title="Batch Processing",
             text="Preparing..."
         ) as dialog:
-            for i, ds in enumerate(config["datasets"]):
-                name = ds["name"]
-                item_output = ds["output_dir"] or (output_base / name)
+            for i, ds in enumerate(config.datasets):
+                name = ds.name
+                item_output = ds.output_dir or (output_base / name)
 
                 batch_pct = int((i / num_items) * 100)
                 dialog.update_batch_progress(
@@ -302,27 +303,17 @@ class BatchProcessWidget(Container):
                 dialog.update_item_progress(0, f"Starting {name}...")
 
                 # Resolve per-dataset puncta and colocalization config
-                puncta_config = resolve_puncta_for_dataset(name, config["puncta_rules"])
-                pairwise_rules, tri_rules = resolve_coloc_for_dataset(name, config["coloc_rules"])
+                puncta_config = resolve_puncta_for_dataset(name, config.puncta_rules)
+                pairwise_rules, tri_rules = resolve_coloc_for_dataset(name, config.coloc_rules)
 
                 try:
                     pipeline.run_full_zfisher_pipeline(
-                        r1_path=ds["r1"],
-                        r2_path=ds["r2"],
                         output_dir=item_output,
-                        seg_method=ds["seg_method"],
-                        merge_splits=ds["merge_splits"],
-                        r1_nuclear_channel=ds["r1_nuclear_channel"],
-                        r2_nuclear_channel=ds["r2_nuclear_channel"],
                         puncta_config=puncta_config,
                         pairwise_rules=pairwise_rules,
                         tri_rules=tri_rules,
-                        apply_warp=ds.get("apply_warp", True),
-                        max_ransac_distance=ds.get("max_ransac_distance", 0),
-                        overlap_method=ds.get("overlap_method", "Intersection"),
-                        match_threshold=ds.get("match_threshold", 0),
-                        remove_extranuclear_puncta=ds.get("remove_extranuclear_puncta", True),
                         progress_callback=dialog.update_item_progress,
+                        **pipeline_kwargs(ds),
                     )
                     results.append((name, "Success"))
                     logger.info("Batch item '%s' completed successfully.", name)

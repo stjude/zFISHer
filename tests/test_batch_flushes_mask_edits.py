@@ -81,11 +81,9 @@ def gui(tmp_path, monkeypatch):
 
     excel = tmp_path / "batch.xlsx"
     excel.write_bytes(b"stood in for")
-    config = {"datasets": [{"name": "ds1", "output_dir": None, "r1": str(tmp_path / "r1.nd2"),
-                            "r2": str(tmp_path / "r2.nd2"), "seg_method": "Classical", "merge_splits": False,
-                            "r1_nuclear_channel": "DAPI", "r2_nuclear_channel": "DAPI"}],
-              "puncta_rules": [], "coloc_rules": [], "_warnings": []}
-    monkeypatch.setattr(bpw, "parse_batch_config", lambda path: (dict(config), None))
+    from zfisher.core.params import BatchConfig, DatasetSpec
+    config = BatchConfig(datasets=[DatasetSpec(name="ds1", r1=tmp_path / "r1.nd2", r2=tmp_path / "r2.nd2")])
+    monkeypatch.setattr(bpw, "parse_batch_config", lambda path: (config, None))
     monkeypatch.setattr(bpw, "validate_channels", lambda cfg: [])
     monkeypatch.setattr(bpw, "resolve_puncta_for_dataset", lambda name, rules: {})
     monkeypatch.setattr(bpw, "resolve_coloc_for_dataset", lambda name, rules: ([], []))

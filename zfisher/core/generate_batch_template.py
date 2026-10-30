@@ -14,6 +14,8 @@ import pandas as pd
 
 from .. import constants
 from . import io
+from .params import (BatchConfig, ColocRule, ColocRuleRow, ConsensusParams, DatasetSpec, DetectionParams,
+                     PunctaRule, RegistrationParams, SegmentationParams, SegMethod, TriColocRule, field_range)
 
 logger = logging.getLogger(__name__)
 
@@ -562,24 +564,17 @@ def _is_example_row(value):
 
 
 def parse_batch_config(excel_path):
-    """Parse the multi-sheet batch Excel into a structured config dict.
+    """Parse the multi-sheet batch Excel into a ``params.BatchConfig``.
 
-    Rows whose Name/Dataset column starts with '[EXAMPLE]' are skipped.
+    Rows whose Name/Dataset column starts with '[EXAMPLE]' are skipped. An
+    empty cell takes the setting's default and a value outside the setting's
+    range is clamped to it, with a warning; both come from ``core.params``, so
+    the template accepts what the GUI accepts.
 
     Returns
     -------
-    (config, None) on success, or (None, error_string) on failure.
-
-    config = {
-        'datasets': [
-            {'name': str, 'r1': Path, 'r2': Path, 'output_dir': Path|None,
-             'r1_nuclear_channel': str, 'r2_nuclear_channel': str,
-             'seg_method': str, 'merge_splits': bool},
-            ...
-        ],
-        'puncta_rules': [...],
-        'coloc_rules': [...],
-    }
+    (config, None) on success, or (None, error_string) on failure. The
+    config's ``warnings`` lists what was clamped or defaulted.
     """
     try:
         sheets = pd.read_excel(excel_path, sheet_name=None)
@@ -668,7 +663,8 @@ def parse_batch_config(excel_path):
             max_ransac = 0
         else:
             try:
-                max_ransac = max(0, min(100, int(float(max_ransac))))
+                lo, hi = field_range(RegistrationParams, "max_ransac_distance")
+                max_ransac = max(lo, min(hi, int(float(max_ransac))))
             except (ValueError, TypeError):
                 warnings.append(f"Datasets row {row_num} ({name}): Invalid Max_RANSAC_Distance. Using 0 (auto).")
                 max_ransac = 0
@@ -687,7 +683,8 @@ def parse_batch_config(excel_path):
             match_threshold = 0
         else:
             try:
-                match_threshold = max(0, min(100, int(float(match_threshold))))
+                lo, hi = field_range(ConsensusParams, "match_threshold")
+                match_threshold = max(lo, min(hi, int(float(match_threshold))))
             except (ValueError, TypeError):
                 warnings.append(f"Datasets row {row_num} ({name}): Invalid Match_Threshold. Using 0 (auto).")
                 match_threshold = 0
@@ -803,12 +800,12 @@ def parse_batch_config(excel_path):
                 "round": rnd_val,
                 "params": {
                     "method": algo if (algo and algo != "nan") else "Local Maxima",
-                    "threshold_rel": _float("Sensitivity", constants.PUNCTA_THRESHOLD_REL, min_val=0.0, max_val=1.0),
-                    "min_distance": _int("Min_Distance", constants.PUNCTA_MIN_DISTANCE, min_val=1, max_val=20),
-                    "sigma": _float("Sigma", constants.PUNCTA_SIGMA, min_val=0.0, max_val=5.0),
+                    "threshold_rel": _float("Sensitivity", *_detection_field("threshold_rel")),
+                    "min_distance": _int("Min_Distance", *_detection_field("min_distance")),
+                    "sigma": _float("Sigma", *_detection_field("sigma")),
                     "nuclei_only": _bool("Nuclei_Only", True),
                     "use_tophat": _bool("Tophat", False),
-                    "tophat_radius": _int("Tophat_Radius", constants.PUNCTA_TOPHAT_RADIUS, min_val=1, max_val=50),
+                    "tophat_radius": _int("Tophat_Radius", *_detection_field("tophat_radius")),
                 },
             })
 
@@ -844,9 +841,10 @@ def parse_batch_config(excel_path):
             else:
                 try:
                     cutoff = float(cutoff)
-                    if cutoff < 0.1 or cutoff > 10.0:
-                        warnings.append(f"Colocalization row {row_num}: Cutoff_um {cutoff} outside range 0.1-10. Clamped.")
-                        cutoff = max(0.1, min(10.0, cutoff))
+                    lo, hi = field_range(ColocRule, "cutoff_um")
+                    if cutoff < lo or cutoff > hi:
+                        warnings.append(f"Colocalization row {row_num}: Cutoff_um {cutoff} outside range {lo:g}-{hi:g}. Clamped.")
+                        cutoff = max(lo, min(hi, cutoff))
                 except (ValueError, TypeError):
                     warnings.append(f"Colocalization row {row_num}: Invalid Cutoff_um. Using 1.0.")
                     cutoff = 1.0
@@ -876,15 +874,36 @@ def parse_batch_config(excel_path):
     if errors:
         return None, "\n".join(errors)
 
-    config = {
-        "datasets": datasets,
-        "puncta_rules": puncta_rules,
-        "coloc_rules": coloc_rules,
-    }
-    # Attach warnings to config so the caller can display them
-    if warnings:
-        config["_warnings"] = warnings
+    try:
+        config = BatchConfig(
+            datasets=[DatasetSpec(
+                name=d["name"], r1=d["r1"], r2=d["r2"], output_dir=d["output_dir"],
+                r1_nuclear_channel=d["r1_nuclear_channel"], r2_nuclear_channel=d["r2_nuclear_channel"],
+                segmentation=SegmentationParams(method=SegMethod.parse(d["seg_method"]),
+                                                merge_splits=d["merge_splits"]),
+                registration=RegistrationParams(max_ransac_distance=d["max_ransac_distance"],
+                                                apply_warp=d["apply_warp"]),
+                consensus=ConsensusParams(overlap_method=d["overlap_method"], match_threshold=d["match_threshold"],
+                                          remove_extranuclear_puncta=d["remove_extranuclear_puncta"]),
+            ) for d in datasets],
+            puncta_rules=[PunctaRule(dataset=r["dataset"], channel=r["channel"], round=r["round"],
+                                     params=DetectionParams(**r["params"])) for r in puncta_rules],
+            coloc_rules=[ColocRuleRow(dataset=r["dataset"], rule=(
+                ColocRule(source=r["source"], target=r["target"], cutoff_um=r["cutoff"]) if r["type"] == "pairwise"
+                else TriColocRule(anchor=r["source"], channel_a=r["target"], channel_b=r["channel_b"],
+                                  cutoff_um=r["cutoff"]))) for r in coloc_rules],
+            warnings=warnings,
+        )
+    except Exception as exc:                 # a value the checks above let through
+        return None, f"The batch file could not be read as settings:\n{exc}"
     return config, None
+
+
+def _detection_field(name):
+    """``(default, min, max)`` of a ``DetectionParams`` field, for the parser."""
+    from .params import default
+    lo, hi = field_range(DetectionParams, name)
+    return default(DetectionParams, name), lo, hi
 
 
 # ------------------------------------------------------------------
@@ -915,25 +934,25 @@ def validate_channels(config):
 
     # Collect all available channels per dataset (union of R1 + R2)
     dataset_channels = {}
-    for ds in config["datasets"]:
-        r1_chs = _get_channels(ds["r1"])
-        r2_chs = _get_channels(ds["r2"])
+    for ds in config.datasets:
+        r1_chs = _get_channels(ds.r1)
+        r2_chs = _get_channels(ds.r2)
 
         if r1_chs is None:
-            warnings.append(f"[{ds['name']}] Could not read channel names from R1: {ds['r1']}")
+            warnings.append(f"[{ds.name}] Could not read channel names from R1: {ds.r1}")
         if r2_chs is None:
-            warnings.append(f"[{ds['name']}] Could not read channel names from R2: {ds['r2']}")
+            warnings.append(f"[{ds.name}] Could not read channel names from R2: {ds.r2}")
 
         # Nuclear channel check — each must be in its respective round
-        r1_nuc = ds["r1_nuclear_channel"]
-        r2_nuc = ds["r2_nuclear_channel"]
+        r1_nuc = ds.r1_nuclear_channel
+        r2_nuc = ds.r2_nuclear_channel
         if r1_chs and r1_nuc not in r1_chs:
             warnings.append(
-                f"[{ds['name']}] R1 nuclear channel '{r1_nuc}' not found in R1 channels: {r1_chs}"
+                f"[{ds.name}] R1 nuclear channel '{r1_nuc}' not found in R1 channels: {r1_chs}"
             )
         if r2_chs and r2_nuc not in r2_chs:
             warnings.append(
-                f"[{ds['name']}] R2 nuclear channel '{r2_nuc}' not found in R2 channels: {r2_chs}"
+                f"[{ds.name}] R2 nuclear channel '{r2_nuc}' not found in R2 channels: {r2_chs}"
             )
 
         all_chs = set()
@@ -941,44 +960,43 @@ def validate_channels(config):
             all_chs.update(r1_chs)
         if r2_chs:
             all_chs.update(r2_chs)
-        dataset_channels[ds["name"]] = all_chs
+        dataset_channels[ds.name] = all_chs
+
+    def targets_of(row):
+        return config.datasets if row.dataset == "ALL" else [ds for ds in config.datasets if ds.name == row.dataset]
 
     # Validate puncta channels
-    for rule in config["puncta_rules"]:
-        ch = rule["channel"]
-        targets = (
-            config["datasets"] if rule["dataset"] == "ALL"
-            else [ds for ds in config["datasets"] if ds["name"] == rule["dataset"]]
-        )
-        for ds in targets:
-            chs = dataset_channels.get(ds["name"], set())
-            if chs and ch not in chs:
+    for rule in config.puncta_rules:
+        for ds in targets_of(rule):
+            chs = dataset_channels.get(ds.name, set())
+            if chs and rule.channel not in chs:
                 warnings.append(
-                    f"[{ds['name']}] Puncta channel '{ch}' not found in input file channels: "
+                    f"[{ds.name}] Puncta channel '{rule.channel}' not found in input file channels: "
                     f"{sorted(chs)}"
                 )
 
     # Validate colocalization channels
-    for rule in config["coloc_rules"]:
-        targets = (
-            config["datasets"] if rule["dataset"] == "ALL"
-            else [ds for ds in config["datasets"] if ds["name"] == rule["dataset"]]
-        )
-        for ds in targets:
-            chs = dataset_channels.get(ds["name"], set())
+    for row in config.coloc_rules:
+        columns = _coloc_columns(row.rule)
+        for ds in targets_of(row):
+            chs = dataset_channels.get(ds.name, set())
             if not chs:
                 continue
-            for col_name, col_label in [
-                ("source", "Source"), ("target", "Target"), ("channel_b", "Channel_B")
-            ]:
-                val = rule.get(col_name)
+            for col_label, val in columns:
                 if val and val not in chs:
                     warnings.append(
-                        f"[{ds['name']}] Colocalization {col_label} '{val}' not found in "
+                        f"[{ds.name}] Colocalization {col_label} '{val}' not found in "
                         f"input file channels: {sorted(chs)}"
                     )
 
     return warnings
+
+
+def _coloc_columns(rule):
+    """``(template column, channel)`` pairs of a colocalization rule."""
+    if isinstance(rule, TriColocRule):
+        return [("Source", rule.anchor), ("Target", rule.channel_a), ("Channel_B", rule.channel_b)]
+    return [("Source", rule.source), ("Target", rule.target)]
 
 
 # ------------------------------------------------------------------
@@ -988,51 +1006,46 @@ def validate_channels(config):
 def resolve_puncta_for_dataset(dataset_name, puncta_rules):
     """Return a {channel: params_dict} for this dataset, merging ALL + per-dataset overrides.
 
-    Each params_dict includes a ``"round"`` key (``"Both"``, ``"R1"``, or ``"R2"``)
-    so the pipeline can skip channels that don't apply to a given round.
+    ``puncta_rules`` are ``params.PunctaRule``. Each params_dict is what
+    detection takes (``DetectionParams.detection_kwargs``) plus a ``"round"``
+    key (``"Both"``, ``"R1"``, or ``"R2"``) so the pipeline can skip channels
+    that don't apply to a given round.
     """
     result = {}
-    # First pass: ALL defaults
-    for rule in puncta_rules:
-        if rule["dataset"] == "ALL":
-            params = dict(rule["params"])
-            params["round"] = rule.get("round", "Both")
-            result[rule["channel"]] = params
-    # Second pass: per-dataset overrides
-    for rule in puncta_rules:
-        if rule["dataset"] == dataset_name:
-            params = dict(rule["params"])
-            params["round"] = rule.get("round", "Both")
-            result[rule["channel"]] = params
+    for wanted in ("ALL", dataset_name):          # per-dataset rows override ALL
+        for rule in puncta_rules:
+            if rule.dataset == wanted:
+                result[rule.channel] = dict(rule.params.detection_kwargs(), round=rule.round)
     return result
 
 
 def resolve_coloc_for_dataset(dataset_name, coloc_rules):
-    """Return (pairwise_rules, tri_rules) for this dataset, merging ALL + per-dataset."""
-    pairwise = []
-    tri = []
-    # ALL first
-    for rule in coloc_rules:
-        if rule["dataset"] == "ALL":
-            entry = {"source": rule["source"], "target": rule["target"],
-                     "threshold": rule["cutoff"]}
-            if rule["type"] == "pairwise":
-                pairwise.append(entry)
-            else:
-                entry["channel_b"] = rule["channel_b"]
-                tri.append(entry)
-    # Per-dataset overrides replace ALL entirely if any exist
-    has_override = any(r["dataset"] == dataset_name for r in coloc_rules)
-    if has_override:
-        pairwise = []
-        tri = []
-        for rule in coloc_rules:
-            if rule["dataset"] == dataset_name:
-                entry = {"source": rule["source"], "target": rule["target"],
-                         "threshold": rule["cutoff"]}
-                if rule["type"] == "pairwise":
-                    pairwise.append(entry)
-                else:
-                    entry["channel_b"] = rule["channel_b"]
-                    tri.append(entry)
+    """Return (pairwise_rules, tri_rules) for this dataset, as the pipeline
+    takes them. ``coloc_rules`` are ``params.ColocRuleRow``; a dataset with
+    rows of its own uses only those, else the ALL rows."""
+    rows = [r for r in coloc_rules if r.dataset == dataset_name] or \
+        [r for r in coloc_rules if r.dataset == "ALL"]
+    pairwise, tri = [], []
+    for row in rows:
+        rule = row.rule
+        if isinstance(rule, TriColocRule):
+            tri.append({"source": rule.anchor, "target": rule.channel_a, "channel_b": rule.channel_b,
+                        "threshold": rule.cutoff_um})
+        else:
+            pairwise.append({"source": rule.source, "target": rule.target, "threshold": rule.cutoff_um})
     return pairwise, tri
+
+
+def pipeline_kwargs(dataset):
+    """The ``pipeline.run_full_zfisher_pipeline`` keywords a ``DatasetSpec``
+    sets, other than its output folder and rules."""
+    return dict(
+        r1_path=dataset.r1, r2_path=dataset.r2,
+        seg_method=dataset.segmentation.method.value, merge_splits=dataset.segmentation.merge_splits,
+        r1_nuclear_channel=dataset.r1_nuclear_channel, r2_nuclear_channel=dataset.r2_nuclear_channel,
+        apply_warp=dataset.registration.apply_warp,
+        max_ransac_distance=dataset.registration.max_ransac_distance,
+        overlap_method=dataset.consensus.overlap_method.value,
+        match_threshold=dataset.consensus.match_threshold,
+        remove_extranuclear_puncta=dataset.consensus.remove_extranuclear_puncta,
+    )

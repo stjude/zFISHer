@@ -6,6 +6,10 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Fixes
 
+- **The batch template accepts the ranges the GUI does.** Its Sensitivity
+  floor was 0.0 where Puncta Detection's is 0.01; a 0.0 cell is now clamped to
+  0.01 with a warning, like every other value outside its range. Defaults and
+  ranges for every template column now come from the same place as the GUI's.
 - **Export checks the puncta files against the consensus mask.** The report
   re-derives each punctum's nucleus from the mask before counting, but the
   puncta CSVs beside it could still carry other IDs: in one lab folder, 98% of
