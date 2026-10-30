@@ -102,6 +102,14 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Development
 
+- `zfisher/core/api.py` is the one set of operations every front end calls:
+  open or create a session (read-only by default, writing nothing), describe
+  it, report what is out of date, list its settings, query its report, check
+  its nucleus IDs, detect and warp a channel, export the report, and run the
+  pipeline. Results are typed models with a JSON schema. The report export
+  works from the files on disk, reading each punctum's nucleus from the
+  consensus mask, and a rule that names a channel both rounds have is refused
+  instead of taking the first match.
 - A session is now a `Session` object (`zfisher/core/session.py`) that owns
   its settings, file registry, lock and JSON file; the module-level functions
   act on one default instance, so nothing that called them changes, and the

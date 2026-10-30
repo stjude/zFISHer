@@ -590,3 +590,88 @@ def record_raw_picks(round_id, channel):
     csv = constants.puncta_csv_path(_reports_dir(), raw_puncta_name(round_id, channel))
     puncta.record_puncta(csv, "picked", round=round_id, channel=channel, space=f"raw:{round_id}",
                          picked_in="raw", run_by="gui")
+
+
+# --- The report, from the files on disk --------------------------------------------
+
+def report_layers():
+    """The aligned and warped puncta of the open session, read from their CSVs,
+    in the form ``analysis.run_colocalization_analysis`` takes. Each punctum's
+    nucleus is read from the consensus mask on disk, not from the CSV's
+    ``Nucleus_ID`` column. Returns ``(layers, consensus_mask)``; raises when
+    the session has no consensus mask or no canvas scale."""
+    import pandas as pd
+    consensus_path = _consensus_path()
+    if consensus_path is None:
+        raise FileNotFoundError("The session has no consensus nuclei mask; the report counts puncta per "
+                                "nucleus from it. Build the consensus mask first.")
+    scale = session.get_data("canvas_scale")
+    if not scale:
+        raise LookupError("The session has no canvas scale: it was not aligned.")
+    mask = io.read_label_tif(consensus_path)
+    layers = []
+    prefixes = (constants.ALIGNED_PREFIX + " ", constants.WARPED_PREFIX + " ")
+    for name, info in sorted((session.get_data("processed_files", default={}) or {}).items()):
+        if not (isinstance(info, dict) and info.get("subtype") == "puncta_csv" and name.startswith(prefixes)):
+            continue
+        csv = constants.puncta_csv_path(_reports_dir(), name)
+        if not csv.exists():
+            continue
+        table = pd.read_csv(csv, float_precision="round_trip")
+        if not len(table):
+            continue
+        coords = table[["Z", "Y", "X"]].to_numpy(float)
+        layers.append({"name": name, "data": coords, "scale": np.asarray(scale, float), "translate": np.zeros(3),
+                       "nucleus_ids": puncta.nucleus_ids_from_mask(coords, mask).astype(float),
+                       "puncta_id": pd.to_numeric(table["puncta_id"], errors="coerce").to_numpy(float)})
+    return layers, mask
+
+
+def resolve_layer(reference, names):
+    """The layer of ``names`` a rule's ``reference`` means: a full layer name,
+    a ``'R2 - FITC'`` key, or a channel that only one round has. Raises
+    ``ValueError`` naming the candidates when it is missing or ambiguous,
+    rather than taking the first that contains the text."""
+    if reference in names:
+        return reference
+    by_key = [n for n in names if puncta.channel_key(n) == reference]
+    if len(by_key) == 1:
+        return by_key[0]
+    by_channel = [n for n in names if (puncta.channel_key(n) or "").split(" - ", 1)[-1] == reference]
+    if len(by_channel) == 1:
+        return by_channel[0]
+    found = by_key or by_channel
+    if found:
+        raise ValueError(f"'{reference}' could mean {', '.join(found)}; name the round, as 'R1 - {reference}'.")
+    raise ValueError(f"No puncta layer for '{reference}'; the session has {', '.join(names) or 'none'}.")
+
+
+def export_report(rules=None, tri_rules=None, filename=None):
+    """Write the colocalization report of the open session from its files:
+    the aligned puncta CSVs and the consensus mask on disk, the same analysis
+    batch runs. ``rules`` and ``tri_rules`` default to the session's own
+    (``colocalization_rules``, ``tri_colocalization_rules``); a rule may name a
+    layer, a round and channel, or a channel only one round has
+    (``resolve_layer``). Returns the report's path."""
+    from . import analysis
+    layers, mask = report_layers()
+    if len(layers) < 2:
+        raise ValueError(f"The report needs at least two aligned puncta channels; the session has {len(layers)}.")
+    names = [layer["name"] for layer in layers]
+    rules = session.get_data("colocalization_rules", default=[]) if rules is None else rules
+    tri_rules = session.get_data("tri_colocalization_rules", default=[]) if tri_rules is None else tri_rules
+    pairwise = [{"source": resolve_layer(r["source"], names), "target": resolve_layer(r["target"], names),
+                 "threshold": float(r["threshold"])} for r in rules]
+    tri = [{"anchor": resolve_layer(r["anchor"], names), "channel_a": resolve_layer(r["channel_a"], names),
+            "channel_b": resolve_layer(r["channel_b"], names), "threshold": float(r["threshold"])}
+           for r in tri_rules]
+    labels = np.unique(mask)
+    labels = labels[labels > 0]
+    path = analysis.run_colocalization_analysis(
+        layers_data=layers, rules=pairwise, tri_rules=tri or None,
+        filename=filename or f"{REPORT_NAME}{constants.EXCEL_SUFFIX}",
+        r1_path=str(session.get_data("r1_path")), r2_path=str(session.get_data("r2_path")),
+        output_dir=str(_reports_dir()), total_nuclei=int(len(labels)), nucleus_ids=labels)
+    if path is None:
+        raise ValueError("No puncta to analyse; nothing was written.")
+    return Path(path)

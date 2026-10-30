@@ -57,8 +57,8 @@ def file_sha256(path):
     are unchanged, so a multi-GB raw image is hashed once, not at every save."""
     path = Path(path)
     stat = path.stat()
-    if not session.get_data("output_dir"):
-        return _sha256(path)
+    if not session.get_data("output_dir") or session.current().read_only:
+        return _sha256(path)                  # no session to cache in, or one that must not change
     key = str(path.resolve())
     cache = session.get_data("file_hashes", default={}) or {}
     hit = cache.get(key)

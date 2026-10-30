@@ -176,6 +176,13 @@ class Session:
         self._lock = threading.RLock()
         self._dirty = False
         self._deferred = 0
+        self._read_only = False
+
+    @property
+    def read_only(self):
+        """True for a session opened with ``load_into(path, read_only=True)``:
+        it can be read, and any change raises ``PermissionError``."""
+        return self._read_only
 
     # --- reading -----------------------------------------------------------
     def get(self, key, default=None):
@@ -253,9 +260,12 @@ class Session:
             self._data.clear()
             self._data.update(_fresh())
             self._dirty = False
+            self._read_only = False
 
     # --- saving ------------------------------------------------------------
     def _changed(self):
+        if self._read_only:
+            raise PermissionError("This session was opened read-only; open it with Load Session to change it.")
         self._dirty = True
         if not self._deferred:
             self.save()
@@ -307,13 +317,18 @@ class Session:
                 raise SessionSaveError(f"Could not save the session file {where}: {e}") from e
             self._dirty = False
 
-    def load_into(self, path):
+    def load_into(self, path, read_only=False):
         """Replace this session with the session file at ``path``, saved under
         the next free number (``zfisher_session_<n>.json``) so the file read
         is never overwritten. Returns the session's data. See
-        ``load_session_file`` for how paths are re-anchored."""
+        ``load_session_file`` for how paths are re-anchored.
+
+        With ``read_only`` nothing is written, now or later: the session keeps
+        the name of the file it was read from, and changes raise."""
         data, new_name = _read_session_file(Path(path))
         from .params import SCHEMA_VERSION
+        if read_only:
+            new_name = Path(path).name
         with self._lock:
             # Nothing of the previous session may survive into this one: a file
             # from before a key existed (a saved registration, the canvas scale,
@@ -329,8 +344,12 @@ class Session:
             self._data.setdefault("puncta_params", {})
             # Sessions from before the field are format 1, the format this writes.
             self._data.setdefault("schema_version", SCHEMA_VERSION)
-            # Save immediately to create the new session file
-            self.save()
+            self._read_only = bool(read_only)
+            self._dirty = False
+            if not read_only:
+                # Save immediately to create the new session file
+                logger.info("Creating new session file: %s", new_name)
+                self.save()
             return self._data
 
 
@@ -588,7 +607,6 @@ def _read_session_file(path):
     while _session_exists(out_dir, f"zfisher_session_{n}.json"):
         n += 1
     new_name = f"zfisher_session_{n}.json"
-    logger.info("Creating new session file: %s", new_name)
     return data, new_name
 
 
