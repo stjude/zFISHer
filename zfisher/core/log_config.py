@@ -54,6 +54,9 @@ class _StreamToLogger:
         return False
 
 
+_levels_before = {}   # logger levels attach_session_log changed, restored on detach
+
+
 def attach_session_log(output_dir, session_filename=None):
     """Start logging to a file in ``<output_dir>/logs/``.
 
@@ -84,6 +87,9 @@ def attach_session_log(output_dir, session_filename=None):
     # (set in __init__.py), we must also attach the file handler directly
     # to the zfisher logger so its records are captured in the log file.
     zf_logger = logging.getLogger("zfisher")
+    # Remembered so detaching puts them back: a closed session must not leave
+    # the console, or the next code to run, at DEBUG.
+    _levels_before.update({name: logging.getLogger(name).level for name in ("zfisher", "stdout", "stderr")})
     zf_logger.setLevel(logging.DEBUG)
     zf_logger.addHandler(_file_handler)
 
@@ -126,6 +132,9 @@ def detach_session_log():
         logging.getLogger("zfisher").removeHandler(_file_handler)
         _file_handler.close()
         _file_handler = None
+        for name, level in _levels_before.items():
+            logging.getLogger(name).setLevel(level)
+        _levels_before.clear()
 
     if _original_stdout:
         sys.stdout = _original_stdout
