@@ -162,6 +162,9 @@ class ConsensusParams(_Params):
     remove_extranuclear_puncta: bool = Field(
         True, description="Remove puncta located outside the merged nuclei mask after matching.",
         json_schema_extra=_ui("Remove Extranuclear Puncta"))
+    remove_border_nuclei: bool = Field(
+        False, description="Remove nuclei cut by the edge of the region both rounds imaged.",
+        json_schema_extra=_ui("Remove Nuclei at the Image Edge"))
 
 
 class ColocRule(_Params):

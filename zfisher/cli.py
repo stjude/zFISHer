@@ -70,7 +70,8 @@ def run(r1: Path = typer.Argument(..., help="Round 1 image file (.nd2 or .tif/.o
         r2_nuclear: Optional[str] = typer.Option(None, help="R2 nuclear channel name."),
         no_warp: bool = typer.Option(False, help="Skip deformable B-spline warping."),
         overlap_method: OverlapMethod = typer.Option(OverlapMethod.INTERSECTION, help="Consensus mask merge mode."),
-        keep_extranuclear: bool = typer.Option(False, help="Keep puncta outside segmented nuclei.")):
+        keep_extranuclear: bool = typer.Option(False, help="Keep puncta outside segmented nuclei."),
+        remove_border_nuclei: bool = typer.Option(False, help="Remove nuclei cut by the edge of the imaged region.")):
     """Run the full pipeline on a single R1/R2 pair."""
     from .core import api
     from .core.params import DatasetSpec, RegistrationParams, SegmentationParams
@@ -86,7 +87,8 @@ def run(r1: Path = typer.Argument(..., help="Round 1 image file (.nd2 or .tif/.o
         name=out.name, r1=r1, r2=r2, r1_nuclear_channel=r1_nuclear or "", r2_nuclear_channel=r2_nuclear or "",
         segmentation=SegmentationParams(method=seg_method, merge_splits=not no_merge_splits),
         registration=RegistrationParams(apply_warp=not no_warp),
-        consensus=ConsensusParams(overlap_method=overlap_method, remove_extranuclear_puncta=not keep_extranuclear))
+        consensus=ConsensusParams(overlap_method=overlap_method, remove_extranuclear_puncta=not keep_extranuclear,
+                                  remove_border_nuclei=remove_border_nuclei))
     try:
         api.run_pipeline(dataset, out, progress_callback=_stdout_progress)
     except Exception as exc:

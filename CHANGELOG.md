@@ -143,6 +143,18 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   `reports/distances.csv` and one file per sheet under `reports/report_sheets/`,
   which scripts and the queries read instead of the workbook.
 
+### Nuclei at the image edge
+
+- **Nuclei cut by the edge of the image can be removed automatically**, with
+  their puncta, instead of deleting them by hand: tick Remove Nuclei at the
+  Image Edge in Match & Merge Nuclei or Automated Registration & Warping, set
+  Remove_Border_Nuclei in the batch template, or pass
+  `--remove-border-nuclei` to `zfisher-cli run`. The edge is that of the region
+  both rounds imaged, taken from the registration, so a nucleus cut by either
+  round's field of view goes. It is off by default; the decisions log records
+  how many nuclei it removed. Turning it on for a finished batch folder
+  re-runs the consensus mask and what follows from it, nothing earlier.
+
 ### Per-nucleus export
 
 - **`zfisher-cli export-cells <folder or batch root>`** writes one OME-TIFF per

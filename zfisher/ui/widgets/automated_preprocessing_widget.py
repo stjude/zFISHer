@@ -36,6 +36,7 @@ def _get_qt_parent(viewer):
     overlap_method=gui_option(ConsensusParams, "overlap_method", widget_type="RadioButtons", orientation="horizontal"),
     match_threshold=gui_option(ConsensusParams, "match_threshold"),
     remove_outliers=gui_option(ConsensusParams, "remove_extranuclear_puncta"),
+    remove_border=gui_option(ConsensusParams, "remove_border_nuclei"),
     show_checkerboard={"label": "Show Checkerboard", "value": True, "tooltip": "Show a checkerboard pattern to visually assess alignment quality."},
     show_deformation={"label": "Show Deformation Field", "value": True, "tooltip": "Show a vector field visualizing how the tissue was warped."},
     hide_raw={"label": "Hide Raw Layers After?", "tooltip": "Hide raw input layers after processing, showing only aligned results."}
@@ -51,6 +52,7 @@ def _automated_preprocessing_magic_widget(
     overlap_method: str = default(ConsensusParams, "overlap_method"),
     match_threshold: int = default(ConsensusParams, "match_threshold"),
     remove_outliers: bool = default(ConsensusParams, "remove_extranuclear_puncta"),
+    remove_border: bool = default(ConsensusParams, "remove_border_nuclei"),
     show_checkerboard: bool = True,
     show_deformation: bool = True,
     hide_raw: bool = False
@@ -218,6 +220,7 @@ def _automated_preprocessing_magic_widget(
                     threshold=match_threshold or None,
                     method=overlap_method,
                     voxel_size=voxels,
+                    remove_border=remove_border,
                     progress_callback=lambda p, t: dialog.update_progress(70 + int(p * 0.25), t)
                 )
 

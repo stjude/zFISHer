@@ -24,8 +24,38 @@ logger = logging.getLogger(__name__)
 
 
 @timed_stage("consensus_nuclei", fields=lambda a: {"method": a["method"]})
+def imaged_xy_box(canvas_record, canvas_shape):
+    """``(start, end)``, in canvas Y, X voxels, of the region both rounds
+    imaged: the intersection of their footprints on the canvas (from the
+    registration's canvas record), rounded inwards; the whole canvas when the
+    record is missing."""
+    try:
+        starts = [np.asarray(canvas_record["raw_to_canvas"][r], dtype=float)[1:] for r in ("R1", "R2")]
+        ends = [s + np.asarray(canvas_record["round_shapes"][r], dtype=float)[1:] for s, r in zip(starts, ("R1", "R2"))]
+        start = np.ceil(np.max(starts, axis=0)).astype(int)
+        end = np.floor(np.min(ends, axis=0)).astype(int)
+        return np.maximum(start, 0), np.minimum(end, np.asarray(canvas_shape)[1:])
+    except (KeyError, TypeError, ValueError):
+        return np.zeros(2, dtype=int), np.asarray(canvas_shape)[1:]
+
+
+def border_nuclei(mask, box):
+    """The labels of ``mask`` whose bounding box reaches the edge of the Y, X
+    region ``box`` (``imaged_xy_box``): nuclei cut by the field of view."""
+    from scipy import ndimage
+    start, end = box
+    cut = []
+    for label, slices in enumerate(ndimage.find_objects(mask), start=1):
+        if slices is None:
+            continue
+        ys, xs = slices[1], slices[2]
+        if ys.start <= start[0] or xs.start <= start[1] or ys.stop >= end[0] or xs.stop >= end[1]:
+            cut.append(label)
+    return cut
+
+
 def process_consensus_nuclei(mask1, mask2, output_dir, threshold=None, method="Union", progress_callback=None,
-                             voxel_size=None):
+                             voxel_size=None, remove_border=False):
     """
     Updated Core Orchestrator to support Union vs Intersection and 3D coordinate integrity.
 
@@ -46,6 +76,15 @@ def process_consensus_nuclei(mask1, mask2, output_dir, threshold=None, method="U
     # The 'in_place' argument is not available in all scikit-image versions.
     # Reassigning the result is the backward-compatible way to achieve the same outcome.
     merged_mask = remove_small_objects(merged_mask, min_size=constants.NUC_SEG_OTSU_MIN_SIZE)
+
+    removed_at_border = []
+    if remove_border:
+        from . import session as _session
+        canvas = (_session.get_data("registration", default={}) or {}).get("canvas") or {}
+        removed_at_border = border_nuclei(merged_mask, imaged_xy_box(canvas, merged_mask.shape))
+        if removed_at_border:
+            merged_mask[np.isin(merged_mask, removed_at_border)] = 0
+        logger.info("Removed %d nuclei cut by the edge of the imaged region", len(removed_at_border))
 
     # CRITICAL FIX: Calculate centroids from the FINAL merged mask, not the original R1 mask.
     # This ensures the IDs displayed in napari correspond to the actual consensus objects.
@@ -86,9 +125,11 @@ def process_consensus_nuclei(mask1, mask2, output_dir, threshold=None, method="U
         )
 
     from . import decisions
-    decisions.record("consensus", {"method": method, "match_threshold": threshold or 0},
+    decisions.record("consensus", {"method": method, "match_threshold": threshold or 0,
+                                   "remove_border_nuclei": bool(remove_border)},
                      scope={"stage": "consensus"},
-                     metrics_after={"nuclei": int(len(np.unique(merged_mask)) - 1) if merged_mask is not None else 0})
+                     metrics_after={"nuclei": int(len(np.unique(merged_mask)) - 1) if merged_mask is not None else 0,
+                                    "removed_at_border": len(removed_at_border)})
     return merged_mask, final_pts
 
 def get_label_volumes(labels):

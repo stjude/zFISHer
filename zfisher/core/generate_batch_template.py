@@ -146,6 +146,9 @@ def _build_instructions_rows():
          "This ensures only intranuclear puncta are analyzed. Set to FALSE to keep all detected puncta regardless of "
          "nuclear location (useful if you need to analyze cytoplasmic or extracellular puncta). "
          "Defaults to TRUE."),
+        ("Remove_Border_Nuclei",
+         "TRUE or FALSE. When TRUE, nuclei cut by the edge of the region both rounds imaged are removed from "
+         "the consensus mask, with their puncta, so only whole nuclei are counted. Defaults to FALSE."),
         ("Distribution_Bins",
          "Optional. The puncta-count bins of the report's Distribution sheet, as the lower edge of each bin "
          "separated by commas and starting at 0. '0, 1, 2, 3, 11' (the default when left blank) counts nuclei "
@@ -368,6 +371,11 @@ def add_dropdown_validations(workbook):
     ws.add_data_validation(dv)
     dv.add(f"M2:M{MAX_ROW}")
 
+    # Remove_Border_Nuclei (col O, after Distribution_Bins)
+    dv = _strict_list(["TRUE", "FALSE"])
+    ws.add_data_validation(dv)
+    dv.add(f"O2:O{MAX_ROW}")
+
     # --- Puncta sheet ---
     ws = workbook["Puncta"]
 
@@ -468,6 +476,7 @@ def build_template_sheets():
         "Match_Threshold": 0,
         "Remove_Extranuclear_Puncta": True,
         "Distribution_Bins": "",
+        "Remove_Border_Nuclei": False,
     }
     ds_default = {
         "Name": "",
@@ -484,6 +493,7 @@ def build_template_sheets():
         "Match_Threshold": 0,
         "Remove_Extranuclear_Puncta": True,
         "Distribution_Bins": "",
+        "Remove_Border_Nuclei": False,
     }
     datasets = pd.DataFrame([ds_example] + [dict(ds_default) for _ in range(N)])
 
@@ -713,6 +723,9 @@ def parse_batch_config(excel_path):
                               f"numbers separated by commas, starting at 0 (e.g. 0, 1, 2, 3, 11).")
                 bins = None
 
+        border = row.get("Remove_Border_Nuclei", False)
+        border = False if pd.isna(border) else str(border).strip().upper() in ("TRUE", "1", "YES")
+
         remove_extra = row.get("Remove_Extranuclear_Puncta", True)
         if pd.isna(remove_extra):
             remove_extra = True
@@ -734,6 +747,7 @@ def parse_batch_config(excel_path):
             "match_threshold": match_threshold,
             "remove_extranuclear_puncta": remove_extra,
             "distribution_bins": bins,
+            "remove_border_nuclei": border,
         })
 
     # --- Puncta sheet (optional) ---
@@ -919,7 +933,8 @@ def parse_batch_config(excel_path):
                 registration=RegistrationParams(max_ransac_distance=d["max_ransac_distance"],
                                                 apply_warp=d["apply_warp"]),
                 consensus=ConsensusParams(overlap_method=d["overlap_method"], match_threshold=d["match_threshold"],
-                                          remove_extranuclear_puncta=d["remove_extranuclear_puncta"]),
+                                          remove_extranuclear_puncta=d["remove_extranuclear_puncta"],
+                                          remove_border_nuclei=d["remove_border_nuclei"]),
                 distribution_bins=d["distribution_bins"],
             ) for d in datasets],
             puncta_rules=[PunctaRule(dataset=r["dataset"], channel=r["channel"], round=r["round"],
@@ -1085,4 +1100,5 @@ def pipeline_kwargs(dataset):
         match_threshold=dataset.consensus.match_threshold,
         remove_extranuclear_puncta=dataset.consensus.remove_extranuclear_puncta,
         distribution_bins=dataset.distribution_bins,
+        remove_border_nuclei=dataset.consensus.remove_border_nuclei,
     )

@@ -38,6 +38,7 @@ GUI = {
     (RegistrationParams, "max_ransac_distance"): ("registration_widget", "_registration_widget", "max_distance"),
     (ConsensusParams, "overlap_method"): ("nuclei_matching_widget", "_nuclei_matching_widget", "method"),
     (ConsensusParams, "match_threshold"): ("nuclei_matching_widget", "_nuclei_matching_widget", "match_threshold"),
+    (ConsensusParams, "remove_border_nuclei"): ("nuclei_matching_widget", "_nuclei_matching_widget", "remove_border"),
 }
 AUTOMATED = {  # the automated preprocessing widget shows the same settings again
     (RegistrationParams, "max_ransac_distance"): "max_distance",
@@ -45,6 +46,7 @@ AUTOMATED = {  # the automated preprocessing widget shows the same settings agai
     (ConsensusParams, "overlap_method"): "overlap_method",
     (ConsensusParams, "match_threshold"): "match_threshold",
     (ConsensusParams, "remove_extranuclear_puncta"): "remove_outliers",
+    (ConsensusParams, "remove_border_nuclei"): "remove_border",
 }
 
 

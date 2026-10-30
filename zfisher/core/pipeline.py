@@ -40,6 +40,7 @@ def _run_full_zfisher_pipeline(
     overlap_method="Intersection", match_threshold=0,
     remove_extranuclear_puncta=True,
     distribution_bins=None,
+    remove_border_nuclei=False,
     progress_callback=None,
 ):
     """
@@ -117,7 +118,7 @@ def _run_full_zfisher_pipeline(
         "pairwise_rules": pairwise_rules, "tri_rules": tri_rules, "apply_warp": apply_warp,
         "max_ransac_distance": max_ransac_distance, "overlap_method": overlap_method,
         "match_threshold": match_threshold, "remove_extranuclear_puncta": remove_extranuclear_puncta,
-        "distribution_bins": distribution_bins})
+        "distribution_bins": distribution_bins, "remove_border_nuclei": remove_border_nuclei})
     if distribution_bins:
         session.update_data("distribution_bins", list(distribution_bins))
     ran = []          # the stages this run executed, for the log and the caller
@@ -361,6 +362,8 @@ def _run_full_zfisher_pipeline(
             r2_warped_mask = aligned_dir / f"Aligned_R2_{r2_nuc_ch}{constants.MASKS_SUFFIX}.tif"
 
         consensus_params = {"method": overlap_method, "match_threshold": match_threshold or 0}
+        if remove_border_nuclei:                  # only when set, so earlier runs' fingerprints still match
+            consensus_params["remove_border_nuclei"] = True
         consensus_fp = stages.stage_fingerprint("consensus", "", consensus_params, upstream=[("canvas", "")])
         consensus_file = io.mask_path(seg_dir, constants.CONSENSUS_MASKS_NAME)
         if stages.stage_is_fresh("consensus", "", consensus_fp):
@@ -379,6 +382,7 @@ def _run_full_zfisher_pipeline(
                     threshold=match_threshold or None,
                     method=overlap_method,
                     voxel_size=r1_voxels(),
+                    remove_border=remove_border_nuclei,
                     progress_callback=lambda p, t: _update(60 + int(p * 0.1), t)
                 )
             except Exception as exc:

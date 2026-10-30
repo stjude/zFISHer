@@ -17,6 +17,7 @@ from ... import constants
     method=gui_option(ConsensusParams, "overlap_method", widget_type="RadioButtons", orientation="horizontal"),
     match_threshold=gui_option(ConsensusParams, "match_threshold"),
     remove_outliers=gui_option(ConsensusParams, "remove_extranuclear_puncta", tooltip="Remove puncta located outside the merged nuclei mask."),
+    remove_border=gui_option(ConsensusParams, "remove_border_nuclei"),
 )
 @require_active_session("Please start or load a session before matching nuclei.")
 @error_handler("Nuclei Matching Failed")
@@ -26,6 +27,7 @@ def _nuclei_matching_widget(
     method: str = default(ConsensusParams, "overlap_method"),
     match_threshold: int = default(ConsensusParams, "match_threshold"),
     remove_outliers: bool = default(ConsensusParams, "remove_extranuclear_puncta"),
+    remove_border: bool = default(ConsensusParams, "remove_border_nuclei"),
 ):
     """
     Matches nuclei between two aligned mask layers and syncs their IDs.
@@ -55,6 +57,7 @@ def _nuclei_matching_widget(
             output_dir=output_dir,
             threshold=match_threshold or None,
             method=method,
+            remove_border=remove_border,
             progress_callback=lambda p, m: dialog.update_progress(p, m),
             voxel_size=tuple(r1_mask_layer.scale),
         )

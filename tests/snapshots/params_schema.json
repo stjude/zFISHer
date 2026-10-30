@@ -187,6 +187,13 @@
      "label": "Remove Extranuclear Puncta",
      "title": "Remove Extranuclear Puncta",
      "type": "boolean"
+    },
+    "remove_border_nuclei": {
+     "default": false,
+     "description": "Remove nuclei cut by the edge of the region both rounds imaged.",
+     "label": "Remove Nuclei at the Image Edge",
+     "title": "Remove Border Nuclei",
+     "type": "boolean"
     }
    },
    "title": "ConsensusParams",
@@ -295,6 +302,13 @@
        "description": "Remove puncta located outside the merged nuclei mask after matching.",
        "label": "Remove Extranuclear Puncta",
        "title": "Remove Extranuclear Puncta",
+       "type": "boolean"
+      },
+      "remove_border_nuclei": {
+       "default": false,
+       "description": "Remove nuclei cut by the edge of the region both rounds imaged.",
+       "label": "Remove Nuclei at the Image Edge",
+       "title": "Remove Border Nuclei",
        "type": "boolean"
       }
      },
@@ -422,7 +436,8 @@
      "default": {
       "overlap_method": "Intersection",
       "match_threshold": 0,
-      "remove_extranuclear_puncta": true
+      "remove_extranuclear_puncta": true,
+      "remove_border_nuclei": false
      }
     },
     "distribution_bins": {
@@ -799,6 +814,13 @@
        "label": "Remove Extranuclear Puncta",
        "title": "Remove Extranuclear Puncta",
        "type": "boolean"
+      },
+      "remove_border_nuclei": {
+       "default": false,
+       "description": "Remove nuclei cut by the edge of the region both rounds imaged.",
+       "label": "Remove Nuclei at the Image Edge",
+       "title": "Remove Border Nuclei",
+       "type": "boolean"
       }
      },
      "title": "ConsensusParams",
@@ -864,7 +886,8 @@
        "default": {
         "overlap_method": "Intersection",
         "match_threshold": 0,
-        "remove_extranuclear_puncta": true
+        "remove_extranuclear_puncta": true,
+        "remove_border_nuclei": false
        }
       },
       "distribution_bins": {
