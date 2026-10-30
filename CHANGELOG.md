@@ -6,6 +6,9 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Fixes
 
+- New `puncta_id` values are handed out under the session's lock, so a
+  detection running in the background and a point placed by hand at the same
+  moment can no longer be given the same ids.
 - **Batch Process leaves the session you have open alone.** Each dataset of a
   batch was run on the GUI's own session, so after a batch the window still
   showed your session while zFISHer's memory held the last dataset's: an edit

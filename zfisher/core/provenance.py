@@ -65,8 +65,9 @@ def file_sha256(path):
     if hit and hit.get("size") == stat.st_size and hit.get("mtime_ns") == stat.st_mtime_ns:
         return hit["sha256"]
     digest = _sha256(path)
-    session.update_data("file_hashes", {**cache, key: {
-        "size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "sha256": digest}})
+    # One entry, under the lock: two save threads hashing at once keep both.
+    session.update_nested("file_hashes", key, {
+        "size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "sha256": digest})
     return digest
 
 

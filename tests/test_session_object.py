@@ -161,3 +161,37 @@ def test_a_pipeline_run_writes_its_session_at_stage_boundaries(tmp_path, writes)
     registered = _file(tmp_path / "out")["processed_files"]
     # 44 writes before, for this run; now one per stage plus the session's setup.
     assert len(registered) >= 15 and len(writes) <= 16, (len(registered), len(writes))
+
+
+def test_concurrent_id_allocations_never_share_an_id(tmp_path):
+    import threading
+    from zfisher.core import puncta
+    s = Session()
+    s.set("output_dir", str(tmp_path))
+    got, barrier = [], threading.Barrier(8)
+
+    def allocate():
+        barrier.wait()
+        for _ in range(20):
+            got.extend(puncta.allocate_puncta_ids("Aligned R1 - FITC_puncta", 5).tolist())
+    with session.use(s):
+        import contextvars
+        threads = [threading.Thread(target=contextvars.copy_context().run, args=(allocate,)) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    assert len(got) == 8 * 20 * 5 == len(set(got))
+    assert s.get("puncta_next_id") == {"R1 - FITC": 800}
+
+
+def test_update_nested_keeps_every_entry_from_many_threads(tmp_path):
+    import threading
+    s = Session()
+    threads = [threading.Thread(target=s.update_nested, args=("file_hashes", f"f{i}", {"sha256": str(i)}))
+               for i in range(50)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(s.get("file_hashes")) == 50

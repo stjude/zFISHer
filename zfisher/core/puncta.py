@@ -760,14 +760,17 @@ def allocate_puncta_ids(layer_name, count, existing_ids=()):
     start = int(known.max()) + 1 if len(known) else 0
     key = channel_key(layer_name)
     if key is not None:
-        counters = dict(session.get_data("puncta_next_id", default={}) or {})
-        if key in counters:
-            start = max(start, int(counters[key]))
-        else:
-            on_disk = _channel_ids_on_disk(key)
-            start = max([start] + [int(i) + 1 for i in on_disk])
-        counters[key] = start + count
-        session.update_data("puncta_next_id", counters)
+        # Read, advance and store the counter as one step: a detection thread
+        # and a point added by hand must not be handed the same ids.
+        with session.current().lock:
+            counters = dict(session.get_data("puncta_next_id", default={}) or {})
+            if key in counters:
+                start = max(start, int(counters[key]))
+            else:
+                on_disk = _channel_ids_on_disk(key)
+                start = max([start] + [int(i) + 1 for i in on_disk])
+            counters[key] = start + count
+            session.update_data("puncta_next_id", counters)
     return np.arange(start, start + count, dtype=np.int64)
 
 

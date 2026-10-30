@@ -195,6 +195,12 @@ class Session:
         return Path(value) if value else None
 
     @property
+    def lock(self):
+        """The session's (re-entrant) lock: hold it around a read, a decision
+        and a write that must not interleave with another thread's."""
+        return self._lock
+
+    @property
     def dirty(self):
         """True while changes are waiting for ``save()``."""
         return self._dirty
@@ -383,6 +389,17 @@ def get_data(key=None, default=None):
 def update_data(key, value):
     """Updates a key-value pair in the session data and saves the session."""
     current().set(key, value)
+
+
+def update_nested(key, subkey, value):
+    """Set ``session[key][subkey] = value`` as one step under the session's
+    lock (see ``Session.update_nested``), through ``get_data`` and
+    ``update_data``."""
+    with current().lock:
+        inner = get_data(key, default={})
+        inner = dict(inner) if isinstance(inner, dict) else {}
+        inner[subkey] = value
+        update_data(key, inner)
 
 
 def set_processed_file(layer_name, path, layer_type: str, metadata: dict = None):
