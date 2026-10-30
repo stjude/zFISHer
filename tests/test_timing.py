@@ -118,8 +118,12 @@ def test_decorator_keeps_the_wrapped_signature():
 
 @pytest.mark.skipif(timing.psutil is None, reason="psutil not installed")
 def test_sampler_sees_a_transient_allocation(timing_log):
+    # Random bytes written inside the stage. A constant block is compressed by
+    # macOS within a fraction of a second when memory is short, as late in a
+    # full test run, and compressed pages are not resident (the sampler saw
+    # 10-20 MB of 100); a copy of bytes made earlier can share their pages.
     with timing.stage_timer("alloc"):
-        block = np.ones(100 * 1024 * 1024, dtype=np.uint8)  # touched, so resident
+        block = np.random.default_rng(0).integers(0, 256, 100 * 1024 * 1024, dtype=np.uint8)
         time.sleep(0.4)
         del block
     (line,) = _only(timing_log(), "STAGE")
