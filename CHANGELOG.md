@@ -6,6 +6,14 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Fixes
 
+- **The report states the sigma detection used.** A batch channel with no
+  row on the Puncta sheet, and every channel of `zfisher-cli run`, is detected
+  without a sigma, and the detectors then smooth with sigma 1.0. The Parameters
+  sheet said 0.0 and `provenance.jsonl` left it out. Detection now fills in every setting
+  it is not given with the value it uses, and records those; the puncta found
+  are unchanged. Reports made earlier from such channels list sigma 0.0 where
+  1.0 was used. Channels set on the Puncta sheet, and detection in the GUI,
+  were always reported correctly.
 - **Detect Puncta on a raw image reads the files, as batch does.** It
   detected on the image and mask arrays in the window, so the provenance
   record named files the detection had not read, and GUI and batch could give

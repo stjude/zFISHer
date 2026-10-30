@@ -77,12 +77,12 @@ def gui(reopened, monkeypatch):
 
 
 def _detect(gui, nuclei_layer=None, **changes):
-    """Press Detect Puncta with batch's recorded settings, sigma as batch ran it."""
-    p = dict(stages.recorded_detection_parameters("R1", CHANNEL), sigma=1.0, **changes)
+    """Press Detect Puncta with the settings batch recorded, every one of them."""
+    p = dict(stages.recorded_detection_parameters("R1", CHANNEL), **changes)
     gui.widget._puncta_widget(image_layer=gui.image, nuclei_layer=nuclei_layer, nuclei_only=p["nuclei_only"],
                               method=p["method"], threshold=p["threshold_rel"], min_distance=p["min_distance"],
-                              sigma=p["sigma"], z_scale=p["z_scale"], use_tophat=False,
-                              tophat_radius=constants.PUNCTA_TOPHAT_RADIUS)
+                              sigma=p["sigma"], z_scale=p["z_scale"], use_tophat=p["use_tophat"],
+                              tophat_radius=p["tophat_radius"])
     return pd.read_csv(constants.puncta_csv_path(gui.reports, R1_PUNCTA))
 
 
