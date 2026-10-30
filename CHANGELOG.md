@@ -6,6 +6,18 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Fixes
 
+- **Export checks the puncta files against the consensus mask.** The report
+  re-derives each punctum's nucleus from the mask before counting, but the
+  puncta CSVs beside it could still carry other IDs: in one lab folder, 98% of
+  the Cy5 puncta's `Nucleus_ID` values disagreed with the saved mask while the
+  check before export reported no change. Export now reads each aligned
+  puncta CSV back, saves it again from its layer if it lags behind, and stops,
+  naming the file, if it still disagrees.
+- **`zfisher-cli nucleus-ids <output folder>`** checks every aligned puncta
+  CSV's `Nucleus_ID` against the folder's saved consensus mask and reports the
+  agreement per file; with `--write` it writes a repaired copy of each,
+  `*.nucleus_ids_repaired.csv`, beside the original, with every ID read from
+  the mask at the punctum's nearest voxel. Originals are never changed.
 - **A puncta file is never written with its values on the wrong puncta.** A
   puncta CSV joins each layer's table of values to its points row by row; a
   table one row short or long put every following value, `Nucleus_ID`

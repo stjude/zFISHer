@@ -8,6 +8,7 @@ requiring a napari viewer. Invoke as ``zfisher-cli`` once installed, or as
     zfisher-cli run R1.nd2 R2.nd2 -o ./output
     zfisher-cli batch template.xlsx -o ./batch_output
     zfisher-cli template ./my_template.xlsx
+    zfisher-cli nucleus-ids ./output [--write]
 """
 import argparse
 import logging
@@ -156,6 +157,48 @@ def _cmd_template(args):
     return 0
 
 
+def _cmd_nucleus_ids(args):
+    """Check, and with --write repair, the Nucleus_ID column of an output
+    folder's aligned puncta CSVs against its saved consensus mask."""
+    from . import constants
+    from .core import io, puncta
+
+    folder = Path(args.folder).expanduser().resolve()
+    mask_path = io.find_mask(folder / constants.SEGMENTATION_DIR, constants.CONSENSUS_MASKS_NAME)
+    if mask_path is None:
+        print(f"Error: no {constants.CONSENSUS_MASKS_NAME} mask in {folder / constants.SEGMENTATION_DIR}",
+              file=sys.stderr)
+        return 1
+    csvs = puncta.aligned_puncta_csvs(folder / constants.REPORTS_DIR)
+    if not csvs:
+        print(f"Error: no aligned or warped puncta CSVs in {folder / constants.REPORTS_DIR}", file=sys.stderr)
+        return 1
+    mask = io.read_label_tif(mask_path)
+    print(f"Consensus mask: {mask_path.name} ({len(set(mask.ravel().tolist()) - {0})} nuclei)")
+    all_agree = True
+    for csv in csvs:
+        if args.write:
+            out = csv.with_name(csv.stem + ".nucleus_ids_repaired.csv")
+            result = puncta.repair_nucleus_ids(csv, mask, out)
+        else:
+            result = puncta.check_nucleus_ids(csv, mask)
+        all_agree &= result["agree"] == result["rows"]
+        line = (f"  {result['file']}: {result['agree']} of {result['rows']} nucleus IDs agree with the mask "
+                f"({100 * result['fraction']:.1f}%)")
+        if result["zero_but_inside"]:
+            line += f"; {result['zero_but_inside']} stored as 0 but inside a nucleus"
+        if result["repeated_ids"]:
+            line += f"; {len(result['repeated_ids'])} puncta_id values repeated"
+        if args.write:
+            line += f" -> {out.name}"
+        print(line)
+    if args.write:
+        print("Originals are unchanged. Each .nucleus_ids_repaired.csv has every Nucleus_ID read from the mask.")
+    elif not all_agree:
+        print("Run again with --write to write repaired copies beside the originals.")
+    return 0 if all_agree or args.write else 2
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="zfisher-cli",
@@ -195,6 +238,14 @@ def main(argv=None):
     p_tmpl.add_argument("output", help="Path for the generated .xlsx file.")
     p_tmpl.add_argument("--force", action="store_true", help="Overwrite if the file exists.")
     p_tmpl.set_defaults(func=_cmd_template)
+
+    # --- nucleus-ids ---
+    p_nuc = subparsers.add_parser(
+        "nucleus-ids", help="Check an output folder's puncta Nucleus_ID against its saved consensus mask.")
+    p_nuc.add_argument("folder", help="A session's output folder (with segmentation/ and reports/).")
+    p_nuc.add_argument("--write", action="store_true",
+                       help="Write repaired copies (*.nucleus_ids_repaired.csv) beside the originals.")
+    p_nuc.set_defaults(func=_cmd_nucleus_ids)
 
     args = parser.parse_args(argv)
 

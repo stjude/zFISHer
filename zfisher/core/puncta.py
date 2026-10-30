@@ -195,6 +195,53 @@ def lookup_label_ids(coords, points_scale, points_translate,
     return np.where(in_bounds, labels, 0).astype(int)
 
 
+def nucleus_ids_from_mask(coords, mask):
+    """The nucleus of each punctum: the label of ``mask`` at the punctum's
+    nearest voxel, 0 outside every nucleus or outside the mask. ``coords`` are
+    in the mask's voxel grid, as aligned puncta CSVs are for the consensus
+    mask. The rule the GUI's resync uses (``lookup_label_ids``)."""
+    return lookup_label_ids(coords, (1, 1, 1), (0, 0, 0), mask, (1, 1, 1), (0, 0, 0))
+
+
+def check_nucleus_ids(csv_path, mask):
+    """How well the ``Nucleus_ID`` column of the puncta CSV at ``csv_path``
+    agrees with ``mask``: a dict with ``file``, ``rows``, ``agree`` (rows whose
+    stored ID is the mask's), ``fraction``, ``zero_but_inside`` (stored 0, yet
+    inside a nucleus) and ``repeated_ids``. A file without the column agrees
+    nowhere."""
+    import pandas as pd
+    table = pd.read_csv(csv_path, float_precision="round_trip")
+    derived = nucleus_ids_from_mask(table[["Z", "Y", "X"]].to_numpy(float), mask)
+    stored = (pd.to_numeric(table["Nucleus_ID"], errors="coerce").fillna(-1).to_numpy().astype(np.int64)
+              if "Nucleus_ID" in table.columns else np.full(len(table), -1, dtype=np.int64))
+    agree = int((stored == derived).sum())
+    return {"file": Path(csv_path).name, "rows": len(table), "agree": agree,
+            "fraction": agree / len(table) if len(table) else 1.0,
+            "zero_but_inside": int(((stored == 0) & (derived > 0)).sum()),
+            "repeated_ids": repeated_puncta_ids(table)}
+
+
+def repair_nucleus_ids(csv_path, mask, out_path):
+    """Write the puncta CSV at ``csv_path`` to ``out_path`` with every
+    ``Nucleus_ID`` read again from ``mask`` (``nucleus_ids_from_mask``); every
+    other column is copied unchanged. Returns ``check_nucleus_ids`` of the
+    original."""
+    import pandas as pd
+    before = check_nucleus_ids(csv_path, mask)
+    table = pd.read_csv(csv_path, float_precision="round_trip")
+    coords = table[["Z", "Y", "X"]].to_numpy(float)
+    features = table.drop(columns=["Z", "Y", "X"]).assign(Nucleus_ID=nucleus_ids_from_mask(coords, mask))
+    puncta_table(coords, features).to_csv(out_path, index=False)
+    return before
+
+
+def aligned_puncta_csvs(reports_dir):
+    """The aligned and warped puncta CSVs in ``reports_dir``: the files whose
+    puncta live in the consensus mask's space."""
+    prefixes = tuple(constants.puncta_csv_stem(f"{p} ") for p in (constants.ALIGNED_PREFIX, constants.WARPED_PREFIX))
+    return sorted(p for p in Path(reports_dir).glob(f"*{constants.PUNCTA_SUFFIX}.csv") if p.name.startswith(prefixes))
+
+
 def calculate_spot_quality(image_data, coords, radius=2, progress_callback=None,
                            progress_range=(50, 70)):
     """

@@ -1307,6 +1307,47 @@ def resync_puncta_nucleus_ids(
             'skipped_layers': skipped}
 
 
+def verify_puncta_files_for_report(points_layers, consensus):
+    """Check, after ``reconcile_puncta_for_report``, that each exported layer's
+    CSV on disk holds the layer's puncta with the nucleus the consensus mask
+    gives each of them. A file that lags behind its layer is saved again from
+    the layer; one that still disagrees stops the export with ``ValueError``,
+    so no report goes out beside puncta files that contradict it."""
+    from . import events
+    out_dir = session.get_data("output_dir")
+    if not out_dir or consensus is None:
+        return
+    reports_dir = Path(out_dir) / constants.REPORTS_DIR
+
+    def disagreement(layer, csv):
+        if not csv.exists():
+            return "the file is missing"
+        table = pd.read_csv(csv, float_precision="round_trip")
+        if len(table) != len(layer.data):
+            return f"{len(table)} rows for {len(layer.data)} puncta on screen"
+        derived = _puncta.lookup_label_ids(table[['Z', 'Y', 'X']].to_numpy(float), layer.scale, layer.translate,
+                                           consensus.data, consensus.scale, consensus.translate)
+        stored = (pd.to_numeric(table['Nucleus_ID'], errors='coerce').fillna(-1).to_numpy().astype(np.int64)
+                  if 'Nucleus_ID' in table.columns else np.full(len(table), -1))
+        wrong = int((stored != derived).sum())
+        return f"{wrong} of {len(table)} nucleus IDs differ from the consensus mask" if wrong else None
+
+    problems = []
+    for layer in points_layers:
+        csv = constants.puncta_csv_path(reports_dir, layer.name)
+        if disagreement(layer, csv) is None:
+            continue
+        logger.warning("Puncta file %s lagged behind its layer; saving it again before the report.", csv.name)
+        events.save_puncta_layer(layer)
+        problem = disagreement(layer, csv)
+        if problem is not None:
+            problems.append(f"{csv.name}: {problem}")
+    if problems:
+        raise ValueError("The puncta files on disk do not match the consensus mask, so the report would "
+                         "contradict them: " + "; ".join(problems) + ". Nothing was exported. "
+                         "`zfisher-cli nucleus-ids` checks and repairs a folder's files.")
+
+
 def find_consensus_layer(viewer):
     """Return the consensus nuclei Labels layer, or None."""
     if viewer is None:

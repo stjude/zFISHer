@@ -197,6 +197,8 @@ def _on_export():
         # mask as edited, whichever edit path was used.
         dialog.update_progress(5, "Reconciling puncta with the consensus mask...")
         viewer_helpers.reconcile_puncta_for_report(viewer)
+        # The puncta files people analyse further must say what the report says.
+        viewer_helpers.verify_puncta_files_for_report(points_layers, viewer_helpers.find_consensus_layer(viewer))
 
         points_data = []
         for l in points_layers:
