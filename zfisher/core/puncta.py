@@ -365,25 +365,49 @@ def _detect_spots_dog(image_data, threshold_rel, sigma, z_scale=1.0):
                      threshold=threshold_rel)
     return blobs[:, :3].astype(int) if len(blobs) > 0 else np.empty((0, 3))
 
+# What the detectors use for a setting they are not given. These are not the
+# widget's starting values (constants.PUNCTA_*): a batch row that leaves a
+# setting empty gets these. process_puncta_detection fills them in before it
+# detects, so whatever records its parameters records the values used.
+DETECTOR_DEFAULTS = {
+    'method': 'Local Maxima',
+    'threshold_rel': 0.1,
+    'min_distance': 3,
+    'sigma': 1.0,
+    'use_tophat': False,
+    'tophat_radius': 10,
+    'nuclei_only': True,
+}
+
+
+def fill_detection_defaults(params, voxels=None):
+    """Add to ``params``, in place, every setting it lacks, with the value
+    detection uses for it (``DETECTOR_DEFAULTS``; ``z_scale`` from ``voxels``,
+    else 1.0). Returns ``params``."""
+    for key, value in DETECTOR_DEFAULTS.items():
+        params.setdefault(key, value)
+    if 'z_scale' not in params:
+        params['z_scale'] = voxels[0] / voxels[2] if voxels is not None else 1.0
+    return params
+
+
 def detect_spots_3d(image_data, method="Local Maxima", progress_callback=None, **kwargs):
     """Main entry point for puncta detection on a single image volume."""
     logger.info("Puncta detection: method=%s, shape=%s, params=%s", method, image_data.shape, kwargs)
-    if kwargs.get('use_tophat', False):
+    kwargs = fill_detection_defaults(dict(kwargs, method=method))
+    if kwargs['use_tophat']:
         if progress_callback: progress_callback(25, "Subtracting background (top-hat)...")
-        image_data = preprocess_white_tophat(image_data, radius=kwargs.get('tophat_radius', 10),
+        image_data = preprocess_white_tophat(image_data, radius=kwargs['tophat_radius'],
                                              progress_callback=progress_callback, progress_range=(25, 40))
 
     if method == "Radial Symmetry":
-        return _detect_radial_symmetry(image_data, kwargs.get('threshold_rel', 0.1), kwargs.get('sigma', 1.0), z_scale=kwargs.get('z_scale', 1.0))
+        return _detect_radial_symmetry(image_data, kwargs['threshold_rel'], kwargs['sigma'], z_scale=kwargs['z_scale'])
     elif method == "Local Maxima":
-        return _detect_spots_local_maxima(image_data, kwargs.get('min_distance', 3), 
-                                          kwargs.get('threshold_rel', 0.1), kwargs.get('sigma', 1.0))
+        return _detect_spots_local_maxima(image_data, kwargs['min_distance'], kwargs['threshold_rel'], kwargs['sigma'])
     elif method == "Laplacian of Gaussian":
-        return _detect_spots_log(image_data, kwargs.get('threshold_rel', 0.1), 
-                                 kwargs.get('sigma', 1.0), z_scale=kwargs.get('z_scale', 1.0))
+        return _detect_spots_log(image_data, kwargs['threshold_rel'], kwargs['sigma'], z_scale=kwargs['z_scale'])
     elif method == "Difference of Gaussian":
-        return _detect_spots_dog(image_data, kwargs.get('threshold_rel', 0.1), 
-                                 kwargs.get('sigma', 1.0), z_scale=kwargs.get('z_scale', 1.0))
+        return _detect_spots_dog(image_data, kwargs['threshold_rel'], kwargs['sigma'], z_scale=kwargs['z_scale'])
     return np.empty((0, 3))
 
 @timed_stage("puncta_transform",
@@ -696,19 +720,22 @@ def record_detection_settings(layer_name, settings):
 
 def detection_settings_row(params, n_puncta, detected_in):
     """The ``puncta_params`` entry for a detection with ``process_puncta_detection``'s
-    ``params``: the settings the report's Parameters sheet lists."""
+    ``params``: the settings the report's Parameters sheet lists. A setting
+    missing from ``params`` is given the value detection used for it."""
+    given_z_scale = 'z_scale' in params
+    params = fill_detection_defaults(dict(params))
     row = {
-        'algorithm': params.get('method', 'Local Maxima'),
-        'sensitivity': params.get('threshold_rel', constants.PUNCTA_THRESHOLD_REL),
-        'min_distance': params.get('min_distance', constants.PUNCTA_MIN_DISTANCE),
-        'sigma': params.get('sigma', constants.PUNCTA_SIGMA),
+        'algorithm': params['method'],
+        'sensitivity': params['threshold_rel'],
+        'min_distance': params['min_distance'],
+        'sigma': params['sigma'],
     }
-    if 'z_scale' in params:
+    if given_z_scale:
         row['z_scale'] = params['z_scale']
     row.update({
-        'nuclei_only': params.get('nuclei_only', True),
-        'tophat': params.get('use_tophat', False),
-        'tophat_radius': params.get('tophat_radius', constants.PUNCTA_TOPHAT_RADIUS),
+        'nuclei_only': params['nuclei_only'],
+        'tophat': params['use_tophat'],
+        'tophat_radius': params['tophat_radius'],
         'num_puncta': int(n_puncta),
         'detected_in': detected_in,
     })
@@ -734,14 +761,15 @@ def detection_settings():
              result_fields=n_rows)
 def process_puncta_detection(image_data, mask_data=None, voxels=None, params=None, output_path=None, progress_callback=None, layer_name=None):
     """Orchestrates detection, quality mapping, and session persistence with CSV tags."""
-    params = params or {}
+    params = params if params is not None else {}
+    # In place: callers record these parameters after detecting, and must
+    # record the values used, defaults included.
+    fill_detection_defaults(params, voxels)
 
-    if 'z_scale' not in params and voxels is not None:
-        params['z_scale'] = voxels[0] / voxels[2]
-
-    method = params.get('method', 'Local Maxima')
+    method = params['method']
     if progress_callback: progress_callback(-1, f"Detecting spots ({method})...")
-    coords = detect_spots_3d(image_data, progress_callback=progress_callback, **params)
+    coords = detect_spots_3d(image_data, progress_callback=progress_callback,
+                             **{k: v for k, v in params.items() if k != 'method'}, method=method)
     if progress_callback: progress_callback(45, f"Detection complete. Found {len(coords)} candidates.")
     if len(coords) == 0:
         if progress_callback: progress_callback(100, "No spots found.")
@@ -766,7 +794,7 @@ def process_puncta_detection(image_data, mask_data=None, voxels=None, params=Non
     nucleus_ids = mask_data[indices] if mask_data is not None else np.zeros(len(coords))
 
     # Filter out extranuclear puncta if requested
-    nuclei_only = params.get('nuclei_only', True)
+    nuclei_only = params['nuclei_only']
     if nuclei_only and mask_data is not None:
         if progress_callback: progress_callback(80, "Filtering extranuclear puncta...")
         keep = nucleus_ids > 0
