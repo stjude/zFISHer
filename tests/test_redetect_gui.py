@@ -14,11 +14,9 @@ the app.
 Run:  python -m pytest tests/test_redetect_gui.py -q
 """
 import os
-import sys
 import types
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import contextlib
 

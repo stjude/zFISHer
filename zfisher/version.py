@@ -22,7 +22,7 @@ def get_full_version():
         ).decode().strip()
 
         # Check if current commit is exactly a version tag
-        tag = subprocess.check_output(
+        subprocess.check_output(
             ["git", "describe", "--tags", "--exact-match", "HEAD"],
             cwd=str(repo_dir),
             stderr=subprocess.DEVNULL,

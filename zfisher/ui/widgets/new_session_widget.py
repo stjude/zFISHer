@@ -3,13 +3,11 @@ from pathlib import Path
 import napari
 import os
 
-from qtpy.QtWidgets import QFrame
 
 from ...core import session
 from .. import popups
 from ..decorators import error_handler
 from ._shared import load_raw_data_into_viewer, make_divider as _make_divider
-from ..style import COLORS
 
 class NewSessionWidget(Container):
     def __init__(self, viewer: napari.Viewer):

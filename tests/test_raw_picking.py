@@ -12,11 +12,9 @@ dialog and pop-ups are stand-ins.
 Run:  python -m pytest tests/test_raw_picking.py -q
 """
 import os
-import sys
 import types
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import contextlib
 

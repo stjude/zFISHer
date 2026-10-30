@@ -7,12 +7,9 @@ it as a SimpleITK-gated test when that dependency is available in CI.
 
 Run:  pytest tests/test_registration.py -q
 """
-import os
-import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from zfisher.core import registration as reg
 

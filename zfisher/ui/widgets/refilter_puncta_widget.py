@@ -1,11 +1,10 @@
 import napari
-import numpy as np
 from collections import deque
 from magicgui import magicgui, widgets
-from qtpy.QtWidgets import QFrame, QPushButton
+from qtpy.QtWidgets import QPushButton
 
 from ..decorators import require_active_session, error_handler
-from .. import style, viewer_helpers
+from .. import viewer_helpers
 from ... import constants
 from ...core import puncta
 from ._shared import (

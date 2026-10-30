@@ -14,12 +14,10 @@ not tested here. The helper uses napari private API; napari is pinned to 0.6.6.
 Run (in an env with napari):  python -m pytest tests/test_labels_redraw.py -q
 """
 import os
-import sys
 import tempfile
 import types
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import pytest

@@ -13,7 +13,6 @@ try:
 except ImportError:  # cellpose (+torch) is heavy and only needed for Cellpose segmentation
     models = core = None
 from pathlib import Path
-import tifffile
 
 from .. import constants
 from . import io

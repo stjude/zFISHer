@@ -8,29 +8,28 @@ from ..core.provenance import software_version
 
 logger = logging.getLogger(__name__)
 
-from qtpy.QtWidgets import QApplication, QToolBox, QToolButton, QPushButton, QWidget, QLabel, QVBoxLayout, QDockWidget
+from qtpy.QtWidgets import QApplication, QToolBox, QPushButton, QWidget, QLabel, QVBoxLayout, QDockWidget
 from qtpy.QtGui import QColor, QIcon, QPainter, QPalette, QPixmap
 from qtpy.QtCore import Qt, QPoint, QTimer, QEvent, QObject
-from magicgui import widgets
-from ..core import session
 
-# --- RESTORED IMPORTS ---
-# Import all the individual widgets from their own scripts
+# Every widget module is imported here, in this order, because importing one
+# builds its widgets and connects its signals; the names themselves are not
+# all used in this file.
 from .widgets.home_widget import HomeWidget
 from .widgets.start_session_widget import StartSessionWidget
 from .widgets.nuclei_segmentation_widget import NucleiSegmentationWidget
 from .widgets.alignment_consensus_widget import AlignmentConsensusWidget
-from .widgets.dapi_segmentation_widget import dapi_segmentation_widget
-from .widgets.registration_widget import registration_widget
-from .widgets.canvas_widget import canvas_widget
-from .widgets.nuclei_matching_widget import nuclei_matching_widget
+from .widgets.dapi_segmentation_widget import dapi_segmentation_widget  # noqa: F401
+from .widgets.registration_widget import registration_widget  # noqa: F401
+from .widgets.canvas_widget import canvas_widget  # noqa: F401
+from .widgets.nuclei_matching_widget import nuclei_matching_widget  # noqa: F401
 from .widgets.puncta_picking_widget import PunctaPickingWidget
-from .widgets.puncta_widget import puncta_widget
-from .widgets.colocalization_widget import colocalization_widget
+from .widgets.puncta_widget import puncta_widget  # noqa: F401
+from .widgets.colocalization_widget import colocalization_widget  # noqa: F401
 from .widgets.export_visualization_widget import ExportVisualizationWidget
-from .widgets.mask_editor_widget import mask_editor_widget, delete_mask_under_mouse
-from .widgets.puncta_editor_widget import puncta_editor_widget, delete_point_under_mouse
-from .widgets.capture_widget import capture_widget, capture_with_hotkey, region_capture_with_hotkey, ArrowOverlay
+from .widgets.mask_editor_widget import mask_editor_widget, delete_mask_under_mouse  # noqa: F401
+from .widgets.puncta_editor_widget import puncta_editor_widget, delete_point_under_mouse  # noqa: F401
+from .widgets.capture_widget import capture_widget, capture_with_hotkey, region_capture_with_hotkey, ArrowOverlay  # noqa: F401
 
 # Import the event handlers
 from . import events, style, stall_monitor
@@ -49,9 +48,6 @@ class _PopupSuppressor(QObject):
 
 # --- Helper Classes ---
 
-from qtpy.QtCore import Qt, QPoint, QTimer, QEvent
-
-# ... (keep existing imports) ...
 
 # Painted coordinates must fit Qt's int pixels; far beyond any screen is not drawn.
 _MAX_PAINT_PX = 1e7
@@ -408,7 +404,7 @@ def launch_zfisher():
     def _strip_to_opacity(page):
         """Hide all descendants of *page* except the opacity row and
         the move-camera mode button."""
-        from qtpy.QtWidgets import QWidget, QLabel, QSlider, QRadioButton
+        from qtpy.QtWidgets import QWidget, QLabel, QSlider
         keep = set()
 
         # Find opacity label
@@ -476,7 +472,7 @@ def launch_zfisher():
         try:
             if _suppress_custom_controls:
                 return
-            from qtpy.QtWidgets import QWidget, QComboBox, QLabel
+            from qtpy.QtWidgets import QComboBox
             controls = viewer.window._qt_viewer.controls
 
             selected = viewer.layers.selection.active
@@ -498,7 +494,7 @@ def launch_zfisher():
 
             # Hide unwanted controls on mask layers
             if is_mask_layer:
-                from qtpy.QtWidgets import QRadioButton, QFormLayout, QSizePolicy as _QSP
+                from qtpy.QtWidgets import QRadioButton, QFormLayout
                 # Hide fill and polygon mode buttons but retain their space
                 for btn in page.findChildren(QRadioButton):
                     tip = (btn.toolTip() or '').lower()
@@ -585,7 +581,7 @@ def launch_zfisher():
             return
         from qtpy.QtWidgets import (
             QWidget, QLabel, QSlider, QHBoxLayout, QColorDialog, QPushButton,
-            QFormLayout, QVBoxLayout,
+            QVBoxLayout,
         )
         from qtpy.QtCore import Qt
         controls = viewer.window._qt_viewer.controls
@@ -1140,7 +1136,7 @@ def launch_zfisher():
     viewer.layers.events.removed.connect(_connect_mask_mode_listeners)
     _connect_mask_mode_listeners()  # connect to any already-existing layers
 
-    dock_widget = viewer.window.add_dock_widget(toolbox, area="right", name="zFISHer Workflow")
+    viewer.window.add_dock_widget(toolbox, area="right", name="zFISHer Workflow")
 
     def _hide_title_bar_buttons(dock):
         """Hide float/hide/close buttons in a dock's napari custom title bar."""

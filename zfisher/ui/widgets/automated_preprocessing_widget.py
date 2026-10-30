@@ -378,8 +378,7 @@ def _automated_preprocessing_magic_widget(
         viewer.status = "Automated Registration Complete."
 
 # UI Wrapper
-from qtpy.QtWidgets import QFrame, QLabel, QSizePolicy
-from ..style import COLORS
+from qtpy.QtWidgets import QLabel, QSizePolicy
 from ._shared import make_divider as _make_divider, make_section_header as _make_section_header, make_section_desc as _make_section_desc, make_spacer as _make_spacer
 
 # Insert section headers into the magicgui form

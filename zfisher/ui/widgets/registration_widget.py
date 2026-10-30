@@ -69,8 +69,7 @@ _registration_widget.result_label = widgets.Label(value="")
 _registration_widget.append(_registration_widget.result_label)
 
 # --- UI Helpers ---
-from qtpy.QtWidgets import QLabel, QFrame, QSizePolicy
-from ..style import COLORS
+from qtpy.QtWidgets import QLabel, QSizePolicy
 
 # --- UI Wrapper ---
 class _RegistrationContainer(widgets.Container):
@@ -109,7 +108,7 @@ _inner.setSpacing(2)
 _inner.setContentsMargins(0, 0, 0, 0)
 
 _registration_widget.native.setMinimumWidth(0)
-from qtpy.QtWidgets import QAbstractSpinBox, QComboBox, QLabel
+from qtpy.QtWidgets import QAbstractSpinBox, QComboBox
 for child in _registration_widget.native.findChildren(QLabel):
     child.setMinimumWidth(0)
 for child in _registration_widget.native.findChildren(QAbstractSpinBox) + _registration_widget.native.findChildren(QComboBox):

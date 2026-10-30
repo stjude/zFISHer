@@ -4,8 +4,8 @@ someone at the screen.
 ``App`` starts the full zFISHer viewer (theme, workflow panel, widgets) in a
 window that is laid out and drawn but never put on screen (Qt's
 ``WA_DontShowOnScreen``), opens panel pages by title, presses buttons, answers pop-ups from
-a script, and saves screenshots of the whole window for a person, or Claude, to
-look at. Everything it does is written to ``driver.log`` next to the
+a script, and saves screenshots of the whole window to look at afterwards.
+Everything it does is written to ``driver.log`` next to the
 screenshots.
 
 What it changes, in this process only: the window and zFISHer's progress

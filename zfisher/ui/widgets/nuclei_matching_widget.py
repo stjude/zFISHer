@@ -98,8 +98,7 @@ def _nuclei_matching_widget(
         dialog.update_progress(100, "Done.")
 
 # --- UI Helpers ---
-from qtpy.QtWidgets import QLabel, QFrame, QSizePolicy
-from ..style import COLORS
+from qtpy.QtWidgets import QSizePolicy
 
 # --- UI Wrapper ---
 class _NucleiMatchingContainer(Container):

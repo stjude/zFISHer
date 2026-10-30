@@ -1,16 +1,8 @@
-# main.py
-import ctypes
-try:
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("zFISHer.App")
-except Exception:
-    pass
+"""Start zFISHer from a source checkout: ``python main.py``.
 
-from zfisher.ui.viewer import launch_zfisher
-
-
-def main():
-    launch_zfisher()
-
+An installed zFISHer starts with the ``zfisher`` command or ``python -m zfisher``.
+"""
+from zfisher.__main__ import main
 
 if __name__ == "__main__":
     main()

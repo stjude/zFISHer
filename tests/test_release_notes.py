@@ -8,7 +8,6 @@ as the release notes.
 Run:  python -m pytest tests/test_release_notes.py -q
 """
 import importlib.util
-import os
 import subprocess
 import sys
 from pathlib import Path

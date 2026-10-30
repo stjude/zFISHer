@@ -15,14 +15,12 @@ Run (in an env with napari):  python -m pytest tests/test_label_edits.py -q
 """
 import logging
 import os
-import sys
 import tempfile
 import tracemalloc
 import types
 from collections import deque
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import pytest

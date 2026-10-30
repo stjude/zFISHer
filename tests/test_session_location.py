@@ -5,12 +5,9 @@ Run:  python -m pytest tests/test_session_location.py -q
 or:   python tests/test_session_location.py
 """
 import json
-import os
-import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from zfisher import constants
 from zfisher.core import session
@@ -89,3 +86,24 @@ if __name__ == "__main__":
         print(f"PASS {fn.__name__}")
         passed += 1
     print(f"\n{passed}/{len(fns)} tests passed")
+
+
+def test_load_recovers_a_listed_file_from_its_backup(tmp_path):
+    """A file the session lists that is missing, with a ``.bak`` beside it (a
+    removed layer, or a crash during teardown), is opened from the backup."""
+    reports = tmp_path / constants.REPORTS_DIR
+    reports.mkdir()
+    (tmp_path / constants.SESSIONS_DIR).mkdir()
+    backup = reports / "R1_-_FITC_puncta.csv.bak"
+    backup.write_text("puncta_id,Z,Y,X\n0,1,2,3\n")
+    listed = str(reports / "R1_-_FITC_puncta.csv")
+    session_file = tmp_path / constants.SESSIONS_DIR / constants.SESSION_FILENAME
+    session_file.write_text(json.dumps({"output_dir": str(tmp_path), "processed_files": {
+        "R1 - FITC_puncta": {"path": listed, "type": "points"}}}))
+    try:
+        session.clear_session()
+        session.load_session_file(session_file)
+        path = session.get_data("processed_files")["R1 - FITC_puncta"]["path"]
+        assert path == str(backup)
+    finally:
+        session.clear_session()

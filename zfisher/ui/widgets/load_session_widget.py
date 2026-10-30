@@ -3,7 +3,6 @@ from magicgui.widgets import Container, PushButton, FileEdit, Label
 import napari
 import numpy as np
 from pathlib import Path
-from qtpy.QtWidgets import QFrame
 
 logger = logging.getLogger(__name__)
 
@@ -11,7 +10,6 @@ from ...core import session
 from .. import popups, viewer_helpers
 from ..decorators import error_handler
 from ._shared import load_raw_data_into_viewer, make_divider as _make_divider
-from ..style import COLORS
 from .colocalization_widget import refresh_report_note, refresh_rules_display
 
 class LoadSessionWidget(Container):

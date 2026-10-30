@@ -8,11 +8,9 @@ order-dependent collision tie-break flagged for the Rank 6 correctness fix.
 Run:  pytest tests/test_segmentation.py -q
 """
 import os
-import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from zfisher.core import segmentation as seg
 

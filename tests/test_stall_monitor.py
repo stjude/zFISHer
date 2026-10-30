@@ -10,12 +10,10 @@ Run (in an env with napari):  python -m pytest tests/test_stall_monitor.py -q
 import io
 import logging
 import os
-import sys
 import time
 import types
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 

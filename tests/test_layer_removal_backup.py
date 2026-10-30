@@ -4,17 +4,14 @@ crash-time teardown can't destroy a manually-curated puncta CSV.
 
 ``events`` imports napari/qtpy, so this is skipped where napari isn't installed
 (the core CI environment). The matching recovery-on-load behaviour is covered
-without napari in ``test_session_portability.py``.
+without napari in ``test_session_location.py``.
 
 Run (in an env with napari):  python -m pytest tests/test_layer_removal_backup.py -q
 """
 import os
-import sys
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from pathlib import Path
 
 import pytest
 

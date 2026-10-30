@@ -10,12 +10,9 @@ Run:  python -m pytest tests/test_version_records.py -q
 """
 import json
 import logging
-import os
-import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pandas as pd
 import pytest

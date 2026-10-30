@@ -1,7 +1,6 @@
 import napari
 from magicgui import widgets
 from qtpy.QtWidgets import QToolBox, QWidget, QVBoxLayout
-from qtpy.QtCore import Qt
 
 # Import the child widgets that this composite widget will manage
 from .automated_preprocessing_widget import automated_preprocessing_widget

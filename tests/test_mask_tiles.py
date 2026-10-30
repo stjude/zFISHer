@@ -14,13 +14,11 @@ QApplication and are skipped where napari is not installed.
 Run (in an env with napari):  python -m pytest tests/test_mask_tiles.py -q
 """
 import os
-import sys
 import tempfile
 import types
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import pytest

@@ -2,12 +2,11 @@ import logging
 import napari
 import numpy as np
 from magicgui.widgets import Container, PushButton, Label, ComboBox, create_widget
-from qtpy.QtWidgets import QFrame, QLabel
+from qtpy.QtWidgets import QLabel
 
 from ...core import session
 from .. import popups, viewer_helpers
 from ..decorators import error_handler
-from ..style import COLORS
 from ._shared import make_divider as _make_divider
 from ...core.segmentation import (
     segment_nuclei_classical, segment_nuclei_cellpose,
@@ -186,7 +185,7 @@ class DapiSegmentationWidget(Container):
             if not popups.show_yes_no_popup(
                 viewer.window._qt_window,
                 "Masks Already Exist",
-                f"The following mask layers already exist:\n\n"
+                "The following mask layers already exist:\n\n"
                 + "\n".join(f"  • {n}" for n in existing)
                 + "\n\nReplace them with new segmentation?",
             ):

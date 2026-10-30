@@ -7,13 +7,10 @@ refactors/correctness fixes can be made safely.
 
 Run:  pytest tests/test_analysis.py -q   (or: python tests/test_analysis.py)
 """
-import os
-import sys
 
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from zfisher.core import analysis
 

@@ -2,10 +2,9 @@ import logging
 import napari
 import numpy as np
 from pathlib import Path
-from magicgui import magicgui, widgets
+from magicgui import magicgui
 from magicgui.widgets import Container, Label, PushButton, LineEdit
 
-from qtpy.QtWidgets import QFrame
 
 from ...core import session, analysis
 from ._shared import make_divider as _make_divider, make_section_header as _make_section_header, make_section_desc as _make_section_desc, make_spacer as _make_spacer

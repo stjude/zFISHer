@@ -9,13 +9,11 @@ Run:  python -m pytest tests/test_puncta_identity.py -q
 or:   python tests/test_puncta_identity.py
 """
 import os
-import sys
 import tempfile
 
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from zfisher import constants
 from zfisher.core import puncta

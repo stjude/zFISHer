@@ -8,11 +8,9 @@ showing raw images. It now takes the names from the first round it loaded.
 Run (in an env with napari):  python -m pytest tests/test_raw_load_once.py -q
 """
 import os
-import sys
 import types
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import pytest

@@ -721,7 +721,6 @@ def _add_or_replace_ids_layer(viewer, name, coords, labels, scale, translate=Non
     so that it renders on top in 3D (napari draws higher-index layers later).
     Visibility is synced to the parent mask via ``_attach_ids_visibility_sync``.
     """
-    import zfisher.ui.events as _events_mod
 
     if translate is None:
         translate = (0,) * len(scale)
@@ -894,7 +893,7 @@ def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napa
             layer.face_color = 'orange'
             layer.refresh()
         else:
-            new_pts = viewer.add_points(
+            viewer.add_points(
                 centroids,
                 name=centroid_layer_name,
                 size=5,

@@ -9,14 +9,11 @@ each test reopens its own copy of the output folder the way Load Session does.
 Run:  python -m pytest tests/test_stages.py -q
 """
 import logging
-import os
 import shutil
-import sys
 import tempfile
 import types
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import pandas as pd

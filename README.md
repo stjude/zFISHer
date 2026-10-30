@@ -269,11 +269,13 @@ Requires an NVIDIA GPU with CUDA drivers installed. See [PyTorch Get Started](ht
 
 ## Usage
 
-Launch the application from the project root:
+Once installed, launch the application with:
 
 ```bash
-python main.py
+zfisher
 ```
+
+or `python -m zfisher`; from a source checkout, `python main.py` does the same. The headless pipeline runs with `zfisher-cli` (`zfisher-cli --help`).
 
 This opens the napari viewer with the zFISHer sidebar containing all five workflow steps.
 
@@ -305,11 +307,13 @@ Loading a session restores all layers and processing state, so you can close and
 
 ```
 zFISHer/
-  main.py                    # Application entry point
+  main.py                    # Starts the app from a source checkout (installed: `zfisher`)
   zfisher_environment.yml    # Conda environment specification
   zfisher/
     constants.py             # Centralized parameters and naming conventions
     version.py               # Version string (auto-appends git hash for dev builds)
+    __main__.py              # `zfisher` command and `python -m zfisher`
+    cli.py                   # `zfisher-cli`: headless run, batch and template commands
     core/                    # Scientific computation (no UI dependencies)
       segmentation.py        # Classical + Cellpose nuclei segmentation, consensus matching
       registration.py        # RANSAC alignment, B-spline warping, parallel channel processing

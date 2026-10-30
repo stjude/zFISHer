@@ -13,12 +13,10 @@ they need a QApplication and are skipped where napari is not installed.
 Run (in an env with napari):  python -m pytest tests/test_mask_edit_persistence.py -q
 """
 import os
-import sys
 import tempfile
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import pytest
@@ -78,7 +76,6 @@ def _tif(me, layer):
 
 
 def test_paint_stroke_marks_dirty_and_flush_writes_tif(me):
-    import tifffile
     layer = _labels(_consensus_name())
     me._on_mask_layer_changed(layer)
     assert me._mask_editor_widget._current_callbacks[1] in layer.events.paint.callbacks
@@ -234,7 +231,6 @@ def out_dir(me, monkeypatch):
 
 
 def test_flush_writes_a_pending_delete_save_now(me, out_dir):
-    import tifffile
     layer = _labels("R1 - DAPI_masks")
     layer.data[0, 2:9, 2:9] = 4
     me._schedule_save(layer)

@@ -10,13 +10,11 @@ core tests run without napari; the GUI tests use a headless ``ViewerModel``.
 Run:  python -m pytest tests/test_puncta_source.py -q
 """
 import os
-import sys
 import tempfile
 import types
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import pandas as pd

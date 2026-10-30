@@ -6,14 +6,11 @@ It now writes a numbered copy by default; overwrite and error remain available.
 
 Run:  pytest tests/test_report_export.py -q   (or: python tests/test_report_export.py)
 """
-import os
-import sys
 import tempfile
 from pathlib import Path
 
 import pandas as pd
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from zfisher.core import report, session
 

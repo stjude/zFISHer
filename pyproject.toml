@@ -51,7 +51,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7"]
+test = ["pytest>=7", "ruff"]
 
 [project.urls]
 Homepage = "https://github.com/stjude/zFISHer"
@@ -61,9 +61,28 @@ Issues = "https://github.com/stjude/zFISHer/issues"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# The repository root, so tests import this checkout's zfisher even when it is
+# not installed, and tests/, so tests can share fixtures from sibling modules.
+pythonpath = [".", "tests"]
+
+[tool.ruff]
+line-length = 120
+extend-exclude = ["_legacy", "build"]
+
+[tool.ruff.lint]
+# Errors pyflakes and the parser catch: unused or undefined names, imports that
+# shadow each other, syntax errors. Style rules (import order, whitespace,
+# one statement per line) are left for a formatting-only change.
+select = ["E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# Fixtures imported from a sibling test module are used as test arguments,
+# which pyflakes reads as redefinitions.
+"tests/*" = ["F811"]
 
 [project.scripts]
-zfisher = "main:main"
+zfisher = "zfisher.__main__:main"
+zfisher-cli = "zfisher.cli:main"
 
 [tool.setuptools.dynamic]
 version = {attr = "zfisher.version.__version__"}

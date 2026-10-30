@@ -3,7 +3,6 @@ import logging
 import re
 import threading
 from pathlib import Path
-import numpy as np
 
 from .. import constants
 from .log_config import attach_session_log, detach_session_log

@@ -1,6 +1,6 @@
 import napari
 from magicgui import widgets
-from qtpy.QtWidgets import QToolBox, QWidget, QVBoxLayout
+from qtpy.QtWidgets import QToolBox
 
 from .dapi_segmentation_widget import dapi_segmentation_widget
 from .mask_editor_widget import mask_editor_widget

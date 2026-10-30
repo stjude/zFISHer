@@ -316,7 +316,6 @@ def on_layer_removed(event, widgets):
     unregistering, which are for layers the user deletes.
     """
     # Suppress custom controls during cascade deletion to prevent popup flashing
-    from .viewer import _suppress_custom_controls
     import zfisher.ui.viewer as _viewer_mod
     was_suppressed = _viewer_mod._suppress_custom_controls
     _viewer_mod._suppress_custom_controls = True

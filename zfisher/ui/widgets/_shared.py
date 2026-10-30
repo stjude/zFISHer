@@ -1,5 +1,4 @@
 import logging
-import napari
 from pathlib import Path
 from magicgui.widgets import Container
 

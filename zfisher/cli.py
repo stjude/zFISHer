@@ -1,12 +1,13 @@
 """Command-line interface for zFISHer.
 
 Exposes the headless core pipeline for scripted and batch execution without
-requiring a napari viewer. Invoke as:
+requiring a napari viewer. Invoke as ``zfisher-cli`` once installed, or as
+``python -m zfisher.cli``:
 
-    python -m zfisher.cli --help
-    python -m zfisher.cli run R1.nd2 R2.nd2 -o ./output
-    python -m zfisher.cli batch template.xlsx -o ./batch_output
-    python -m zfisher.cli template ./my_template.xlsx
+    zfisher-cli --help
+    zfisher-cli run R1.nd2 R2.nd2 -o ./output
+    zfisher-cli batch template.xlsx -o ./batch_output
+    zfisher-cli template ./my_template.xlsx
 """
 import argparse
 import logging
@@ -157,7 +158,7 @@ def _cmd_template(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        prog="python -m zfisher.cli",
+        prog="zfisher-cli",
         description="Headless CLI for the zFISHer sequential FISH analysis pipeline.",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logging.")
@@ -197,10 +198,11 @@ def main(argv=None):
 
     args = parser.parse_args(argv)
 
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(name)s [%(levelname)s] %(message)s",
-    )
+    level = logging.DEBUG if args.verbose else logging.INFO
+    logging.basicConfig(level=level, format="%(asctime)s %(name)s [%(levelname)s] %(message)s")
+    # zFISHer's loggers do not propagate to the root logger (see
+    # zfisher/__init__.py), so the level has to be set on them as well.
+    logging.getLogger("zfisher").setLevel(level)
 
     return args.func(args)
 

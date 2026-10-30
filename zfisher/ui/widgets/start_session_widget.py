@@ -1,6 +1,6 @@
 import napari
 from magicgui import widgets
-from qtpy.QtWidgets import QToolBox, QWidget, QVBoxLayout
+from qtpy.QtWidgets import QToolBox
 
 from .new_session_widget import NewSessionWidget
 from .load_session_widget import LoadSessionWidget

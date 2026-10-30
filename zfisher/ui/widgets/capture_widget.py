@@ -142,7 +142,6 @@ class ArrowOverlay(QWidget):
             dpr = self._device_pixel_ratio()
             buf = np.zeros(4)
             buf[3] = 1.0
-            nd = len(rev_displayed)
 
             def _project_vispy(data_point):
                 world = np.asarray(data_point) * scale + translate
@@ -781,8 +780,7 @@ def reset_capture_state():
 
 
 # --- UI Wrapper ---
-from qtpy.QtWidgets import QFrame, QLabel, QSizePolicy
-from ..style import COLORS
+from qtpy.QtWidgets import QLabel, QSizePolicy
 
 capture_widget = widgets.Container(labels=False)
 header = widgets.Label(value="Capture & Annotate")
@@ -821,7 +819,7 @@ _layout.addStretch(1)
 
 # Ensure widgets shrink with panel
 _capture_widget.native.setMinimumWidth(0)
-from qtpy.QtWidgets import QAbstractSpinBox, QComboBox, QLabel
+from qtpy.QtWidgets import QAbstractSpinBox, QComboBox
 for child in _capture_widget.native.findChildren(QLabel):
     child.setMinimumWidth(0)
 for child in _capture_widget.native.findChildren(QAbstractSpinBox) + _capture_widget.native.findChildren(QComboBox):

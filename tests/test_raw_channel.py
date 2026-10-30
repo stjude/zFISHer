@@ -14,11 +14,8 @@ file can be written here.
 Run:  python -m pytest tests/test_raw_channel.py -q
 """
 import os
-import sys
 import types
-from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import pytest

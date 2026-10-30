@@ -15,10 +15,7 @@ installed.
 
 Run:  python -m pytest tests/test_io_write.py -q
 """
-import os
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import pytest
@@ -204,7 +201,6 @@ def test_unmarked_edit_stays_stale_until_everything_is_marked(tmp_path):
 
 
 def test_random_marked_edits_keep_the_file_exact(tmp_path):
-    from zfisher.core import label_edits
     rng = np.random.default_rng(0)
     path = tmp_path / "m.ome.tif"
     data = _volume()

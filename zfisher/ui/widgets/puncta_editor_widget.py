@@ -612,8 +612,6 @@ def _on_puncta_undo():
 pe_undo_btn.clicked.connect(_on_puncta_undo)
 
 # --- UI Wrapper ---
-from qtpy.QtWidgets import QFrame
-from ..style import COLORS
 
 from qtpy.QtWidgets import QLabel as _QLabel, QWidget as _QWidget
 
@@ -654,7 +652,7 @@ _inner.insertWidget(1, _pe_target_desc)
 from pathlib import Path as _Path
 from qtpy.QtGui import QIcon as _QIcon
 from qtpy.QtCore import QSize as _QSize
-from qtpy.QtWidgets import QPushButton as _QPushButton, QHBoxLayout as _QHBoxLayout, QCheckBox as _QCheckBox
+from qtpy.QtWidgets import QPushButton as _QPushButton, QHBoxLayout as _QHBoxLayout
 
 _tools_header = _make_section_header("Tools")
 _tools_desc = _make_section_desc("Select a tool. Only one mode is active at a time.")

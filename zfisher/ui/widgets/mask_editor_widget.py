@@ -7,11 +7,11 @@ from collections import deque
 from magicgui import magicgui, widgets
 from pathlib import Path
 from qtpy.QtCore import QTimer, Qt
-from qtpy.QtWidgets import QApplication, QFrame
+from qtpy.QtWidgets import QApplication
 
 from ...core import session, timing
 from ...core import io
-from .. import popups, viewer_helpers
+from .. import viewer_helpers
 from ..decorators import require_active_session
 from ...core import label_edits
 from ... import constants

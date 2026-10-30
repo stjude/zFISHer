@@ -2,6 +2,29 @@
 
 All notable changes to zFISHer. Versions follow [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Installation
+
+- **The `zfisher` command works after `pip install`.** It pointed at a
+  `main.py` that is not part of the installed package, so outside the source
+  folder it failed with "No module named 'main'". It now starts the app from
+  the package; `python -m zfisher` does the same, and `python main.py` still
+  works in a source checkout.
+- **`zfisher-cli`** runs the headless pipeline (`run`, `batch`, `template`),
+  as `python -m zfisher.cli` did. Its `-v` now shows zFISHer's debug messages;
+  it set the level on a logger zFISHer's messages do not pass through.
+
+### Development
+
+- The tests find the checkout and each other through pytest's `pythonpath`
+  setting instead of editing `sys.path` in every file.
+- `ruff check .` runs in CI for the errors pyflakes finds (unused and
+  undefined names, imports shadowing each other); 112 such findings are fixed.
+  Install with `pip install -e ".[test]"` to get pytest and ruff.
+- A test now covers opening a listed file from its `.bak` when the file itself
+  is missing; a docstring claimed one existed.
+
 ## 2.2.1 — 2026-10-29
 
 ### Fixes

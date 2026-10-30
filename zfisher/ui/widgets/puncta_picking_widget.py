@@ -1,7 +1,6 @@
 import napari
 from magicgui import widgets
 from qtpy.QtWidgets import QToolBox, QWidget, QVBoxLayout
-from qtpy.QtCore import Qt
 
 from .. import style
 

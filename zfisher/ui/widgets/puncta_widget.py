@@ -372,8 +372,6 @@ def _on_image_change(new_layer: "napari.layers.Image"):
                 pass
 
 # --- UI Wrapper (native layout like colocalization_widget) ---
-from qtpy.QtWidgets import QFrame
-from ..style import COLORS
 
 class _PunctaWidgetContainer(widgets.Container):
     """Wrapper that delegates reset_choices to the inner magicgui widget."""

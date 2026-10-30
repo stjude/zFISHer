@@ -12,12 +12,9 @@ Run:  python -m pytest tests/test_load_clears_previous_session.py -q
 """
 import json
 import logging
-import os
-import sys
 import types
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 

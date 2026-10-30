@@ -33,7 +33,7 @@ import warnings
 import gc
 from dataclasses import dataclass
 import tifffile
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from .session import set_processed_file
 
 from . import session

@@ -6,7 +6,7 @@ import logging
 
 import pandas as pd
 
-from . import io, registration, segmentation, puncta, analysis, session, stages
+from . import io, registration, segmentation, analysis, session, stages
 from .. import constants
 from .timing import timed_stage
 

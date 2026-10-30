@@ -3,7 +3,7 @@ from pathlib import Path
 import logging
 import napari
 import pandas as pd
-from qtpy.QtWidgets import QFrame, QFileDialog
+from qtpy.QtWidgets import QFileDialog
 
 from ...core import pipeline
 from ...core.generate_batch_template import (
@@ -17,7 +17,6 @@ from ...core.generate_batch_template import (
 from .. import popups
 from ._shared import make_divider as _make_divider
 from ..decorators import error_handler
-from ..style import COLORS
 
 logger = logging.getLogger(__name__)
 

@@ -14,12 +14,10 @@ these need a QApplication and are skipped where napari is not installed.
 Run (in an env with napari):  python -m pytest tests/test_label_ids.py -q
 """
 import os
-import sys
 import tempfile
 import types
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import pytest
