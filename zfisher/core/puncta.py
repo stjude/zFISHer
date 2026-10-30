@@ -279,7 +279,7 @@ def calculate_spot_quality(image_data, coords, radius=2, progress_callback=None,
 
     return np.array(stats)
 
-def preprocess_white_tophat(image_data, radius=constants.PUNCTA_TOPHAT_RADIUS,
+def preprocess_white_tophat(image_data, radius=15,
                             progress_callback=None, progress_range=(25, 40)):
     """Applies slice-by-slice background subtraction."""
     selem = disk(radius)

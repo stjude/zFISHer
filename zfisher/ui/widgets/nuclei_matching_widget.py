@@ -3,6 +3,7 @@ from magicgui import magicgui
 from magicgui.widgets import Container, Label
 
 from ...core import session, segmentation
+from ...core.params import ConsensusParams, default, gui_option
 from ._shared import make_divider as _make_divider, make_section_header as _make_section_header, make_section_desc as _make_section_desc, make_spacer as _make_spacer
 from .. import popups, viewer_helpers
 from ..decorators import require_active_session, error_handler
@@ -13,24 +14,18 @@ from ... import constants
     layout="vertical",
     r1_mask_layer={"label": "R1 Mask (Aligned)", "tooltip": "The aligned nuclei mask from Round 1."},
     r2_mask_layer={"label": "R2 Mask (Warped)", "tooltip": "The nuclei mask from Round 2 after registration."},
-    method={
-        "label": "Overlap Method",
-        "widget_type": "RadioButtons", # Changes dropdown to toggle/radio buttons
-        "choices": ["Intersection", "Union"], # Intersection is now first
-        "orientation": "horizontal", # Places buttons side-by-side
-        "tooltip": "Intersection: Keep only overlapping pixels. Union: Keep all pixels from both rounds."
-    },
-    match_threshold={"label": "Match Threshold, px (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum centroid distance in pixels to match nuclei between rounds. 0 = auto-detect."},
-    remove_outliers={"label": "Remove Extranuclear Puncta", "tooltip": "Remove puncta located outside the merged nuclei mask."},
+    method=gui_option(ConsensusParams, "overlap_method", widget_type="RadioButtons", orientation="horizontal"),
+    match_threshold=gui_option(ConsensusParams, "match_threshold"),
+    remove_outliers=gui_option(ConsensusParams, "remove_extranuclear_puncta", tooltip="Remove puncta located outside the merged nuclei mask."),
 )
 @require_active_session("Please start or load a session before matching nuclei.")
 @error_handler("Nuclei Matching Failed")
 def _nuclei_matching_widget(
     r1_mask_layer: "napari.layers.Labels",
     r2_mask_layer: "napari.layers.Labels",
-    method: str = "Intersection",
-    match_threshold: int = 0,
-    remove_outliers: bool = True,
+    method: str = default(ConsensusParams, "overlap_method"),
+    match_threshold: int = default(ConsensusParams, "match_threshold"),
+    remove_outliers: bool = default(ConsensusParams, "remove_extranuclear_puncta"),
 ):
     """
     Matches nuclei between two aligned mask layers and syncs their IDs.

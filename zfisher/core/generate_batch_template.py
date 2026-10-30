@@ -15,7 +15,8 @@ import pandas as pd
 from .. import constants
 from . import io
 from .params import (BatchConfig, ColocRule, ColocRuleRow, ConsensusParams, DatasetSpec, DetectionParams,
-                     PunctaRule, RegistrationParams, SegmentationParams, SegMethod, TriColocRule, field_range)
+                     PunctaRule, RegistrationParams, SegmentationParams, SegMethod, TriColocRule, default,
+                     field_range)
 
 logger = logging.getLogger(__name__)
 
@@ -183,16 +184,16 @@ def _build_instructions_rows():
         ("Sensitivity",
          f"Relative intensity threshold between 0 and 1. Controls how dim a spot can be and still be detected. "
          f"Lower values detect dimmer spots but may increase false positives. Higher values are more stringent. "
-         f"Start with the default ({constants.PUNCTA_THRESHOLD_REL}) and adjust based on your results."),
+         f"Start with the default ({default(DetectionParams, 'threshold_rel')}) and adjust based on your results."),
         ("Min_Distance",
          f"Minimum distance in pixels between detected puncta. Prevents double-counting nearby spots. "
          f"Increase if you see clusters of detections on single spots. Decrease if closely spaced spots are being merged. "
-         f"Default: {constants.PUNCTA_MIN_DISTANCE} pixels."),
+         f"Default: {default(DetectionParams, 'min_distance')} pixels."),
         ("Sigma",
          f"Gaussian smoothing sigma (in pixels) applied before detection. "
          f"Match this to the approximate radius of your puncta. "
          f"Set to 0 for no pre-smoothing (use with Local Maxima on clean data). "
-         f"For LoG/DoG, this defines the expected spot size. Default: {constants.PUNCTA_SIGMA}."),
+         f"For LoG/DoG, this defines the expected spot size. Default: {default(DetectionParams, 'sigma')}."),
         ("Nuclei_Only",
          "TRUE or FALSE. When TRUE, only puncta located inside nuclei masks are kept (extranuclear spots are discarded). "
          "Set to FALSE to detect puncta everywhere in the image, including cytoplasm and extracellular space. "
@@ -205,7 +206,7 @@ def _build_instructions_rows():
         ("Tophat_Radius",
          f"Radius in pixels for the top-hat filter. Only used when Tophat=TRUE. "
          f"Should be larger than your puncta but smaller than background intensity gradients. "
-         f"Default: {constants.PUNCTA_TOPHAT_RADIUS} pixels."),
+         f"Default: {default(DetectionParams, 'tophat_radius')} pixels."),
         ("", ""),
         ("", ""),
 
@@ -486,12 +487,12 @@ def build_template_sheets():
         "Round": "Both",
         "Channel": "Cy5",
         "Algorithm": "Local Maxima",
-        "Sensitivity": constants.PUNCTA_THRESHOLD_REL,
-        "Min_Distance": constants.PUNCTA_MIN_DISTANCE,
-        "Sigma": constants.PUNCTA_SIGMA,
+        "Sensitivity": default(DetectionParams, "threshold_rel"),
+        "Min_Distance": default(DetectionParams, "min_distance"),
+        "Sigma": default(DetectionParams, "sigma"),
         "Nuclei_Only": True,
         "Tophat": False,
-        "Tophat_Radius": constants.PUNCTA_TOPHAT_RADIUS,
+        "Tophat_Radius": default(DetectionParams, "tophat_radius"),
     }
     p_example2 = {
         "Dataset": f"{_EXAMPLE_PREFIX} FOV1",
@@ -499,23 +500,23 @@ def build_template_sheets():
         "Channel": "GFP",
         "Algorithm": "Laplacian of Gaussian",
         "Sensitivity": 0.03,
-        "Min_Distance": constants.PUNCTA_MIN_DISTANCE,
+        "Min_Distance": default(DetectionParams, "min_distance"),
         "Sigma": 1.0,
         "Nuclei_Only": True,
         "Tophat": True,
-        "Tophat_Radius": constants.PUNCTA_TOPHAT_RADIUS,
+        "Tophat_Radius": default(DetectionParams, "tophat_radius"),
     }
     p_default = {
         "Dataset": "ALL",
         "Round": "Both",
         "Channel": "",
         "Algorithm": "Local Maxima",
-        "Sensitivity": constants.PUNCTA_THRESHOLD_REL,
-        "Min_Distance": constants.PUNCTA_MIN_DISTANCE,
-        "Sigma": constants.PUNCTA_SIGMA,
+        "Sensitivity": default(DetectionParams, "threshold_rel"),
+        "Min_Distance": default(DetectionParams, "min_distance"),
+        "Sigma": default(DetectionParams, "sigma"),
         "Nuclei_Only": True,
         "Tophat": False,
-        "Tophat_Radius": constants.PUNCTA_TOPHAT_RADIUS,
+        "Tophat_Radius": default(DetectionParams, "tophat_radius"),
     }
     puncta = pd.DataFrame([p_example1, p_example2] + [dict(p_default) for _ in range(N)])
 
@@ -901,7 +902,6 @@ def parse_batch_config(excel_path):
 
 def _detection_field(name):
     """``(default, min, max)`` of a ``DetectionParams`` field, for the parser."""
-    from .params import default
     lo, hi = field_range(DetectionParams, name)
     return default(DetectionParams, name), lo, hi
 

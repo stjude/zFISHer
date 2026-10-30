@@ -75,11 +75,9 @@ NUC_SEG_CP2D_SCALE_FACTOR = 0.25
 NUC_SEG_CP2D_STITCH_THRESH = 0.3
 NUC_SEG_CP2D_DIAMETER = None       # None = auto-estimate
 
-# Puncta Detection
-PUNCTA_MIN_DISTANCE = 2
-PUNCTA_THRESHOLD_REL = 0.05
-PUNCTA_SIGMA = 0.0
-PUNCTA_TOPHAT_RADIUS = 15
+# Puncta Detection. The settings a person chooses (sensitivity, min distance,
+# sigma, top-hat) are defined, with their defaults and ranges, in
+# zfisher/core/params.py.
 # A re-detected punctum this close (µm) to one that is kept is the same punctum
 # and is dropped. 0.3 µm is the GUI's 3 px at the typical 0.1 µm pixel.
 PUNCTA_DUPLICATE_DISTANCE_UM = 0.3

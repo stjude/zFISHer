@@ -8,6 +8,7 @@ import pandas as pd
 
 from . import io, registration, segmentation, analysis, session, stages
 from .. import constants
+from .params import DetectionParams, default
 from .timing import timed_stage
 
 logger = logging.getLogger(__name__)
@@ -199,8 +200,10 @@ def run_full_zfisher_pipeline(
                 nuclei_only = ch_params.pop("nuclei_only", True)
             else:
                 ch_params = {
-                    'threshold_rel': constants.PUNCTA_THRESHOLD_REL,
-                    'min_distance': constants.PUNCTA_MIN_DISTANCE,
+                    # Sigma and the top-hat are left to detection's own
+                    # fallbacks (puncta.DETECTOR_DEFAULTS), as before.
+                    'threshold_rel': default(DetectionParams, "threshold_rel"),
+                    'min_distance': default(DetectionParams, "min_distance"),
                     'method': "Local Maxima",
                 }
                 nuclei_only = True

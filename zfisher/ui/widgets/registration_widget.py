@@ -2,6 +2,7 @@ import napari
 from magicgui import magicgui, widgets
 
 from ...core import session, registration #
+from ...core.params import RegistrationParams, default, gui_option
 from .. import popups
 from ..decorators import require_active_session, error_handler
 from ._shared import make_divider as _make_divider, make_section_header as _make_section_header, make_section_desc as _make_section_desc, make_spacer as _make_spacer
@@ -10,14 +11,14 @@ from ._shared import make_divider as _make_divider, make_section_header as _make
     call_button="Calculate Alignment",
     r1_points={"label": "R1 Centroids", "tooltip": "Centroid points layer from Round 1 nuclei segmentation."},
     r2_points={"label": "R2 Centroids", "tooltip": "Centroid points layer from Round 2 nuclei segmentation."},
-    max_distance={"label": "Max Pair Distance, µm (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum distance in micrometres for matching centroid pairs between rounds. 0 = auto-detect."},
+    max_distance=gui_option(RegistrationParams, "max_ransac_distance", label="Max Pair Distance, µm (0=auto)"),
 )
 @require_active_session("Please start or load a session before running registration.")
 @error_handler("Registration Failed")
 def _registration_widget(
     r1_points: "napari.layers.Points",
     r2_points: "napari.layers.Points",
-    max_distance: int = 0,
+    max_distance: int = default(RegistrationParams, "max_ransac_distance"),
 ):
     """Calculates the XYZ shift between two point clouds via the core orchestrator."""
     viewer = napari.current_viewer()

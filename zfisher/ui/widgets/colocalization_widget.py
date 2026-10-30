@@ -7,6 +7,7 @@ from magicgui.widgets import Container, Label, PushButton, LineEdit
 
 
 from ...core import session, analysis
+from ...core.params import ColocRule, TriColocRule, default, gui_option
 from ._shared import make_divider as _make_divider, make_section_header as _make_section_header, make_section_desc as _make_section_desc, make_spacer as _make_spacer
 from .. import popups, viewer_helpers
 from ..decorators import require_active_session, error_handler
@@ -24,13 +25,13 @@ logger = logging.getLogger(__name__)
     layout="vertical",
     source_layer={"label": "Source Channel (e.g. FITC)", "tooltip": "The first puncta channel to analyze (the reference channel)."},
     target_layer={"label": "Target Channel (e.g. Cy5)", "tooltip": "The second puncta channel to measure distance from the source."},
-    cutoff={"label": "Cutoff (um)", "min": 0.1, "step": 0.1, "value": 1.0, "tooltip": "Maximum distance (in microns) for two puncta to count as colocalized (close together)."}
+    cutoff=gui_option(ColocRule, "cutoff_um"),
 )
 @require_active_session("Please start or load a session before adding rules.")
 def _rule_builder(
     source_layer: "napari.layers.Points",
     target_layer: "napari.layers.Points",
-    cutoff: float = 1.0
+    cutoff: float = default(ColocRule, "cutoff_um"),
 ):
     """Adds a colocalization rule to the current session."""
     viewer = napari.current_viewer()
@@ -97,14 +98,14 @@ _clear_btn.clicked.connect(_on_clear_rules)
     anchor_layer={"label": "Anchor Channel", "tooltip": "The reference channel for three-channel colocalization (must be near both Channel A and Channel B)."},
     channel_a_layer={"label": "Channel A", "tooltip": "First comparison channel (must colocalize with anchor)."},
     channel_b_layer={"label": "Channel B", "tooltip": "Second comparison channel (must colocalize with anchor)."},
-    cutoff={"label": "Cutoff (um)", "min": 0.1, "step": 0.1, "value": 1.0, "tooltip": "Maximum distance in microns for tri-colocalization."}
+    cutoff=gui_option(TriColocRule, "cutoff_um"),
 )
 @require_active_session("Please start or load a session before adding rules.")
 def _tri_rule_builder(
     anchor_layer: "napari.layers.Points",
     channel_a_layer: "napari.layers.Points",
     channel_b_layer: "napari.layers.Points",
-    cutoff: float = 1.0
+    cutoff: float = default(TriColocRule, "cutoff_um"),
 ):
     """Adds a tri-colocalization rule: anchor must be near both Channel A and Channel B."""
     viewer = napari.current_viewer()

@@ -256,6 +256,15 @@ def magicgui_options(model, names=None):
     return out
 
 
+def gui_option(model, name, **override):
+    """The magicgui option dict of one field (``magicgui_options``), with
+    ``override`` on top for what only the widget decides (widget type,
+    orientation, a shorter label)."""
+    option = magicgui_options(model, [name])[name]
+    option.update(override)
+    return option
+
+
 def default(model, name):
     """The GUI and template default of ``model``'s field ``name``."""
     field = model.model_fields[name]

@@ -10,6 +10,7 @@ from magicgui.widgets import Container, Label
 logger = logging.getLogger(__name__)
 
 from ...core import session, segmentation, registration, puncta
+from ...core.params import ConsensusParams, RegistrationParams, default, gui_option
 from .. import popups, viewer_helpers
 from ..decorators import require_active_session, error_handler
 from ...core.registration import generate_global_canvas
@@ -29,12 +30,12 @@ def _get_qt_parent(viewer):
     call_button="Run Automated Registration && Warping",
     r1_dapi_layer={"label": "Round 1 Nuclei Layer", "tooltip": "Select the Round 1 nuclear stain layer for registration."},
     r2_dapi_layer={"label": "Round 2 Nuclei Layer", "tooltip": "Select the Round 2 nuclear stain layer for registration."},
-    max_distance={"label": "Max RANSAC Distance, µm (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum distance in micrometres for matching centroid pairs between rounds. 0 = auto-detect."},
-    apply_warp={"label": "Apply B-spline Warp", "value": True, "tooltip": "Apply elastic warping for better alignment (recommended). Disable for rigid rotation/translation only."},
+    max_distance=gui_option(RegistrationParams, "max_ransac_distance"),
+    apply_warp=gui_option(RegistrationParams, "apply_warp"),
     match_nuclei={"label": "Create Consensus Nuclei Mask", "tooltip": "Create a merged nuclei mask by matching R1 and R2 nuclei after alignment."},
-    overlap_method={"label": "Overlap Method", "widget_type": "RadioButtons", "choices": ["Intersection", "Union"], "orientation": "horizontal", "tooltip": "Intersection: Keep only overlapping pixels. Union: Keep all pixels from both rounds."},
-    match_threshold={"label": "Match Threshold, px (0=auto)", "value": 0, "min": 0, "max": 100, "tooltip": "Maximum centroid distance in pixels to match nuclei between rounds. 0 = auto-detect."},
-    remove_outliers={"label": "Remove Extranuclear Puncta", "value": True, "tooltip": "Remove puncta located outside the merged nuclei mask after matching."},
+    overlap_method=gui_option(ConsensusParams, "overlap_method", widget_type="RadioButtons", orientation="horizontal"),
+    match_threshold=gui_option(ConsensusParams, "match_threshold"),
+    remove_outliers=gui_option(ConsensusParams, "remove_extranuclear_puncta"),
     show_checkerboard={"label": "Show Checkerboard", "value": True, "tooltip": "Show a checkerboard pattern to visually assess alignment quality."},
     show_deformation={"label": "Show Deformation Field", "value": True, "tooltip": "Show a vector field visualizing how the tissue was warped."},
     hide_raw={"label": "Hide Raw Layers After?", "tooltip": "Hide raw input layers after processing, showing only aligned results."}
@@ -44,12 +45,12 @@ def _get_qt_parent(viewer):
 def _automated_preprocessing_magic_widget(
     r1_dapi_layer: "napari.layers.Image",
     r2_dapi_layer: "napari.layers.Image",
-    max_distance: int = 0,
-    apply_warp: bool = True,
+    max_distance: int = default(RegistrationParams, "max_ransac_distance"),
+    apply_warp: bool = default(RegistrationParams, "apply_warp"),
     match_nuclei: bool = True,
-    overlap_method: str = "Intersection",
-    match_threshold: int = 0,
-    remove_outliers: bool = True,
+    overlap_method: str = default(ConsensusParams, "overlap_method"),
+    match_threshold: int = default(ConsensusParams, "match_threshold"),
+    remove_outliers: bool = default(ConsensusParams, "remove_extranuclear_puncta"),
     show_checkerboard: bool = True,
     show_deformation: bool = True,
     hide_raw: bool = False
