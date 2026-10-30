@@ -4,7 +4,7 @@ from pathlib import Path
 from magicgui import magicgui
 from magicgui.widgets import Container, Label
 
-from ...core import session, registration, puncta # Importing from core
+from ...core import session, registration, stages
 from .. import popups, viewer_helpers, events
 from ..decorators import require_active_session, error_handler
 from ... import constants
@@ -82,7 +82,9 @@ def _canvas_widget(
             shift,
             output_dir,
             apply_warp=apply_warp,
-            progress_callback=lambda p, m: dialog.update_progress(int(p * 0.70), m)
+            progress_callback=lambda p, m: dialog.update_progress(int(p * 0.70), m),
+            # Rounds whose nuclear channels are named differently (2.1.2's batch fix).
+            r2_channel_names=stages.nuclear_channel_names(),
         )
 
         # 6. Remove existing aligned/warped layers to prevent duplicates on rerun
@@ -155,74 +157,16 @@ def _canvas_widget(
             and constants.WARPED_PREFIX not in l.name
         ]
         if puncta_layers:
-            base_output = Path(base_output_dir)
-            reports_dir = base_output / constants.REPORTS_DIR
-            reports_dir.mkdir(exist_ok=True, parents=True)
             voxels = session.get_data("canvas_scale")
             if not voxels:
                 # Fallback: use scale from the first R1 image layer
                 ref = next((l for l in viewer.layers if isinstance(l, napari.layers.Image) and "R1" in l.name), None)
                 voxels = tuple(ref.scale) if ref else (1, 1, 1)
-            else:
-                voxels = tuple(voxels)
-
-            n_puncta = max(len(puncta_layers), 1)
-            for pi, pts_layer in enumerate(puncta_layers):
-                pct = 80 + int(((pi + 1) / n_puncta) * 18)
-                dialog.update_progress(pct, f"Transforming puncta: {pts_layer.name}...")
-
-                name_upper = pts_layer.name.upper()
-                if "R1" in name_upper:
-                    round_id = "R1"
-                elif "R2" in name_upper:
-                    round_id = "R2"
-                else:
-                    continue
-
-                if len(pts_layer.data) == 0:
-                    continue
-                raw_puncta, pid, sources = viewer_helpers.raw_puncta_from_layer(pts_layer)
-                if pid is None:
-                    pid = np.arange(len(raw_puncta))
-
-                prefix_str = constants.ALIGNED_PREFIX if (round_id == "R1" or bspline_transform is None) else constants.WARPED_PREFIX
-                base_name = pts_layer.name.replace(constants.PUNCTA_SUFFIX, "")
-                aligned_layer_name = f"{prefix_str} {base_name.strip()}{constants.PUNCTA_SUFFIX}"
-                csv_out = constants.puncta_csv_path(reports_dir, aligned_layer_name)
-
-                # consensus_mask=None is intentional: in the manual workflow the
-                # canvas step runs BEFORE the consensus mask exists, so this is a
-                # geometry-only transform (puncta get Nucleus_ID=0 for now). The
-                # required "Match Nuclei" step then assigns nuclei via
-                # viewer_helpers.resync_puncta_nucleus_ids (same path the
-                # automated pipeline uses), so the two paths converge. Do NOT try
-                # to wire a consensus mask here — it does not exist yet.
-                transformed = puncta.transform_puncta_to_aligned_space(
-                    raw_puncta=raw_puncta,
-                    round_id=round_id,
-                    shift=shift,
-                    canvas_offset=canvas_offset,
-                    bspline_transform=bspline_transform if round_id == "R2" else None,
-                    consensus_mask=None,
-                    output_path=csv_out,
-                    layer_name=aligned_layer_name,
-                    puncta_ids=pid,
-                    sources=sources,
-                )
-
-                if transformed is not None and len(transformed) > 0:
-                    ref = type('_ref', (), {
-                        'name': aligned_layer_name.replace(constants.PUNCTA_SUFFIX, ''),
-                        'scale': voxels,
-                        'translate': (0,) * len(voxels),
-                    })()
-                    viewer_helpers.add_or_update_puncta_layer(
-                        viewer, ref, transformed, sources=puncta.sources_of(transformed, pid, sources))
-                    viewer_helpers.record_aligned_puncta_provenance(aligned_layer_name, pts_layer.name)
-
-                # Keep the raw CSV: the aligned rows share its puncta_id, and
-                # the saved registration can transform it again.
-                viewer_helpers.retire_raw_puncta_layer(viewer, pts_layer)
+            # The consensus mask does not exist yet in the manual workflow: no
+            # nuclei now; Match Nuclei assigns them next.
+            viewer_helpers.transform_raw_puncta_layers(
+                viewer, puncta_layers, tuple(voxels), remove_extranuclear=False, assign_nuclei=False,
+                progress=lambda pct, text: dialog.update_progress(80 + int(pct * 0.18), text))
 
         # Lock all puncta layers after warping — no further deletion allowed
         for layer in viewer.layers:

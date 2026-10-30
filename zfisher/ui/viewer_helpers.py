@@ -462,6 +462,36 @@ def show_puncta_csv(viewer, name, csv_path, source_layer):
     return layer
 
 
+def transform_raw_puncta_layers(viewer, layers, voxels, remove_extranuclear=False, consensus_mask=None,
+                                assign_nuclei=True, progress=None):
+    """Warp the raw puncta ``layers`` into aligned space the way batch does:
+    each layer's CSV is saved, so the file holds what is on screen, then
+    ``stages.transform_channel`` takes the raw CSV through the registration
+    the canvas step just saved, and the aligned CSV it writes is shown. The
+    raw layers are removed, their CSVs kept. Returns the aligned layer names."""
+    from ..core import registration, stages
+    from . import events
+    saved = registration.load_registration()
+    ref = type('_ref', (), {'scale': tuple(voxels), 'translate': (0,) * len(voxels)})()
+    names = []
+    for i, layer in enumerate(layers):
+        key = _puncta.channel_key(layer.name)
+        if not key or not key.startswith(("R1 - ", "R2 - ")):
+            continue
+        round_id, channel = key.split(" - ", 1)
+        if progress:
+            progress(int(100 * i / max(len(layers), 1)), f"Transforming puncta: {layer.name}...")
+        events.save_puncta_layer(layer)
+        csv = stages.transform_channel(round_id, channel, remove_extranuclear=remove_extranuclear, run_by="gui",
+                                       consensus_mask=consensus_mask, assign_nuclei=assign_nuclei)
+        if csv is not None:
+            name = stages.aligned_puncta_name(round_id, channel, saved)
+            show_puncta_csv(viewer, name, csv, ref)
+            names.append(name)
+        retire_raw_puncta_layer(viewer, layer)
+    return names
+
+
 def manual_mask(features):
     """Which rows of a puncta feature table were placed by hand."""
     if features is None or 'Source' not in getattr(features, 'columns', ()):

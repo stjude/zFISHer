@@ -9,7 +9,7 @@ from magicgui.widgets import Container, Label
 
 logger = logging.getLogger(__name__)
 
-from ...core import session, segmentation, registration, puncta
+from ...core import session, segmentation, registration, puncta, stages
 from ...core.params import ConsensusParams, RegistrationParams, default, gui_option
 from .. import popups, viewer_helpers
 from ..decorators import require_active_session, error_handler
@@ -113,7 +113,9 @@ def _automated_preprocessing_magic_widget(
             is_label = isinstance(l, napari.layers.Labels)
             layer_info = {
                 'name': l.name,
-                'data': l.data.astype(np.uint32) if is_label else l.data.astype(np.float32),
+                # The image as read, like batch: a float32 copy made the aligned
+                # TIFFs differ from batch's in type.
+                'data': np.asarray(l.data).astype(np.uint32) if is_label else np.asarray(l.data),
                 'colormap': l.colormap.name if hasattr(l, 'colormap') else 'gray',
                 'scale': tuple(l.scale),
                 'is_label': is_label,
@@ -129,7 +131,9 @@ def _automated_preprocessing_magic_widget(
         results, bspline_transform, canvas_offset = generate_global_canvas(
             r1_layers_data, r2_layers_data, shift, aligned_dir,
             apply_warp=apply_warp,
-            progress_callback=lambda p, t: dialog.update_progress(35 + int(p * 0.30), t)
+            progress_callback=lambda p, t: dialog.update_progress(35 + int(p * 0.30), t),
+            # Rounds whose nuclear channels are named differently (2.1.2's batch fix).
+            r2_channel_names=stages.nuclear_channel_names(),
         )
         session.update_data("canvas_scale", voxels)
         r1_layers_data.clear(); r2_layers_data.clear(); gc.collect()
@@ -213,6 +217,7 @@ def _automated_preprocessing_magic_widget(
                     output_dir=output_dir,
                     threshold=match_threshold or None,
                     method=overlap_method,
+                    voxel_size=voxels,
                     progress_callback=lambda p, t: dialog.update_progress(70 + int(p * 0.25), t)
                 )
 
@@ -239,64 +244,10 @@ def _automated_preprocessing_magic_widget(
             and constants.ALIGNED_PREFIX not in l.name
             and constants.WARPED_PREFIX not in l.name
         ]
-        if puncta_layers:
-            reports_dir = output_dir / constants.REPORTS_DIR
-            reports_dir.mkdir(exist_ok=True, parents=True)
-            n_puncta = max(len(puncta_layers), 1)
-            for pi, pts_layer in enumerate(puncta_layers):
-                pct = 92 + int(((pi + 1) / n_puncta) * 6)
-                dialog.update_progress(pct, f"Transforming puncta: {pts_layer.name}...")
-
-                # Determine round from layer name
-                name_upper = pts_layer.name.upper()
-                if "R1" in name_upper:
-                    round_id = "R1"
-                elif "R2" in name_upper:
-                    round_id = "R2"
-                else:
-                    continue
-
-                # Build raw_puncta array: Z, Y, X, Nucleus_ID, Intensity, SNR
-                if len(pts_layer.data) == 0:
-                    continue
-                raw_puncta, pid, sources = viewer_helpers.raw_puncta_from_layer(pts_layer)
-                if pid is None:
-                    pid = np.arange(len(raw_puncta))
-
-                prefix_str = constants.ALIGNED_PREFIX if (round_id == "R1" or bspline_transform is None) else constants.WARPED_PREFIX
-                base_name = pts_layer.name.replace(constants.PUNCTA_SUFFIX, "")
-                aligned_layer_name = f"{prefix_str} {base_name.strip()}{constants.PUNCTA_SUFFIX}"
-                csv_out = constants.puncta_csv_path(reports_dir, aligned_layer_name)
-
-                transformed = puncta.transform_puncta_to_aligned_space(
-                    raw_puncta=raw_puncta,
-                    round_id=round_id,
-                    shift=shift,
-                    canvas_offset=canvas_offset,
-                    bspline_transform=bspline_transform if round_id == "R2" else None,
-                    consensus_mask=merged_mask if match_nuclei else None,
-                    output_path=csv_out,
-                    layer_name=aligned_layer_name,
-                    puncta_ids=pid,
-                    sources=sources,
-                )
-
-                if transformed is not None and len(transformed) > 0:
-                    ref = type('_ref', (), {
-                        'name': aligned_layer_name.replace(constants.PUNCTA_SUFFIX, ''),
-                        'scale': voxels,
-                        'translate': (0,) * len(voxels),
-                    })()
-                    viewer_helpers.add_or_update_puncta_layer(
-                        viewer, ref, transformed, sources=puncta.sources_of(transformed, pid, sources))
-                    viewer_helpers.record_aligned_puncta_provenance(
-                        aligned_layer_name, pts_layer.name,
-                        constants.CONSENSUS_MASKS_NAME if match_nuclei else None)
-
-                # Remove the original raw puncta layer now that it's been
-                # transformed, keeping its CSV: the aligned rows share its
-                # puncta_id, and the saved registration can transform it again.
-                viewer_helpers.retire_raw_puncta_layer(viewer, pts_layer)
+        transformed_names = viewer_helpers.transform_raw_puncta_layers(
+            viewer, puncta_layers, voxels, remove_extranuclear=bool(remove_outliers and match_nuclei),
+            consensus_mask=merged_mask if match_nuclei else None, assign_nuclei=bool(match_nuclei),
+            progress=lambda pct, text: dialog.update_progress(92 + int(pct * 0.06), text))
 
         # Lock all remaining puncta layers after warping — no further deletion
         for layer in viewer.layers:
@@ -315,10 +266,12 @@ def _automated_preprocessing_magic_widget(
             consensus_scale = np.array(consensus_layer.scale) if consensus_layer else np.ones(3)
             consensus_translate = np.array(consensus_layer.translate) if consensus_layer else np.zeros(3)
 
+            # The channels just warped already have their nuclei, as batch gives them.
             aligned_puncta = [
                 l for l in list(viewer.layers)
                 if isinstance(l, napari.layers.Points)
                 and constants.PUNCTA_SUFFIX in l.name
+                and l.name not in transformed_names
             ]
             removed_total = 0
             for pts_layer in aligned_puncta:
@@ -341,7 +294,8 @@ def _automated_preprocessing_magic_widget(
                     features['Nucleus_ID'] = new_ids
 
                 if remove_outliers:
-                    inside_mask = new_ids > 0
+                    # Puncta placed by hand stay where they were put, as in batch.
+                    inside_mask = (new_ids > 0) | viewer_helpers.manual_mask(features)
                     n_removed = int((~inside_mask).sum())
                     removed_total += n_removed
                     coords = coords[inside_mask]

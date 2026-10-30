@@ -1,6 +1,5 @@
 import logging
 import napari
-import numpy as np
 from magicgui.widgets import Container, PushButton, Label, ComboBox, create_widget
 from qtpy.QtWidgets import QLabel
 
@@ -10,7 +9,7 @@ from ..decorators import error_handler
 from ._shared import make_divider as _make_divider
 from ...core.segmentation import (
     segment_nuclei_classical, segment_nuclei_cellpose,
-    get_label_volumes, compute_min_volume_threshold, filter_small_labels,
+    filter_rounds_by_volume,
     no_nuclei_message,
 )
 from ... import constants
@@ -238,18 +237,11 @@ class DapiSegmentationWidget(Container):
                      for layer, masks, _ in results if masks is None]
 
             dialog.update_progress(seg_pct, "Computing volume threshold across rounds...")
-            volumes = [get_label_volumes(masks) for _, masks, _ in results if masks is not None]
-            min_vol = compute_min_volume_threshold(np.concatenate(volumes) if volumes else np.array([]))
+            # The same pooled size filter as batch (segmentation.filter_rounds_by_volume).
+            filtered = filter_rounds_by_volume({i: (masks, centroids) for i, (_, masks, centroids) in enumerate(results)})
 
-            filtered_results = []
-            for i, (layer, masks, centroids) in enumerate(results):
-                if masks is None:
-                    filtered_results.append((layer, masks, centroids))
-                    continue
-                pct = seg_pct + int(((i + 1) / num_layers) * 15)
-                dialog.update_progress(pct, f"Filtering {layer.name}...")
-                masks, centroids = filter_small_labels(masks, min_vol)
-                filtered_results.append((layer, masks.astype(np.uint32), centroids))
+            filtered_results = [(layer,) + filtered[i] for i, (layer, _, _) in enumerate(results)]
+            dialog.update_progress(seg_pct + 15, "Filtered small labels.")
 
             from ...core import decisions
             for layer, masks, centroids in filtered_results:

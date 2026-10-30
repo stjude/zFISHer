@@ -698,6 +698,22 @@ def delete_label(mask_data, label_id):
 
 
 @timed_stage("segmentation_session", fields=lambda a: {"method": a["method"]})
+def filter_rounds_by_volume(raw_results):
+    """Drop small labels from every round with one size threshold computed
+    from the nuclei of all rounds together (``compute_min_volume_threshold``).
+    ``raw_results`` maps a key (round, or layer) to ``(masks, centroids)``;
+    masks that are None stay None. GUI and batch segmentation both use this."""
+    volumes = [get_label_volumes(masks) for masks, _ in raw_results.values() if masks is not None]
+    min_vol = compute_min_volume_threshold(np.concatenate(volumes) if volumes else np.array([]))
+    results = {}
+    for key, (masks, centroids) in raw_results.items():
+        if masks is not None:
+            masks, centroids = filter_small_labels(masks, min_vol)
+            masks = masks.astype(np.uint32)
+        results[key] = (masks, centroids)
+    return results
+
+
 def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callback=None, method="classical", merge_splits=True, voxel_spacing=None,
                          nuclear_channels=None):
     """
@@ -736,17 +752,7 @@ def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callba
 
     # Pass 2: Pool volumes from all rounds, compute shared threshold, filter
     if progress_callback: progress_callback(80, "Computing volume threshold...")
-    all_volumes = np.concatenate([
-        get_label_volumes(masks) for masks, _ in raw_results.values() if masks is not None
-    ])
-    min_vol = compute_min_volume_threshold(all_volumes)
-
-    results = {}
-    for prefix, (masks, centroids) in raw_results.items():
-        if masks is not None:
-            masks, centroids = filter_small_labels(masks, min_vol)
-            masks = masks.astype(np.uint32)
-        results[prefix] = (masks, centroids)
+    results = filter_rounds_by_volume(raw_results)
 
     if progress_callback: progress_callback(90, "Saving results...")
 

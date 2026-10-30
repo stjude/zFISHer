@@ -6,6 +6,16 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Fixes
 
+- **The GUI's registration and warping write what batch writes.** Automated
+  Registration & Warping and the manual Global Canvas step re-implemented the
+  pipeline and differed from it: images were converted to 32-bit floats before
+  alignment, so the aligned TIFFs differed from batch's in type; rounds whose
+  nuclear channels are named differently (fixed for batch in 2.1.2) were not
+  handled; puncta were warped from the layers on screen rather than from their
+  files; and removing puncta outside the consensus mask also removed puncta
+  placed by hand, which batch keeps. Both now use the steps batch uses, after
+  saving any pending puncta edits, and on the test data write the same files.
+  Segmentation in the GUI uses batch's size filter too.
 - **Every file zFISHer writes is written whole or not at all**, as masks and
   the session file already were: puncta CSVs (rewritten on every edit),
   aligned images, centroids, reports, converted inputs and per-nucleus

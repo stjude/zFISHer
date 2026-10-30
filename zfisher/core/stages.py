@@ -66,6 +66,20 @@ def _in_output_folder(subdir, stored):
     return Path(stored) if stored and Path(stored).exists() else None
 
 
+def nuclear_channel_names():
+    """``{R1's nuclear channel: R2's}`` from the rounds' registered nuclei
+    masks (``'R2 - Hoechst_masks'``), for ``generate_global_canvas``'s
+    ``r2_channel_names``; empty when a round has no registered mask."""
+    names = {}
+    for round_id in ("R1", "R2"):
+        path = round_mask_path(round_id)
+        if path is None:
+            return {}
+        stem = Path(path).name.split(constants.MASKS_SUFFIX)[0]
+        names[round_id] = stem.partition(" - ")[2]
+    return {names["R1"]: names["R2"]}
+
+
 def round_mask_path(round_id):
     """The raw-space nuclei mask of ``round_id`` registered in the session
     (``'R2 - DAPI_masks'``), or None. Looked up by registration rather than by
@@ -236,7 +250,7 @@ def _aligned_only_manual(aligned_csv, raw_csv):
 
 
 def transform_channel(round_id, channel, remove_extranuclear=None, keep_aligned_manual=True, run_by="gui",
-                      consensus_mask=None):
+                      consensus_mask=None, assign_nuclei=True):
     """Take the channel's raw-space CSV into aligned space with the
     registration saved by canvas generation, assign nuclei from the consensus
     mask, and write the channel's aligned CSV. Returns its path.
@@ -248,7 +262,10 @@ def transform_channel(round_id, channel, remove_extranuclear=None, keep_aligned_
     hand on the aligned layer, which have no raw-space row, are carried over
     unchanged, at the same coordinates. Raises ``LookupError`` for a session
     with no saved registration (made before 2.1.0) and ``FileNotFoundError``
-    without a raw CSV. Batch passes the ``consensus_mask`` it holds. Returns
+    without a raw CSV. Batch passes the ``consensus_mask`` it holds. With
+    ``assign_nuclei`` False no consensus mask is used, even one on disk, and
+    every punctum gets nucleus 0: the GUI's manual canvas step runs before the
+    consensus mask is (re)built, and Match Nuclei assigns nuclei after. Returns
     None, writing nothing, when no punctum reaches aligned space and the
     channel has no aligned CSV to replace.
     """
@@ -268,7 +285,9 @@ def transform_channel(round_id, channel, remove_extranuclear=None, keep_aligned_
     consensus_path = io.find_mask(Path(session.get_data("output_dir")) / constants.SEGMENTATION_DIR,
                                   constants.CONSENSUS_MASKS_NAME)
     consensus = consensus_mask
-    if consensus is None and consensus_path is not None:
+    if not assign_nuclei:
+        consensus, consensus_path = None, None
+    elif consensus is None and consensus_path is not None:
         consensus = io.read_label_tif(consensus_path)
 
     # Nuclei are assigned to every punctum; outside every nucleus only the
