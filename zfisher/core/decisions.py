@@ -102,6 +102,9 @@ def record(name, new, old=None, scope=None, justification=None, metrics_after=No
         entry["via"] = _via.get()
     if status:
         entry["status"] = status
+    if status == "proposed":
+        import uuid
+        entry["id"] = uuid.uuid4().hex[:12]           # what a review of it names
     with _lock:
         target.parent.mkdir(parents=True, exist_ok=True)
         with open(target, "a", encoding="utf-8") as f:

@@ -103,6 +103,18 @@ class BatchRun(_Result):
     qc_report: Optional[str] = None
 
 
+class ReviewItem(_Result):
+    id: str
+    time: str
+    name: str                        # the setting
+    value: Any = None                # the value proposed
+    old: Any = None
+    scope: dict = {}
+    justification: Optional[str] = None
+    actor: str                       # who proposed it (agent:<model>)
+    via: Optional[str] = None        # the client it came through
+
+
 class NucleusIdCheck(_Result):
     file: str
     rows: int
@@ -457,6 +469,33 @@ def propose(s, name, value, scope=None, justification=None):
     return entry
 
 
+def review_queue(s):
+    """The proposals in ``s``'s decisions log that nobody has accepted or
+    dismissed yet, oldest first."""
+    records = get_decisions(s)
+    reviewed = {r["new"].get("id") for r in records
+                if r.get("name") == "proposal_review" and isinstance(r.get("new"), dict)}
+    return [ReviewItem(id=r["id"], time=r.get("time", ""), name=r.get("name", ""), value=r.get("new"),
+                       old=r.get("old"), scope=r.get("scope") or {}, justification=r.get("justification"),
+                       actor=r.get("actor", ""), via=r.get("via"))
+            for r in records if r.get("status") == "proposed" and r.get("id") and r["id"] not in reviewed]
+
+
+def review_proposal(s, proposal_id, accept, note=None):
+    """Accept or dismiss the open proposal ``proposal_id`` of ``s``: logged in
+    its decisions log, by whoever the front end stamps (the GUI: ``human``),
+    with ``note``. Accepting records agreement; the change itself is made
+    separately. Returns the record."""
+    from . import decisions
+    proposal = next((p for p in review_queue(s) if p.id == proposal_id), None)
+    if proposal is None:
+        raise LookupError(f"No open proposal '{proposal_id}'; it may have been reviewed already.")
+    with _session.use(s):
+        return decisions.record("proposal_review", {"id": proposal.id, "name": proposal.name, "value": proposal.value},
+                                scope=proposal.scope, justification=note,
+                                status="accepted" if accept else "dismissed", even_read_only=True)
+
+
 def get_parameters(s, channel=None):
     """The settings ``s`` was made with; the detection settings of one
     channel only if ``channel`` names one (``'R1 - FITC'``, or a channel only
@@ -743,6 +782,6 @@ def read_log(s, kind=None):
 
 def schema():
     """The JSON schema of every result model, by name."""
-    models = (SessionInfo, ArtifactState, StageState, DistanceQuery, Metrics, BatchQC, ThresholdSweep, Parameters, ReportPage, StagePlan, ParamChange, BatchPlan, BatchRun, NucleusIdCheck, DetectionResult, TransformResult,
+    models = (SessionInfo, ArtifactState, StageState, DistanceQuery, Metrics, BatchQC, ThresholdSweep, Parameters, ReportPage, StagePlan, ParamChange, BatchPlan, BatchRun, ReviewItem, NucleusIdCheck, DetectionResult, TransformResult,
               ReportResult, CellsResult, PipelineResult)
     return {m.__name__: m.model_json_schema() for m in models}

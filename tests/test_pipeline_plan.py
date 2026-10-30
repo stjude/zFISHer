@@ -178,3 +178,23 @@ def test_a_proposal_is_logged_without_changing_the_session(run_folder):
     assert entry["status"] == "proposed" and entry["via"] == "mcp:pytest" and entry["actor"] == "agent:test"
     assert api.get_decisions(s)[-1]["justification"] == "SNR is low"
     assert _session_files(out) == before
+
+
+def test_proposals_wait_in_the_review_queue_until_a_person_answers(run_folder):
+    out = run_folder[0]
+    s = api.open_session(out)
+    with decisions.use_actor("agent:test", via="mcp:pytest"):
+        first = api.propose(s, "threshold_rel", 0.08, scope={"round": "R1", "channel": CHANNEL}, justification="low SNR")
+        second = api.propose(s, "remove_border_nuclei", True, scope={"stage": "consensus"}, justification="cut nuclei")
+    queue = api.review_queue(s)
+    assert [p.id for p in queue] == [first["id"], second["id"]] and len(first["id"]) == 12
+    assert (queue[0].name, queue[0].value, queue[0].actor, queue[0].via) == ("threshold_rel", 0.08, "agent:test",
+                                                                             "mcp:pytest")
+    with decisions.use_actor(decisions.HUMAN):
+        accepted = api.review_proposal(s, first["id"], accept=True, note="agreed")
+        dismissed = api.review_proposal(s, second["id"], accept=False)
+    assert (accepted["status"], accepted["actor"], accepted["justification"]) == ("accepted", "human", "agreed")
+    assert accepted["new"] == {"id": first["id"], "name": "threshold_rel", "value": 0.08}
+    assert dismissed["status"] == "dismissed" and api.review_queue(s) == []
+    with pytest.raises(LookupError, match="No open proposal"):
+        api.review_proposal(s, first["id"], accept=False)

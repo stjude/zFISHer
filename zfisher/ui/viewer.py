@@ -16,6 +16,7 @@ from qtpy.QtCore import Qt, QPoint, QTimer, QEvent, QObject
 # builds its widgets and connects its signals; the names themselves are not
 # all used in this file.
 from .widgets.home_widget import HomeWidget
+from .widgets.review_widget import ReviewQueueWidget
 from .widgets.start_session_widget import StartSessionWidget
 from .widgets.nuclei_segmentation_widget import NucleiSegmentationWidget
 from .widgets.alignment_consensus_widget import AlignmentConsensusWidget
@@ -1057,7 +1058,8 @@ def launch_zfisher():
         (nuclei_segmentation_widget, "2. Nuclei Segmentation"),
         (puncta_picking_widget, "3. Puncta Picking"),
         (alignment_consensus_widget, "4. Alignment && Consensus"),
-        (export_visualization_widget, "5. Export && Visualization")
+        (export_visualization_widget, "5. Export && Visualization"),
+        (ReviewQueueWidget(viewer), "Review Queue"),
     ]
 
     # --- 3. Sidebar Toolbox Styling ---

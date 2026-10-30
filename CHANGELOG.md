@@ -256,6 +256,11 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   screen. Changes that would rewrite the open session (update, running a
   batch) are refused for it. It needs `packages/zfisher-mcp` installed.
   `zfisher-mcp --http [HOST:]PORT` serves the same way without the GUI.
+- **A Review Queue page** lists the changes an assistant proposed for the open
+  session and nobody has answered, each with who proposed it, through which
+  client and why; Accept or Dismiss logs a person's answer in the session's
+  decisions log. Its Batch Check lists the datasets of a batch folder whose
+  quality-control numbers stand out, with the reason for each.
 - **What a settings change would rerun can be known before running it.** The
   core API can say which pipeline stages an update would run with given
   settings, without running any, from the same stage table the run uses; it

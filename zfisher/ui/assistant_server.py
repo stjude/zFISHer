@@ -22,9 +22,9 @@ import threading
 from pathlib import Path
 
 from qtpy.QtCore import QObject, Qt, Signal
-from qtpy.QtWidgets import QApplication
 
 from ..core import session
+from .workers import run_on_worker
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ class GuiHost(QObject):
         before = self._puncta_files()
         with popups.ProgressDialog(self.viewer.window._qt_window, f"Assistant: {what}...") as dialog:
             dialog.update_progress(10, f"Assistant: {what}...")
-            result = _on_worker(fn)
+            result = run_on_worker(fn)
             dialog.update_progress(90, "Showing the files it changed...")
             shown = self._show_changed(before)
         self.viewer.status = f"The assistant ran {what}" + (f"; updated {', '.join(shown)}." if shown else ".")
@@ -119,25 +119,6 @@ class GuiHost(QObject):
             viewer_helpers.show_puncta_csv(self.viewer, name, files[name]["path"], layer)
             shown.append(name)
         return shown
-
-
-def _on_worker(fn):
-    """Run ``fn`` on a worker thread while the GUI keeps drawing."""
-    out, error = [None], [None]
-
-    def run():
-        try:
-            out[0] = fn()
-        except BaseException as exc:
-            error[0] = exc
-    thread = threading.Thread(target=run, daemon=True, name="zfisher-assistant-job")
-    thread.start()
-    while thread.is_alive():
-        thread.join(timeout=0.05)
-        QApplication.processEvents()
-    if error[0] is not None:
-        raise error[0]
-    return out[0]
 
 
 class AssistantServer:

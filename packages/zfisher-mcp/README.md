@@ -111,8 +111,8 @@ Only the tools of the mode the server was started in exist; a client cannot call
 **Triage tools.** `flag_batch(under, write_report)` compares each dataset of a batch with the
 rest and with fixed floors and says which need a look and why (`write_report` also writes
 `qc_report.md`). `propose(session, name, value, justification, channel, round)` logs a
-suggested change in the session's decisions log, for a person to accept or dismiss; nothing else
-changes.
+suggested change in the session's decisions log, for a person to accept or dismiss in zFISHer's
+Review Queue page; nothing else changes.
 
 **Operate tools.** Each takes `dry_run`, true unless the client sets it false. A dry run says
 what the call would write, what it would leave out of date and which pipeline stages would run,

@@ -277,7 +277,7 @@ zfisher
 
 or `python -m zfisher`; from a source checkout, `python main.py` does the same. The headless pipeline runs with `zfisher-cli` (`zfisher-cli --help`).
 
-An MCP client can ask questions about finished sessions through the server in `packages/zfisher-mcp` (`zfisher-mcp --root <folder>`), which by default reads them and writes nothing; started in its triage or operate mode it can also flag a batch's datasets and, on copies set aside for it, change settings and rerun stages. zFISHer can run it too, for a client on the same computer, from Home > Assistant Server. See [its README](packages/zfisher-mcp/README.md).
+An MCP client can ask questions about finished sessions through the server in `packages/zfisher-mcp` (`zfisher-mcp --root <folder>`), which by default reads them and writes nothing; started in its triage or operate mode it can also flag a batch's datasets and, on copies set aside for it, change settings and rerun stages. zFISHer can run it too, for a client on the same computer, from Home > Assistant Server, and its Review Queue page lists what a client proposed and the datasets of a batch that need a look. See [its README](packages/zfisher-mcp/README.md).
 
 This opens the napari viewer with the zFISHer sidebar containing all five workflow steps.
 
@@ -362,6 +362,7 @@ zFISHer/
         colocalization_widget.py   # Pairwise + tri-channel colocalization rules + export
         refilter_puncta_widget.py  # Post-edit puncta cleanup by mask
         capture_widget.py          # Screenshot, region capture, arrow annotations, scale bar
+        review_widget.py           # Review Queue: proposals to accept or dismiss, batch quality check
         _shared.py                 # Shared UI helpers (dividers, headers, nuclear channel detection)
   packages/
     zfisher-mcp/             # MCP server over the core API (`zfisher-mcp`), installed separately
