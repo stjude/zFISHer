@@ -10,6 +10,7 @@ from qtpy.QtGui import QPainter, QPen, QBrush, QColor, QPolygonF
 from qtpy.QtCore import Qt, QRect, QPointF, QEvent
 
 from ...core import session
+from ...core import outputs
 from .. import popups
 from ..decorators import require_active_session
 from ... import constants
@@ -320,7 +321,7 @@ class ArrowDrawer:
                     data = np.array([[s, e] for s, e in self._arrow_endpoints])
                 else:
                     data = np.empty((0, 2, self.viewer.dims.ndim))
-                np.save(arrows_path, data)
+                outputs.write_npy(arrows_path, data)
                 session.set_processed_file(
                     "Arrows", str(arrows_path),
                     layer_type='arrows', metadata={'subtype': 'arrows'}
@@ -694,7 +695,7 @@ def _on_clear_arrows():
             seg_dir = Path(out_dir) / constants.SEGMENTATION_DIR
             seg_dir.mkdir(exist_ok=True, parents=True)
             arrows_path = seg_dir / "Arrows.npy"
-            np.save(arrows_path, np.empty((0, 2, viewer.dims.ndim)))
+            outputs.write_npy(arrows_path, np.empty((0, 2, viewer.dims.ndim)))
     _update_arrow_count()
     logger.info("CAPTURE: All arrows cleared")
     viewer.status = "All arrows cleared."

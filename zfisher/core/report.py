@@ -4,7 +4,7 @@ from pathlib import Path
 from datetime import datetime
 
 from .. import constants
-from . import session
+from . import outputs, session
 from .provenance import software_version
 
 logger = logging.getLogger(__name__)
@@ -117,7 +117,7 @@ def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None, co
         _gc_was_enabled = _gc.isenabled()
         _gc.disable()
         try:
-            with pd.ExcelWriter(save_path, engine='openpyxl') as writer:
+            with outputs.excel_writer(save_path) as writer:
                 df.to_excel(writer, sheet_name=constants.DISTANCES_SHEET, index=False)
                 if coloc_df is not None and not coloc_df.empty:
                     coloc_df.to_excel(writer, sheet_name=constants.COLOCALIZATION_SHEET, index=False)
@@ -141,5 +141,5 @@ def export_report(df, save_path, r1_path=None, r2_path=None, output_dir=None, co
     except (ImportError, ModuleNotFoundError):
         logger.warning("Excel export failed (missing openpyxl). Falling back to CSV.")
         save_path = save_path.with_suffix(".csv")
-        df.to_csv(save_path, index=False)
+        outputs.write_csv(df, save_path)
         return save_path

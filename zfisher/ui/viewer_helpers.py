@@ -9,6 +9,7 @@ from packaging.version import parse as parse_version
 from ..core import session, segmentation, timing, label_edits, puncta as _puncta
 from ..core import io as _io
 from ..core import provenance
+from ..core import outputs
 
 from .. import constants
 from . import style
@@ -907,7 +908,7 @@ def add_segmentation_results_to_viewer(viewer: napari.Viewer, source_layer: napa
             )
         if seg_dir:
             cent_path = seg_dir / f"{centroid_layer_name}.npy"
-            np.save(cent_path, centroids)
+            outputs.write_npy(cent_path, centroids)
             session.set_processed_file(centroid_layer_name, str(cent_path), layer_type='points', metadata={'subtype': 'centroids'})
 
 def add_consensus_nuclei_to_viewer(viewer: napari.Viewer, r1_mask_layer: napari.layers.Labels, merged_mask: np.ndarray, pts1: list):

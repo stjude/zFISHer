@@ -6,6 +6,12 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Fixes
 
+- **Every file zFISHer writes is written whole or not at all**, as masks and
+  the session file already were: puncta CSVs (rewritten on every edit),
+  aligned images, centroids, reports, converted inputs and per-nucleus
+  exports are written beside the old file and swapped in when complete, so a
+  crash or a full disk mid-write leaves the previous version instead of a
+  truncated one. All writing goes through `zfisher/core/outputs.py`.
 - **Registering the same images twice gives the same shift.** RANSAC's random
   choice of centroid pairs was not seeded, so two registrations of the same
   rounds could keep different inliers and give slightly different shifts, and

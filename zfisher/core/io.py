@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from .. import constants
 from .errors import InputError
+from . import outputs
 from .timing import timed_stage
 
 logger = logging.getLogger(__name__)
@@ -578,7 +579,7 @@ def convert_nd2_to_ome(
             'PhysicalSizeZ': nd2_session.voxels[0], 'PhysicalSizeZUnit': 'µm',
         }
 
-        tifffile.imwrite(ome_tif_path, nd2_session.data, metadata=metadata, photometric='minisblack')
+        outputs.write_tiff(ome_tif_path, nd2_session.data, metadata=metadata, photometric='minisblack')
         logger.info("Saved OME-TIFF to %s", ome_tif_path)
 
         if progress_callback:
@@ -587,14 +588,12 @@ def convert_nd2_to_ome(
         with tifffile.TiffFile(ome_tif_path) as tf:
             if tf.ome_metadata:
                 xml_path = output_dir / f"{prefix}_metadata.ome.xml"
-                with open(xml_path, "w", encoding="utf-8") as f:
-                    f.write(tf.ome_metadata)
+                outputs.write_text(xml_path, tf.ome_metadata)
                 logger.info("Exported OME-XML metadata to %s", xml_path)
 
         if hasattr(nd2_session, 'metadata') and nd2_session.metadata:
             json_path = output_dir / f"{prefix}_metadata.json"
-            with open(json_path, "w", encoding="utf-8") as f:
-                json.dump(nd2_session.metadata, f, indent=4, default=str)
+            outputs.write_text(json_path, json.dumps(nd2_session.metadata, indent=4, default=str))
             logger.info("Exported ND2 metadata to %s", json_path)
 
     except Exception as e:

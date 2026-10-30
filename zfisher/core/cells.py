@@ -19,6 +19,7 @@ from pathlib import Path
 import numpy as np
 
 from .. import constants
+from . import outputs
 from . import io, puncta, session
 
 logger = logging.getLogger(__name__)
@@ -109,7 +110,7 @@ def export_cells(ids=None, padding_um=2.0, with_puncta=True, out_dir=None, progr
         stack.append((mask[box] == label).astype(dtype))
         data = np.stack(stack, axis=1)                          # Z, C, Y, X
         path = folder / f"nucleus_{label:05d}.ome.tif"
-        tifffile.imwrite(path, data, photometric="minisblack", compression="zlib", metadata={
+        outputs.write_tiff(path, data, photometric="minisblack", compression="zlib", metadata={
             "axes": "ZCYX", "PhysicalSizeZ": float(scale[0]), "PhysicalSizeY": float(scale[1]),
             "PhysicalSizeX": float(scale[2]), "PhysicalSizeZUnit": "µm", "PhysicalSizeYUnit": "µm",
             "PhysicalSizeXUnit": "µm", "Channel": {"Name": names}}, ome=True)
@@ -124,7 +125,7 @@ def export_cells(ids=None, padding_um=2.0, with_puncta=True, out_dir=None, progr
                     inside.insert(0, "layer", layer)
                     rows.append(inside)
             if rows:
-                pd.concat(rows, ignore_index=True).to_csv(folder / f"nucleus_{label:05d}_puncta.csv", index=False)
+                outputs.write_csv(pd.concat(rows, ignore_index=True), folder / f"nucleus_{label:05d}_puncta.csv")
         if progress_callback:
             progress_callback(80 + int(20 * (n + 1) / max(len(boxes), 1)), f"Wrote nucleus {label}")
     logger.info("Exported %d nuclei to %s (%d channels, margin %s voxels)", len(written), folder,

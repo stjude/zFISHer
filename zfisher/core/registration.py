@@ -32,13 +32,13 @@ except ImportError:  # SimpleITK is only needed for B-spline deformable registra
 import warnings
 import gc
 from dataclasses import dataclass
-import tifffile
 import contextvars
 from concurrent.futures import ThreadPoolExecutor
 from .session import set_processed_file
 
 from . import session
 from .. import constants
+from . import outputs
 from .timing import timed_stage, stage_timer
 
 logger = logging.getLogger(__name__)
@@ -784,7 +784,7 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
             deformation_vectors = create_deformation_field(dapi_pair['r1_data'].shape, viz_transform, grid_spacing=constants.DEFORMATION_GRID_SPACING)
             vector_layer_name = constants.DEFORMATION_FIELD_NAME
             vector_path = output_dir / f"{vector_layer_name}.npy"
-            np.save(vector_path, deformation_vectors)
+            outputs.write_npy(vector_path, deformation_vectors)
         set_processed_file(vector_layer_name, str(vector_path), layer_type='vectors')
 
         vector_meta = {'scale': dapi_pair['r1_meta']['scale']}
@@ -799,7 +799,7 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
 
             checker_layer_name = constants.WARPED_CHECKERBOARD_NAME
             checker_path = output_dir / f"{checker_layer_name}.tif"
-            tifffile.imwrite(checker_path, warped_checkerboard, compression='zlib')
+            outputs.write_tiff(checker_path, warped_checkerboard, compression='zlib')
         set_processed_file(checker_layer_name, str(checker_path), layer_type='image')
 
         checker_meta = {'scale': dapi_pair['r1_meta']['scale'], 'colormap': 'gray', 'blending': 'translucent', 'opacity': 0.3}
@@ -965,5 +965,5 @@ def _save_aligned_layer(data, prefix, round_id, channel_name, output_dir, is_lab
     if not output_dir: return
     layer_name = f"{prefix} {round_id} - {channel_name}"
     out_path = Path(output_dir) / f"{prefix}_{round_id}_{channel_name}.tif"
-    tifffile.imwrite(out_path, data, compression='zlib')
+    outputs.write_tiff(out_path, data, compression='zlib')
     set_processed_file(layer_name, str(out_path), layer_type='labels' if is_label else 'image')

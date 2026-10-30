@@ -5,6 +5,7 @@ from skimage.feature import peak_local_max, blob_log, blob_dog
 from skimage.filters import gaussian
 from skimage.morphology import white_tophat, disk
 from .. import constants
+from . import outputs
 from .errors import SchemaError
 from .timing import timed_stage, n_rows
 
@@ -58,7 +59,7 @@ def puncta_table(coords, features=None):
 def write_puncta_csv(path, coords, features=None):
     """Write a puncta layer's points and features to ``path`` as ``puncta_table``,
     and record its new hash if the file is in the session's provenance."""
-    puncta_table(coords, features).to_csv(path, index=False)
+    outputs.write_csv(puncta_table(coords, features), path)
     _record_rewrite(path)
 
 
@@ -148,7 +149,7 @@ def _save_puncta_csv(final_data, output_path, layer_name, sources=None):
     df['puncta_id'] = final_data[:, 6].astype(int)
     df['Source'] = constants.PUNCTA_SOURCE_AUTO if sources is None else np.asarray(sources, dtype=object)
     df = df[constants.PUNCTA_CSV_COLUMNS]
-    df.to_csv(output_path, index=False)
+    outputs.write_csv(df, output_path)
     _record_rewrite(output_path)
 
     session_key = layer_name if layer_name else Path(output_path).stem
@@ -232,7 +233,7 @@ def repair_nucleus_ids(csv_path, mask, out_path):
     table = pd.read_csv(csv_path, float_precision="round_trip")
     coords = table[["Z", "Y", "X"]].to_numpy(float)
     features = table.drop(columns=["Z", "Y", "X"]).assign(Nucleus_ID=nucleus_ids_from_mask(coords, mask))
-    puncta_table(coords, features).to_csv(out_path, index=False)
+    outputs.write_csv(puncta_table(coords, features), out_path)
     return before
 
 

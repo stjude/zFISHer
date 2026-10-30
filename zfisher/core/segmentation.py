@@ -15,6 +15,7 @@ except ImportError:  # cellpose (+torch) is heavy and only needed for Cellpose s
 from pathlib import Path
 
 from .. import constants
+from . import outputs
 from .errors import DetectionError
 from . import io
 from .timing import timed_stage, add_stage_fields
@@ -74,7 +75,7 @@ def process_consensus_nuclei(mask1, mask2, output_dir, threshold=None, method="U
             for p in final_pts
         ], dtype=dtype)
         
-        np.save(ids_path, structured_pts)
+        outputs.write_npy(ids_path, structured_pts)
         
         # Use 'structured_ids' subtype to trigger correct unpacking in viewer_helpers
         session.set_processed_file(
@@ -765,7 +766,7 @@ def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callba
             session.set_processed_file(mask_layer_name, str(mask_path), layer_type='labels', metadata={'subtype': 'mask'})
 
             cent_path = seg_dir / f"{centroid_layer_name}.npy"
-            np.save(cent_path, centroids)
+            outputs.write_npy(cent_path, centroids)
             session.set_processed_file(centroid_layer_name, str(cent_path), layer_type='points', metadata={'subtype': 'centroids'})
             from . import decisions
             decisions.record("segmentation", {"method": method, "merge_splits": bool(merge_splits)},

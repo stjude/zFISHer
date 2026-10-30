@@ -145,7 +145,7 @@ def batch(template: Path = typer.Argument(..., help="Batch template .xlsx file."
 def template(output: Path = typer.Argument(..., help="Path for the generated .xlsx file."),
              force: bool = typer.Option(False, help="Overwrite if the file exists.")):
     """Generate a blank batch Excel template."""
-    import pandas as pd
+    from .core import outputs
     from .core.generate_batch_template import add_dropdown_validations, build_template_sheets
 
     save_path = output.expanduser().resolve()
@@ -153,7 +153,7 @@ def template(output: Path = typer.Argument(..., help="Path for the generated .xl
         print(f"Error: {save_path} already exists. Pass --force to overwrite.", file=sys.stderr)
         raise typer.Exit(1)
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    with pd.ExcelWriter(save_path, engine="openpyxl") as writer:
+    with outputs.excel_writer(save_path) as writer:
         for name, df in build_template_sheets().items():
             df.to_excel(writer, sheet_name=name, index=False)
         add_dropdown_validations(writer.book)

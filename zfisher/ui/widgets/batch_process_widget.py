@@ -2,10 +2,9 @@ from magicgui.widgets import Container, PushButton, FileEdit, Label, SpinBox
 from pathlib import Path
 import logging
 import napari
-import pandas as pd
 from qtpy.QtWidgets import QFileDialog
 
-from ...core import pipeline  # noqa: F401  (the batch runs through it)
+from ...core import outputs, pipeline  # noqa: F401  (the batch runs through pipeline)
 from ...core.generate_batch_template import (
     build_template_sheets,
     add_dropdown_validations,
@@ -115,7 +114,7 @@ class BatchProcessWidget(Container):
             return
 
         sheets = build_template_sheets()
-        with pd.ExcelWriter(save_path, engine="openpyxl") as writer:
+        with outputs.excel_writer(save_path) as writer:
             for name, df in sheets.items():
                 df.to_excel(writer, sheet_name=name, index=False)
             add_dropdown_validations(writer.book)
