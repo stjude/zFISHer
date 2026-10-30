@@ -214,6 +214,29 @@ def export(folder: Path = typer.Argument(..., help="A session's output folder or
         print(f"  {name}: {rows} rows")
 
 
+@app.command("query-distances")
+def query_distances(folder: Path = typer.Argument(..., help="A session's output folder or session file."),
+                    source: str = typer.Argument(..., help='Source channel: "R1 - FITC", a layer name, or a channel one round has.'),
+                    target: str = typer.Argument(..., help="Target channel, named the same ways."),
+                    within: float = typer.Option(0.5, help="Distance in µm."),
+                    bin_um: Optional[float] = typer.Option(None, "--bin", help="Histogram bin width in µm."),
+                    as_json: bool = typer.Option(False, "--json", help="Print JSON instead of text.")):
+    """How many source puncta have a target punctum within a distance, from the latest report. Reads only."""
+    from .core import api
+    try:
+        q = api.query_distances(_open(folder), source, target, within, bin_um)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        raise typer.Exit(1)
+    if as_json:
+        print(json.dumps(q.model_dump(), indent=1))
+        return
+    print(f"{q.n_within} of {q.n_source} {q.source} puncta ({100 * q.fraction_within:.1f}%) have a "
+          f"{q.target} punctum within {q.max_um:g} µm.")
+    for low, high, count in q.bins:
+        print(f"  {low:g}-{high:g} µm: {count}")
+
+
 @app.command("export-cells")
 def export_cells(folder: Path = typer.Argument(..., help="A session's output folder, or a batch root holding "
                                                          "one folder per dataset."),

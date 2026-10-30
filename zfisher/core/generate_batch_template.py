@@ -146,6 +146,10 @@ def _build_instructions_rows():
          "This ensures only intranuclear puncta are analyzed. Set to FALSE to keep all detected puncta regardless of "
          "nuclear location (useful if you need to analyze cytoplasmic or extracellular puncta). "
          "Defaults to TRUE."),
+        ("Distribution_Bins",
+         "Optional. The puncta-count bins of the report's Distribution sheet, as the lower edge of each bin "
+         "separated by commas and starting at 0. '0, 1, 2, 3, 11' (the default when left blank) counts nuclei "
+         "with 0, 1, 2, 3 to 10 and more than 10 puncta; '0, 1, 5, 20' counts 0, 1 to 4, 5 to 19 and more."),
         ("", ""),
         ("", ""),
 
@@ -463,6 +467,7 @@ def build_template_sheets():
         "Overlap_Method": "Intersection",
         "Match_Threshold": 0,
         "Remove_Extranuclear_Puncta": True,
+        "Distribution_Bins": "",
     }
     ds_default = {
         "Name": "",
@@ -478,6 +483,7 @@ def build_template_sheets():
         "Overlap_Method": "Intersection",
         "Match_Threshold": 0,
         "Remove_Extranuclear_Puncta": True,
+        "Distribution_Bins": "",
     }
     datasets = pd.DataFrame([ds_example] + [dict(ds_default) for _ in range(N)])
 
@@ -690,6 +696,18 @@ def parse_batch_config(excel_path):
                 warnings.append(f"Datasets row {row_num} ({name}): Invalid Match_Threshold. Using 0 (auto).")
                 match_threshold = 0
 
+        bins_raw = str(row.get("Distribution_Bins", "")).strip()
+        bins = None
+        if bins_raw and bins_raw != "nan":
+            try:
+                bins = sorted({int(float(b)) for b in bins_raw.replace(";", ",").split(",") if b.strip()})
+                if not bins or bins[0] != 0:
+                    raise ValueError
+            except ValueError:
+                errors.append(f"Datasets row {row_num} ({name}): Distribution_Bins '{bins_raw}' must be whole "
+                              f"numbers separated by commas, starting at 0 (e.g. 0, 1, 2, 3, 11).")
+                bins = None
+
         remove_extra = row.get("Remove_Extranuclear_Puncta", True)
         if pd.isna(remove_extra):
             remove_extra = True
@@ -710,6 +728,7 @@ def parse_batch_config(excel_path):
             "overlap_method": overlap_method,
             "match_threshold": match_threshold,
             "remove_extranuclear_puncta": remove_extra,
+            "distribution_bins": bins,
         })
 
     # --- Puncta sheet (optional) ---
@@ -886,6 +905,7 @@ def parse_batch_config(excel_path):
                                                 apply_warp=d["apply_warp"]),
                 consensus=ConsensusParams(overlap_method=d["overlap_method"], match_threshold=d["match_threshold"],
                                           remove_extranuclear_puncta=d["remove_extranuclear_puncta"]),
+                distribution_bins=d["distribution_bins"],
             ) for d in datasets],
             puncta_rules=[PunctaRule(dataset=r["dataset"], channel=r["channel"], round=r["round"],
                                      params=DetectionParams(**r["params"])) for r in puncta_rules],
@@ -1048,4 +1068,5 @@ def pipeline_kwargs(dataset):
         overlap_method=dataset.consensus.overlap_method.value,
         match_threshold=dataset.consensus.match_threshold,
         remove_extranuclear_puncta=dataset.consensus.remove_extranuclear_puncta,
+        distribution_bins=dataset.distribution_bins,
     )

@@ -39,6 +39,7 @@ def _run_full_zfisher_pipeline(
     apply_warp=True, max_ransac_distance=0,
     overlap_method="Intersection", match_threshold=0,
     remove_extranuclear_puncta=True,
+    distribution_bins=None,
     progress_callback=None,
 ):
     """
@@ -115,7 +116,10 @@ def _run_full_zfisher_pipeline(
         "r2_nuclear_channel": r2_nuclear_channel, "puncta_config": puncta_config,
         "pairwise_rules": pairwise_rules, "tri_rules": tri_rules, "apply_warp": apply_warp,
         "max_ransac_distance": max_ransac_distance, "overlap_method": overlap_method,
-        "match_threshold": match_threshold, "remove_extranuclear_puncta": remove_extranuclear_puncta})
+        "match_threshold": match_threshold, "remove_extranuclear_puncta": remove_extranuclear_puncta,
+        "distribution_bins": distribution_bins})
+    if distribution_bins:
+        session.update_data("distribution_bins", list(distribution_bins))
     ran = []          # the stages this run executed, for the log and the caller
 
     # Raw images are read only when a stage that runs needs them.
@@ -430,6 +434,8 @@ def _run_full_zfisher_pipeline(
         # --- 9. Colocalization Analysis ---
         has_coloc = (pairwise_rules and len(pairwise_rules) > 0) or (tri_rules and len(tri_rules) > 0)
         report_params = {"pairwise": pairwise_rules or [], "tri": tri_rules or []}
+        if distribution_bins:                     # only when set, so earlier runs' fingerprints still match
+            report_params["distribution_bins"] = list(distribution_bins)
         report_up = [("transform", f"{rnd} - {ch}") for rnd, ch in detected] + [("consensus", "")]
         report_fp = stages.stage_fingerprint("report", "", report_params, upstream=report_up)
         report_filename = f"zFISHer_Report{constants.EXCEL_SUFFIX}"
@@ -488,6 +494,7 @@ def _run_full_zfisher_pipeline(
                     tri_rules=resolved_tri if resolved_tri else None,
                     total_nuclei=total_nuclei,
                     nucleus_ids=nucleus_ids,
+                    distribution_bins=distribution_bins,
                 )
                 _update(95, "Colocalization report saved.")
                 if report_path is not None:

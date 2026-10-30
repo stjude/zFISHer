@@ -424,6 +424,22 @@
       "match_threshold": 0,
       "remove_extranuclear_puncta": true
      }
+    },
+    "distribution_bins": {
+     "anyOf": [
+      {
+       "items": {
+        "type": "integer"
+       },
+       "type": "array"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "Lower edges of the Distribution sheet's puncta-count bins, starting at 0; None for 0, 1, 2, 3 to 10 and more than 10.",
+     "title": "Distribution Bins"
     }
    },
    "required": [
@@ -850,6 +866,22 @@
         "match_threshold": 0,
         "remove_extranuclear_puncta": true
        }
+      },
+      "distribution_bins": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "integer"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Lower edges of the Distribution sheet's puncta-count bins, starting at 0; None for 0, 1, 2, 3 to 10 and more than 10.",
+       "title": "Distribution Bins"
       }
      },
      "required": [

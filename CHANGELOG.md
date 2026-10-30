@@ -110,6 +110,23 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   system can slow an idle app's timers. `-o profile.md` writes it to a file.
   It only reads.
 
+### Distances and report tables
+
+- **How many puncta have a neighbour within a distance, without a rerun.**
+  The Colocalization & Export page has a Distance Query section: choose a
+  source and a target channel, a distance and a bin width, and Count says how
+  many source puncta have a target punctum within that distance, with a
+  histogram, read from the latest report. `zfisher-cli query-distances` gives
+  the same answer. The count is per source punctum, of its nearest target
+  punctum.
+- **The Distribution sheet's bins can be set**, in the Distribution Bins field
+  of the Export section and in a new, optional Distribution_Bins column of the
+  batch template, as the lower edge of each bin: `0, 1, 2, 3, 11`, the default,
+  gives the columns the sheet always had.
+- Each export also writes the report's tables as CSV files beside it:
+  `reports/distances.csv` and one file per sheet under `reports/report_sheets/`,
+  which scripts and the queries read instead of the workbook.
+
 ### Per-nucleus export
 
 - **`zfisher-cli export-cells <folder or batch root>`** writes one OME-TIFF per

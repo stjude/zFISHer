@@ -548,7 +548,27 @@ def calculate_stats(per_nucleus_df, total_nuclei=None, extranuclear=None):
     return pd.DataFrame(rows)
 
 
-def calculate_distribution(per_nucleus_df, total_nuclei=None):
+DEFAULT_DISTRIBUTION_BINS = (0, 1, 2, 3, 11)
+"""Lower edges of the Distribution sheet's bins: 0, 1, 2, 3 to 10, and more than 10 puncta."""
+
+
+def distribution_bins(edges=None):
+    """``[(label, low, high)]`` for the lower ``edges`` of the puncta-count
+    bins (``DEFAULT_DISTRIBUTION_BINS`` when None); ``high`` is None for the
+    last, open bin. Labels name the sheet's columns: ``Nuclei_0_puncta``,
+    ``Nuclei_3to10_puncta``, ``Nuclei_gt10_puncta``."""
+    edges = sorted({int(e) for e in (edges if edges is not None else DEFAULT_DISTRIBUTION_BINS)})
+    if not edges or edges[0] != 0:
+        raise ValueError(f"Distribution bins must start at 0 puncta; got {edges}.")
+    bins = []
+    for low, nxt in zip(edges, edges[1:]):
+        high = nxt - 1
+        bins.append((f"Nuclei_{low}_puncta" if low == high else f"Nuclei_{low}to{high}_puncta", low, high))
+    bins.append((f"Nuclei_gt{edges[-1] - 1}_puncta", edges[-1], None))
+    return bins
+
+
+def calculate_distribution(per_nucleus_df, total_nuclei=None, bins=None):
     """
     Bins nuclei by puncta count for each channel.
 
@@ -559,13 +579,16 @@ def calculate_distribution(per_nucleus_df, total_nuclei=None):
     total_nuclei : int, optional
         Actual number of nuclei in the consensus mask. If None, falls back to
         counting unique IDs in the dataframe.
+    bins : sequence of int, optional
+        Lower edges of the bins (see ``distribution_bins``); the default gives
+        0, 1, 2, 3 to 10 and more than 10 puncta.
 
     Returns
     -------
     pd.DataFrame
-        Rows: one per channel. Columns: Channel, Total_Nuclei, Nuclei_0_puncta,
-        Nuclei_1_puncta, Nuclei_2_puncta, Nuclei_3to10_puncta,
-        Nuclei_gt10_puncta. The five bins sum to Total_Nuclei.
+        Rows: one per channel. Columns: Channel, Total_Nuclei, then one per
+        bin (``Nuclei_0_puncta`` ... ``Nuclei_gt10_puncta`` by default). The
+        bins sum to Total_Nuclei.
     """
     if per_nucleus_df.empty:
         return pd.DataFrame()
@@ -586,23 +609,66 @@ def calculate_distribution(per_nucleus_df, total_nuclei=None):
             )
         zeros_count = max(total_nuclei - len(present), 0)
 
-        n0 = int((present == 0).sum()) + zeros_count
-        n1 = int((present == 1).sum())
-        n2 = int((present == 2).sum())
-        n3_10 = int(((present >= 3) & (present <= 10)).sum())
-        ngt10 = int((present > 10).sum())
-
-        rows.append({
-            'Channel': ch,
-            'Total_Nuclei': int(total_nuclei),
-            'Nuclei_0_puncta': n0,
-            'Nuclei_1_puncta': n1,
-            'Nuclei_2_puncta': n2,
-            'Nuclei_3to10_puncta': n3_10,
-            'Nuclei_gt10_puncta': ngt10,
-        })
+        row = {'Channel': ch, 'Total_Nuclei': int(total_nuclei)}
+        for label, low, high in distribution_bins(bins):
+            inside = (present >= low) if high is None else ((present >= low) & (present <= high))
+            row[label] = int(inside.sum()) + (zeros_count if low == 0 else 0)
+        rows.append(row)
 
     return pd.DataFrame(rows)
+
+
+# =====================================================================
+# Sidecars: the report's tables as CSV
+# =====================================================================
+
+DISTANCES_SIDECAR = "distances.csv"
+SHEETS_DIR = "report_sheets"
+
+
+def sheet_file_name(sheet):
+    return sheet.replace(" ", "_").replace("/", "_") + ".csv"
+
+
+def write_report_sidecars(reports_dir, tables):
+    """Write each table of the report (``{sheet: DataFrame}``) as CSV: the
+    Distances sheet as ``reports/distances.csv``, every sheet also under
+    ``reports/report_sheets/``. Queries read these, not the workbook; they
+    are rewritten at every export, so they hold the latest report's tables."""
+    from . import outputs
+    reports_dir = Path(reports_dir)
+    for sheet, table in tables.items():
+        if table is None or getattr(table, "empty", True):
+            continue
+        outputs.write_csv(table, reports_dir / SHEETS_DIR / sheet_file_name(sheet))
+        if sheet == constants.DISTANCES_SHEET:
+            outputs.write_csv(table, reports_dir / DISTANCES_SIDECAR)
+
+
+DISTANCE_SEMANTICS = (
+    "For each punctum of the source channel, the distance to the nearest punctum of the target channel "
+    "(nearest neighbour, in µm, in aligned space); a source punctum counts as within d when that nearest "
+    "distance is at most d. Pairs are not counted twice, and a target punctum may be the nearest of "
+    "several source puncta.")
+
+
+def query_distances(distances, source, target, max_um, bin_um=None):
+    """How many ``source`` puncta have a ``target`` punctum within ``max_um``
+    µm, from the Distances table (``distances.csv``), with a histogram of the
+    nearest distances up to ``max_um`` in bins of ``bin_um`` µm (one bin when
+    None). See ``DISTANCE_SEMANTICS``."""
+    rows = distances[(distances["Source_Layer"] == source) & (distances["Target_Layer"] == target)]
+    nearest = rows["Distance_um"].to_numpy(float)
+    within = nearest <= max_um
+    width = bin_um if bin_um and bin_um > 0 else max_um
+    n_bins = max(1, int(np.ceil(max_um / width - 1e-9))) if max_um > 0 else 1
+    edges = (np.round(np.minimum(np.arange(n_bins + 1) * width, max_um), 9) if max_um > 0
+             else np.array([0.0, 0.0]))
+    counts = np.histogram(nearest[within], bins=edges)[0] if max_um > 0 else np.array([int(within.sum())])
+    return {"source": source, "target": target, "max_um": float(max_um), "n_source": int(len(nearest)),
+            "n_within": int(within.sum()), "fraction_within": float(within.mean()) if len(nearest) else 0.0,
+            "bins": [[float(lo), float(hi), int(c)] for lo, hi, c in zip(edges[:-1], edges[1:], counts)],
+            "semantics": DISTANCE_SEMANTICS}
 
 
 # =====================================================================
@@ -613,7 +679,7 @@ def calculate_distribution(per_nucleus_df, total_nuclei=None):
              fields=lambda a: {"n_layers": len(a["layers_data"]), "n_rules": len(a["rules"] or []),
                                "n_tri_rules": len(a["tri_rules"] or [])})
 def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, output_dir,
-                                tri_rules=None, total_nuclei=None, nucleus_ids=None):
+                                tri_rules=None, total_nuclei=None, nucleus_ids=None, distribution_bins=None):
     """
     Core Orchestrator for Step 7 & 8.
     Processes puncta distances and exports the master report.
@@ -654,7 +720,9 @@ def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, 
     per_nucleus_df = calculate_per_nucleus_counts(layers_data, nucleus_ids=nucleus_ids)
     extra = extranuclear_counts(layers_data)
     stats_df = calculate_stats(per_nucleus_df, total_nuclei=total_nuclei, extranuclear=extra)
-    distribution_df = calculate_distribution(per_nucleus_df, total_nuclei=total_nuclei)
+    if distribution_bins is None:
+        distribution_bins = session.get_data("distribution_bins")
+    distribution_df = calculate_distribution(per_nucleus_df, total_nuclei=total_nuclei, bins=distribution_bins)
 
     # 5. Build parameters sheet from session puncta_params
     from .puncta import detection_settings
@@ -690,7 +758,15 @@ def run_colocalization_analysis(layers_data, rules, filename, r1_path, r2_path, 
         params_df=params_df
     )
 
-    # 7. Session Tracking
+    # 7. The tables as CSV beside the report, which queries read instead of the workbook.
+    if final_path.exists():
+        write_report_sidecars(output_dir, {
+            constants.DISTANCES_SHEET: df, constants.COLOCALIZATION_SHEET: df_coloc,
+            constants.TRI_COLOCALIZATION_SHEET: tri_coloc_df, constants.PER_NUCLEI_SHEET: per_nucleus_df,
+            constants.STATS_SHEET: stats_df, constants.DISTRIBUTION_SHEET: distribution_df,
+            constants.PARAMETERS_SHEET: params_df})
+
+    # 8. Session Tracking
     if final_path.exists():
         session.set_processed_file(
             layer_name="Master_Analysis_Report",

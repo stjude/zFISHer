@@ -197,6 +197,9 @@ class DatasetSpec(_Params):
     segmentation: SegmentationParams = SegmentationParams()
     registration: RegistrationParams = RegistrationParams()
     consensus: ConsensusParams = ConsensusParams()
+    distribution_bins: Optional[list[int]] = Field(
+        None, description="Lower edges of the Distribution sheet's puncta-count bins, starting at 0; "
+                          "None for 0, 1, 2, 3 to 10 and more than 10.")
 
 
 class PunctaRule(_Params):

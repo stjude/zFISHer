@@ -93,6 +93,17 @@ class ReportResult(_Result):
     sheets: dict[str, int]           # sheet name -> rows
 
 
+class DistanceQuery(_Result):
+    source: str
+    target: str
+    max_um: float
+    n_source: int                    # source puncta in the latest report
+    n_within: int                    # of them, with a target punctum within max_um
+    fraction_within: float
+    bins: list[list[float]]          # [low_um, high_um, count] up to max_um
+    semantics: str
+
+
 class CellsResult(_Result):
     folder: str
     n_cells: int
@@ -201,20 +212,47 @@ def get_parameters(s):
 
 
 def query_report(s, sheet, limit=None):
-    """The rows of one sheet of ``s``'s report, as dicts (at most ``limit``)."""
+    """The rows of one sheet of ``s``'s latest report, as dicts (at most
+    ``limit``), read from the CSV sidecar written beside the report; reports
+    exported before sidecars existed are read from the workbook."""
     import pandas as pd
-    from . import stages
-    info = (s.get("processed_files", {}) or {}).get(stages.REPORT_NAME)
-    path = Path(info["path"]) if isinstance(info, dict) and info.get("path") else None
-    if path is None or not path.exists():
-        raise FileNotFoundError("The session has no exported report.")
-    sheets = pd.ExcelFile(path).sheet_names
-    if sheet not in sheets:
-        raise ValueError(f"The report has no sheet '{sheet}'; it has {', '.join(sheets)}.")
-    table = pd.read_excel(path, sheet_name=sheet)
+    from . import analysis, stages
+    sidecars = Path(s.get("output_dir")) / constants.REPORTS_DIR / analysis.SHEETS_DIR
+    if sidecars.exists():
+        available = {p.stem: p for p in sidecars.glob("*.csv")}
+        wanted = analysis.sheet_file_name(sheet)[:-4]
+        if wanted not in available:
+            raise ValueError(f"The report has no sheet '{sheet}'; it has "
+                             f"{', '.join(sorted(k.replace('_', ' ') for k in available))}.")
+        table = pd.read_csv(available[wanted])
+    else:
+        info = (s.get("processed_files", {}) or {}).get(stages.REPORT_NAME)
+        path = Path(info["path"]) if isinstance(info, dict) and info.get("path") else None
+        if path is None or not path.exists():
+            raise FileNotFoundError("The session has no exported report.")
+        sheets = pd.ExcelFile(path).sheet_names
+        if sheet not in sheets:
+            raise ValueError(f"The report has no sheet '{sheet}'; it has {', '.join(sheets)}.")
+        table = pd.read_excel(path, sheet_name=sheet)
     if limit is not None:
         table = table.head(int(limit))
     return table.astype(object).where(table.notna(), None).to_dict(orient="records")
+
+
+def query_distances(s, source, target, max_um, bin_um=None):
+    """How many ``source`` puncta have a ``target`` punctum within ``max_um``
+    µm in ``s``'s latest report (``analysis.query_distances``), read from
+    ``reports/distances.csv``. ``source`` and ``target`` may name a layer, a
+    round and channel, or a channel only one round has."""
+    import pandas as pd
+    from . import analysis, stages
+    path = Path(s.get("output_dir")) / constants.REPORTS_DIR / analysis.DISTANCES_SIDECAR
+    if not path.exists():
+        raise FileNotFoundError("The session has no distances table yet; export the report first.")
+    distances = pd.read_csv(path)
+    names = sorted(set(distances["Source_Layer"]) | set(distances["Target_Layer"]))
+    return DistanceQuery(**analysis.query_distances(distances, stages.resolve_layer(source, names),
+                                                    stages.resolve_layer(target, names), max_um, bin_um))
 
 
 def check_nucleus_ids(s):
@@ -306,6 +344,6 @@ def get_decisions(s, name=None):
 
 def schema():
     """The JSON schema of every result model, by name."""
-    models = (SessionInfo, ArtifactState, StageState, Parameters, NucleusIdCheck, DetectionResult, TransformResult,
+    models = (SessionInfo, ArtifactState, StageState, DistanceQuery, Parameters, NucleusIdCheck, DetectionResult, TransformResult,
               ReportResult, CellsResult, PipelineResult)
     return {m.__name__: m.model_json_schema() for m in models}

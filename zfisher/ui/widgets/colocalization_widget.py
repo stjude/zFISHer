@@ -2,6 +2,7 @@ import logging
 import napari
 import numpy as np
 from pathlib import Path
+from typing import Optional
 from magicgui import magicgui
 from magicgui.widgets import Container, Label, PushButton, LineEdit
 
@@ -185,6 +186,19 @@ _tri_clear_btn.clicked.connect(_on_clear_tri_rules)
 
 _filename = LineEdit(label="Report Name", value="zFISHer_Analysis_Report.xlsx", tooltip="Filename for the exported Excel report (without extension).")
 _export_btn = PushButton(text="Run Analysis && Export Master Report", tooltip="Run colocalization analysis on all rules and export the master report.")
+_bins = LineEdit(label="Distribution Bins", value=", ".join(map(str, analysis.DEFAULT_DISTRIBUTION_BINS)),
+                 tooltip="Lower edges of the puncta-count bins of the Distribution sheet, starting at 0: "
+                         "'0, 1, 2, 3, 11' gives 0, 1, 2, 3 to 10 and more than 10 puncta.")
+
+
+def _parse_bins(text):
+    """The bin edges typed in the Distribution Bins field, checked."""
+    try:
+        edges = [int(part) for part in str(text).replace(";", ",").split(",") if part.strip()]
+    except ValueError:
+        raise ValueError(f"Distribution bins are whole numbers separated by commas, not '{text}'.")
+    analysis.distribution_bins(edges)                       # raises unless they start at 0
+    return sorted(set(edges))
 
 
 @require_active_session("Please start or load a session before exporting.")
@@ -235,6 +249,12 @@ def _on_export():
 
         out_dir = Path(session.get_data("output_dir")) / constants.REPORTS_DIR
         out_dir.mkdir(exist_ok=True, parents=True)
+        bins = _parse_bins(_bins.value)
+        if bins != (session.get_data("distribution_bins") or list(analysis.DEFAULT_DISTRIBUTION_BINS)):
+            from ...core import decisions
+            decisions.record("distribution_bins", bins, old=session.get_data("distribution_bins"),
+                             scope={"stage": "report"})
+        session.update_data("distribution_bins", bins)
 
         final_path = analysis.run_colocalization_analysis(
             layers_data=points_data,
@@ -246,9 +266,11 @@ def _on_export():
             output_dir=out_dir,
             total_nuclei=total_nuclei,
             nucleus_ids=nucleus_ids,
+            distribution_bins=bins,
         )
 
         refresh_report_note()
+        _distance_query.reset_choices()
         popups.show_info_popup(
             viewer.window._qt_window,
             "Export Complete",
@@ -258,6 +280,45 @@ def _on_export():
 
 
 _export_btn.clicked.connect(_on_export)
+
+
+# --- Distance query: from the latest report's distances table, without a rerun ---
+
+def _distance_layers(widget=None):
+    """The puncta layers of the latest report's distances table."""
+    out = session.get_data("output_dir")
+    path = Path(out) / constants.REPORTS_DIR / analysis.DISTANCES_SIDECAR if out else None
+    if path is None or not path.exists():
+        return []
+    import pandas as pd
+    return sorted(set(pd.read_csv(path, usecols=["Source_Layer"])["Source_Layer"]))
+
+
+@magicgui(
+    call_button="Count",
+    layout="vertical",
+    source={"label": "Source", "choices": _distance_layers,
+            "tooltip": "For each punctum of this channel, its nearest punctum of the target channel is measured."},
+    target={"label": "Target", "choices": _distance_layers},
+    within={"label": "Within (µm)", "min": 0.01, "max": 10.0, "step": 0.05, "value": 0.5},
+    bin_um={"label": "Bin Width (µm)", "min": 0.0, "max": 5.0, "step": 0.05, "value": 0.1,
+            "tooltip": "Width of the histogram bins up to the distance; 0 for one bin."},
+)
+@require_active_session("Please start or load a session first.")
+@error_handler("Distance Query Failed")
+def _distance_query(source: Optional[str] = None, target: Optional[str] = None, within: float = 0.5,
+                    bin_um: float = 0.1):
+    """Count source puncta with a target punctum within a distance, from the
+    latest report's distances table (``api.query_distances``)."""
+    from ...core import api
+    if not source or not target:
+        _distance_result.setText("Export the report first: the counts are read from its distances table.")
+        return
+    q = api.query_distances(session.current(), source, target, within, bin_um or None)
+    lines = [f"{q.n_within} of {q.n_source} {q.source} puncta ({100 * q.fraction_within:.1f}%) have a "
+             f"{q.target} punctum within {q.max_um:g} µm."]
+    lines += [f"  {lo:g}–{hi:g} µm: {c}" for lo, hi, c in q.bins]
+    _distance_result.setText("\n".join(lines))
 
 
 # =====================================================================
@@ -280,6 +341,8 @@ def refresh_report_note():
 
 def refresh_rules_display():
     """Restores all rules displays from session data (e.g., after loading a session)."""
+    stored_bins = session.get_data("distribution_bins")
+    _bins.value = ", ".join(map(str, stored_bins or analysis.DEFAULT_DISTRIBUTION_BINS))
     rules = session.get_data("colocalization_rules", default=[])
     _update_rules_display(rules)
     tri_rules = session.get_data("tri_colocalization_rules", default=[])
@@ -354,6 +417,7 @@ _layout.addWidget(_make_divider())
 _layout.addWidget(_make_section_header("Export"))
 _layout.addWidget(_make_section_desc("Run analysis on all rules and export the master Excel report."))
 _layout.addWidget(_filename.native)
+_layout.addWidget(_bins.native)
 _layout.addWidget(_make_spacer())
 from qtpy.QtWidgets import QLabel as _QLabel
 _report_note = _QLabel("")
@@ -363,11 +427,22 @@ _report_note.setStyleSheet("color: #f9e2af; margin: 4px 2px; font-size: 12px;")
 _report_note.setVisible(False)
 _layout.addWidget(_report_note)
 _layout.addWidget(_export_btn.native)
+_layout.addWidget(_make_spacer())
+_layout.addWidget(_make_divider())
+_layout.addWidget(_make_section_header("Distance Query"))
+_layout.addWidget(_make_section_desc("How many puncta have a neighbour within a distance, from the latest "
+                                     "report, without running it again."))
+_layout.addWidget(_distance_query.native)
+_distance_result = _QLabel("")
+_distance_result.setWordWrap(True)
+_distance_result.setMinimumWidth(0)
+_distance_result.setStyleSheet("margin: 4px 2px; font-size: 12px;")
+_layout.addWidget(_distance_result)
 _layout.addStretch(1)
 
 # Ensure widgets shrink with panel
 from qtpy.QtWidgets import QAbstractSpinBox, QComboBox, QLabel
-for w in [_rule_builder.native, _tri_rule_builder.native]:
+for w in [_rule_builder.native, _tri_rule_builder.native, _distance_query.native]:
     w.setMinimumWidth(0)
     for child in w.findChildren(QLabel):
         child.setMinimumWidth(0)
