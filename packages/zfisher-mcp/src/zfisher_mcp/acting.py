@@ -8,9 +8,11 @@ of date and which stages would run, and changes nothing. A real run opens the
 session for writing (zFISHer saves it under the next session number, as Load
 Session does), runs one ``zfisher.core.api`` operation, and stamps every
 decision it logs with the server's actor and the client the call came from.
-Calls that write to one folder run one at a time.
+Calls that write to one folder run one at a time. Sessions are reached, and
+changes run, through the server's host (``host``), so a GUI that runs the
+server can give it its own open session.
 """
-import contextlib
+import contextvars
 import logging
 import threading
 from pathlib import Path
@@ -72,16 +74,24 @@ class ActingTools:
 
     # --- plumbing ---------------------------------------------------------------------
 
-    @contextlib.contextmanager
-    def acting(self, ctx, folder, what):
-        """Hold ``folder``'s writer lock, and stamp the server's actor and the
-        client on every decision logged meanwhile."""
+    def act(self, ctx, folder, what, fn, session="write"):
+        """Run the change ``fn`` to ``folder`` through the host, holding the
+        folder's writer lock, with the server's actor and the client stamped on
+        every decision it logs. ``fn`` is given the folder's session, opened
+        for writing (``session="write"``) or not (``"read"``), or nothing
+        (``None``)."""
         with self._locks_lock:
             lock = self._locks.setdefault(Path(folder), threading.Lock())
         client = client_name(ctx)
         with lock, decisions.use_actor(self.config.actor, via=f"mcp:{client}"):
             logger.info("%s on %s by %s via %s", what, self.roots.relative(folder), self.config.actor, client)
-            yield
+            context = contextvars.copy_context()   # the actor, for a host that runs fn on another thread
+
+            def change():
+                if session is None:
+                    return fn()
+                return fn(self.host.session(folder, writable=session == "write"))
+            return self.host.run_write(what, folder, lambda: context.run(change))
 
     def folder(self, session):
         path = self.roots.resolve(session)
@@ -123,8 +133,8 @@ class ActingTools:
         with self.answer():
             folder = self.folder(session)
             scope = {k: v for k, v in (("round", round), ("channel", channel)) if v}
-            with self.acting(ctx, folder, f"propose {name}"):
-                entry = api.propose(api.open_session(folder), name, value, scope=scope, justification=justification)
+            entry = self.act(ctx, folder, f"propose {name}", lambda s: api.propose(
+                s, name, value, scope=scope, justification=justification), session="read")
             return Proposal(record=self.roots.scrub(entry))
 
     # --- operate ----------------------------------------------------------------------
@@ -145,12 +155,11 @@ class ActingTools:
         with self.answer():
             folder = self.folder(session)
             # Checked on a read-only open first, so a refused value writes no session file.
-            change = api.set_param(api.open_session(folder), scope, name, value, channel=channel, dry_run=True)
+            change = api.set_param(self.host.session(folder), scope, name, value, channel=channel, dry_run=True)
             if dry_run:
                 return self.operation(True, would_run=change.would_run, result=change, writes=[])
-            with self.acting(ctx, folder, f"set_param {scope}.{name}"):
-                change = api.set_param(api.open_session(folder, read_only=False), scope, name, value,
-                                       channel=channel, justification=justification)
+            change = self.act(ctx, folder, f"set_param {scope}.{name}", lambda s: api.set_param(
+                s, scope, name, value, channel=channel, justification=justification))
             return self.operation(False, would_run=change.would_run, result=change, writes=[])
 
     def update(self, ctx: Context, session: str, dry_run: DryRun = True) -> Operation:
@@ -158,11 +167,10 @@ class ActingTools:
         settings and files (and the stages after them)."""
         with self.answer():
             folder = self.folder(session)
-            planned = api.plan_update(api.open_session(folder))
+            planned = api.plan_update(self.host.session(folder))
             if dry_run:
                 return self.operation(True, would_run=planned, writes=[])
-            with self.acting(ctx, folder, "update"):
-                ran = api.update(api.open_session(folder))
+            ran = self.act(ctx, folder, "update", api.update, session="read")
             return self.operation(False, would_run=planned, result={"stages_run": list(ran or [])}, writes=[])
 
     def detect_channel(self, ctx: Context, session: str, round: Round, channel: str,
@@ -179,12 +187,11 @@ class ActingTools:
             if params is not None:
                 DetectionParams.model_validate(params)
             folder = self.folder(session)
-            plan = api.plan_operation(api.open_session(folder), "detect", round, channel)
+            plan = api.plan_operation(self.host.session(folder), "detect", round, channel)
             if dry_run:
                 return self.operation(True, plan)
-            with self.acting(ctx, folder, f"detect {round} - {channel}"):
-                result = api.detect_channel(api.open_session(folder, read_only=False), round, channel, params,
-                                            existing)
+            result = self.act(ctx, folder, f"detect {round} - {channel}", lambda s: api.detect_channel(
+                s, round, channel, params, existing))
             return self.operation(False, plan, result=result)
 
     def transform_channel(self, ctx: Context, session: str, round: Round, channel: str,
@@ -193,11 +200,11 @@ class ActingTools:
         and assign them to nuclei. The report is out of date until exported again."""
         with self.answer():
             folder = self.folder(session)
-            plan = api.plan_operation(api.open_session(folder), "transform", round, channel)
+            plan = api.plan_operation(self.host.session(folder), "transform", round, channel)
             if dry_run:
                 return self.operation(True, plan)
-            with self.acting(ctx, folder, f"transform {round} - {channel}"):
-                result = api.transform_channel(api.open_session(folder, read_only=False), round, channel)
+            result = self.act(ctx, folder, f"transform {round} - {channel}", lambda s: api.transform_channel(
+                s, round, channel))
             return self.operation(False, plan, result=result)
 
     def export_report(self, ctx: Context, session: str, dry_run: DryRun = True) -> Operation:
@@ -205,11 +212,10 @@ class ActingTools:
         colocalization rules."""
         with self.answer():
             folder = self.folder(session)
-            plan = api.plan_operation(api.open_session(folder), "report")
+            plan = api.plan_operation(self.host.session(folder), "report")
             if dry_run:
                 return self.operation(True, plan)
-            with self.acting(ctx, folder, "export_report"):
-                result = api.export_report(api.open_session(folder, read_only=False))
+            result = self.act(ctx, folder, "export_report", api.export_report)
             return self.operation(False, plan, result=result)
 
     def export_cells(self, ctx: Context, session: str,
@@ -220,11 +226,11 @@ class ActingTools:
         """Write one OME-TIFF per nucleus (its aligned channels and mask) with its puncta."""
         with self.answer():
             folder = self.folder(session)
-            plan = api.plan_operation(api.open_session(folder), "cells")
+            plan = api.plan_operation(self.host.session(folder), "cells")
             if dry_run:
                 return self.operation(True, plan)
-            with self.acting(ctx, folder, "export_cells"):
-                result = api.export_cells(api.open_session(folder, read_only=False), ids=ids, padding_um=padding_um)
+            result = self.act(ctx, folder, "export_cells", lambda s: api.export_cells(
+                s, ids=ids, padding_um=padding_um))
             return self.operation(False, plan, result=result)
 
     def threshold_sweep(self, ctx: Context, session: str, round: Round, channel: str,
@@ -237,8 +243,8 @@ class ActingTools:
             if params is not None:
                 DetectionParams.model_validate(params)
             folder = self.folder(session)
-            with self.acting(ctx, folder, f"threshold_sweep {round} - {channel}"):
-                result = api.threshold_sweep(api.open_session(folder, read_only=False), round, channel, params)
+            result = self.act(ctx, folder, f"threshold_sweep {round} - {channel}", lambda s: api.threshold_sweep(
+                s, round, channel, params))
             return self.out(api.ThresholdSweep, result)
 
     def run_batch(self, ctx: Context,
@@ -261,6 +267,6 @@ class ActingTools:
             if dry_run:
                 return self.operation(True, result=api.plan_batch(config, output_path), writes=[str(output_path)])
             workers = min(workers, self.config.max_workers)
-            with self.acting(ctx, output_path, f"run_batch with {workers} worker(s)"):
-                result = api.run_batch(config, output_path, workers=workers)
+            result = self.act(ctx, output_path, f"run_batch with {workers} worker(s)", lambda: api.run_batch(
+                config, output_path, workers=workers), session=None)
             return self.operation(False, result=result, writes=[str(output_path)])

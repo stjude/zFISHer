@@ -277,7 +277,7 @@ zfisher
 
 or `python -m zfisher`; from a source checkout, `python main.py` does the same. The headless pipeline runs with `zfisher-cli` (`zfisher-cli --help`).
 
-An MCP client can ask questions about finished sessions through the server in `packages/zfisher-mcp` (`zfisher-mcp --root <folder>`), which by default reads them and writes nothing; started in its triage or operate mode it can also flag a batch's datasets and, on copies set aside for it, change settings and rerun stages. See [its README](packages/zfisher-mcp/README.md).
+An MCP client can ask questions about finished sessions through the server in `packages/zfisher-mcp` (`zfisher-mcp --root <folder>`), which by default reads them and writes nothing; started in its triage or operate mode it can also flag a batch's datasets and, on copies set aside for it, change settings and rerun stages. zFISHer can run it too, for a client on the same computer, from Home > Assistant Server. See [its README](packages/zfisher-mcp/README.md).
 
 This opens the napari viewer with the zFISHer sidebar containing all five workflow steps.
 
@@ -334,6 +334,7 @@ zFISHer/
       crash_log.py           # Python stacks of every thread when a native crash ends the process
     ui/                      # napari GUI layer
       viewer.py              # Main viewer setup, scale bar, toolbar, hotkey bindings
+      assistant_server.py    # Home's Assistant Server: the MCP server inside the GUI, on the GUI's own session
       events.py              # Layer event handlers (auto-save, cascade deletion, layer locking)
       style.py               # Theme colors and Qt stylesheets
       decorators.py          # @require_active_session, @error_handler

@@ -54,7 +54,25 @@ use the full path of `zfisher-mcp` in your environment:
 | `--max-workers N` | The most datasets `run_batch` runs at once (default 1). |
 | `--page-size N` | The most rows or records one call returns (default 200). |
 | `--max-depth N` | How many folders below a root to look for sessions (default 3). |
+| `--http [HOST:]PORT` | Serve over Streamable HTTP at `http://HOST:PORT/mcp` instead of stdio; see below. |
+| `--token TOKEN` | The bearer token HTTP clients must send (default: `ZFISHER_MCP_TOKEN`, else one made up and printed). |
+| `--allow-remote` | Allow `--http` on an address other machines can reach. |
 | `-v` | Log at DEBUG to stderr. |
+
+### Over HTTP, and from inside zFISHer
+
+`zfisher-mcp --root <folder> --http 127.0.0.1:8765` listens on this machine only, and every
+request must carry `Authorization: Bearer <token>`. Another address needs `--allow-remote`,
+and then a proxy with TLS in front, since the token travels in plain text otherwise.
+
+zFISHer starts the same server itself from **Home > Assistant Server**: choose the mode and
+press Start Assistant Server. It serves the folder that holds the open session on a free port
+of this machine, behind a token made fresh for each start; Copy Connection Details copies the
+address and token for the client's settings. The open session is served from zFISHer's memory,
+not as a second copy from disk. A change a client makes to it in operate mode runs in zFISHer:
+edits waiting to be saved are saved first, a progress dialog holds off other edits while it
+runs, and the puncta layers it rewrote are reloaded on screen. `update` and `run_batch`, which
+would rewrite the open session, are refused for it.
 
 ## Tools (`query` mode)
 

@@ -247,6 +247,15 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   what it would leave out of date and which stages would run. Every change is
   logged in the session's decisions log with its justification, the server's
   actor and the client's name.
+- **Home > Assistant Server** starts the MCP server from inside zFISHer, for a
+  client on the same computer: it serves the folder holding the open session
+  at `http://127.0.0.1:<port>/mcp`, behind a token made fresh for each start,
+  in the mode chosen there. The open session is served from zFISHer's memory;
+  a change a client makes to it runs in zFISHer after pending edits are saved,
+  under a progress dialog, and the puncta layers it rewrote are reloaded on
+  screen. Changes that would rewrite the open session (update, running a
+  batch) are refused for it. It needs `packages/zfisher-mcp` installed.
+  `zfisher-mcp --http [HOST:]PORT` serves the same way without the GUI.
 - **What a settings change would rerun can be known before running it.** The
   core API can say which pipeline stages an update would run with given
   settings, without running any, from the same stage table the run uses; it

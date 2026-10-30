@@ -84,10 +84,16 @@ class HomeWidget(Container):
         self._version = Label(value=f"<p>Version {software_version()}</p>")
         self._workflow = Label(value=workflow_html)
         self._workflow.native.setWordWrap(True)
+        # These wrap to the panel's width rather than setting it, so a
+        # vertical scrollbar never brings a horizontal one with it.
+        self._subtitle.native.setWordWrap(True)
+        self._workflow.native.setMinimumWidth(0)
+        self._workflow.native.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
 
         self._help_btn = PushButton(text="Open README / Help", tooltip="Open the zFISHer documentation and user guide.")
         self._repo_btn = PushButton(text="Visit zFISHer Repository", tooltip="Open the zFISHer GitHub repository in your browser.")
         self._reset_btn = PushButton(text="Reset", tooltip="Clear all layers and reset the session to start fresh.")
+        self._init_assistant()
 
         self._init_layout()
         self._connect_signals()
@@ -110,12 +116,84 @@ class HomeWidget(Container):
         _layout.addWidget(self._help_btn.native)
         _layout.addWidget(self._repo_btn.native)
         _layout.addWidget(self._reset_btn.native)
+        self._assistant_header.native.setStyleSheet("margin-top: 30px;")
+        for widget in (self._assistant_header, self._assistant_mode, self._assistant_btn, self._assistant_info,
+                       self._assistant_copy):
+            _layout.addWidget(widget.native)
         _layout.addStretch(1)
 
     def _connect_signals(self):
         self._help_btn.changed.connect(self._on_help)
         self._repo_btn.changed.connect(self._on_repo)
         self._reset_btn.changed.connect(self._on_reset)
+        self._assistant_btn.changed.connect(self._on_assistant)
+        self._assistant_copy.changed.connect(self._on_assistant_copy)
+
+    # --- Assistant Server: the MCP server, for a client on this machine ----------------
+
+    def _init_assistant(self):
+        from magicgui.widgets import ComboBox
+        from qtpy.QtCore import Qt
+        from .. import assistant_server
+        self._assistant = assistant_server.AssistantServer(self._viewer)
+        self._assistant_header = Label(value="<b>Assistant Server</b>")
+        self._assistant_mode = ComboBox(
+            label="Mode", choices=list(assistant_server.MODES), value="query",
+            tooltip="query: the client reads results only. triage: it may also flag a batch's datasets and "
+                    "propose changes. operate: it may also change settings and rerun steps.")
+        self._assistant_btn = PushButton(text="Start Assistant Server", tooltip=(
+            "Let an MCP client on this computer ask about the sessions in the open session's folder."))
+        self._assistant_info = Label(value="")
+        self._assistant_info.native.setWordWrap(True)
+        self._assistant_info.native.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        # Long addresses and paths wrap inside the panel instead of widening it.
+        self._assistant_info.native.setMinimumWidth(0)
+        self._assistant_info.native.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._assistant_copy = PushButton(text="Copy Connection Details",
+                                          tooltip="Copy the address and token for the client's settings.")
+        self._assistant_copy.visible = False
+        if not assistant_server.available():
+            self._assistant_btn.enabled = False
+            self._assistant_mode.enabled = False
+            self._assistant_info.value = ("<i>Needs the zfisher-mcp package: from the zFISHer folder, "
+                                          "pip install -e packages/zfisher-mcp</i>")
+
+    def _on_assistant(self):
+        from qtpy.QtWidgets import QFileDialog
+        if self._assistant.running:
+            self._assistant.stop()
+            self._assistant_btn.text = "Start Assistant Server"
+            self._assistant_mode.enabled = True
+            self._assistant_copy.visible = False
+            self._assistant_info.value = "Stopped."
+            return
+        out = session.get_data("output_dir")
+        root = Path(out).parent if out else None
+        if root is None:
+            chosen = QFileDialog.getExistingDirectory(self._viewer.window._qt_window,
+                                                      "Folder of sessions the assistant may read")
+            if not chosen:
+                return
+            root = Path(chosen)
+        try:
+            url, token = self._assistant.start(root, self._assistant_mode.value)
+        except Exception as exc:
+            self._assistant_info.value = f"Could not start: {exc}"
+            return
+        self._assistant_btn.text = "Stop Assistant Server"
+        self._assistant_mode.enabled = False
+        self._assistant_copy.visible = True
+        opened = f"<br>Open session: <b>{Path(out).name}</b>" if out else ""
+        self._assistant_info.value = (f"Serving <b>{self._assistant.mode}</b> mode at {url}<br>"
+                                      f"Token: {token}<br>Folder: {root.name}{opened}")
+        self._assistant_info.tooltip = f"Sessions under {root}"
+
+    def _on_assistant_copy(self):
+        from qtpy.QtWidgets import QApplication
+        if self._assistant.running:
+            QApplication.clipboard().setText(f"URL: {self._assistant.http.url}\n"
+                                             f"Authorization: Bearer {self._assistant.http.token}\n")
+            self._viewer.status = "Copied the assistant server's address and token."
 
     def _on_help(self):
         readme_path = Path(__file__).parent.parent.parent.parent / "README.md"

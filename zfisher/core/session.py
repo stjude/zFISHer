@@ -363,6 +363,11 @@ _lock = _default._lock
 _bound = contextvars.ContextVar("zfisher_session", default=None)
 
 
+def default():
+    """The process's default session: in the GUI, the session it has open."""
+    return _default
+
+
 def current():
     """The session the module-level functions act on: the one bound with
     ``use()`` in this thread or task, else the default session (the GUI's)."""

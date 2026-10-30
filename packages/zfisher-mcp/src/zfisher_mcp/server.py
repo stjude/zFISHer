@@ -14,7 +14,7 @@ import contextlib
 import json
 import logging
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal, Optional
 
@@ -27,6 +27,7 @@ from zfisher.core import api
 
 from . import __version__
 from .acting import ActingTools
+from .host import DiskHost
 from .paths import Roots
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,7 @@ class ServerConfig:
     log_level: str = "WARNING"    # of the server's own messages, to stderr
     actor: str = "agent"          # stamped on every decision a tool logs, as decisions.jsonl's actor
     max_workers: int = 1          # the most datasets run_batch runs at once
+    host: object = field(default_factory=DiskHost)   # how sessions are reached and changes run (host.py)
 
 
 # --- Result models of the server's own (the rest are zfisher.core.api's) --------------
@@ -147,6 +149,7 @@ class _Tools(ActingTools):
     def __init__(self, config):
         self.config = config
         self.roots = config.roots
+        self.host = config.host
         self._locks = {}                      # one writer lock per folder (acting)
         self._locks_lock = threading.Lock()
 
@@ -166,7 +169,7 @@ class _Tools(ActingTools):
         path = self.roots.resolve(session)
         if not path.exists():
             raise FileNotFoundError(f"No session at '{session}'; list_sessions gives the sessions there are.")
-        return api.open_session(path)                 # read-only: writes nothing
+        return self.host.session(path)                # read-only: writes nothing
 
     def out(self, model_cls, value):
         """``value`` (a model or plain data) as ``model_cls`` with every path made relative."""
