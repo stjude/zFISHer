@@ -137,6 +137,14 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Development
 
+- Errors zFISHer raises on purpose derive from `zfisher.core.errors`
+  (`SessionError`, `InputError`, `SchemaError`, `RegistrationError`,
+  `DetectionError`, `StaleError`) and keep the built-in type they had, so
+  existing `except` clauses still catch them. The pipeline raises them instead
+  of bare `RuntimeError`. The GUI's error handler shows them by their message,
+  logs a traceback only for unexpected errors, returns `FAILED`, and re-raises
+  when `ZFISHER_RAISE_ERRORS=1` is set, for tests. No handler in `zfisher.core`
+  passes over an error silently any more.
 - `zfisher/core/api.py` is the one set of operations every front end calls:
   open or create a session (read-only by default, writing nothing), describe
   it, report what is out of date, list its settings, query its report, check

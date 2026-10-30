@@ -7,7 +7,7 @@ import logging
 
 import pandas as pd
 
-from . import io, registration, segmentation, analysis, session, stages, decisions
+from . import io, registration, segmentation, analysis, session, stages, decisions, errors
 from .. import constants
 from .params import DetectionParams, default
 from .timing import timed_stage
@@ -103,7 +103,7 @@ def _run_full_zfisher_pipeline(
     _update(2, "Initializing session...")
     resumed = _open_previous_run(output_dir, r1_path, r2_path)
     if not resumed and not session.initialize_new_session(output_dir, r1_path, r2_path):
-        raise RuntimeError(
+        raise errors.SessionError(
             f"Session already exists in {output_dir} and was not made by a pipeline run that can be "
             "resumed. Remove the existing session or choose a different output directory."
         )
@@ -128,7 +128,7 @@ def _run_full_zfisher_pipeline(
                 _update(5 if rnd == "R1" else 8, f"Loading Round {rnd[1]}...")
                 loaded[rnd] = io.load_image_session(path)
             except Exception as exc:
-                raise RuntimeError(
+                raise errors.InputError(
                     f"Failed to load image files. Check that the files exist and are valid "
                     f"ND2 or TIFF images.\n  R1: {r1_path}\n  R2: {r2_path}\n  Error: {exc}"
                 ) from exc
@@ -184,7 +184,7 @@ def _run_full_zfisher_pipeline(
                     nuclear_channels={"R1": r1_nuc_ch, "R2": r2_nuc_ch},
                 )
             except Exception as exc:
-                raise RuntimeError(
+                raise errors.DetectionError(
                     f"Nuclear segmentation failed: {exc}\n"
                     f"Method: {method_key}, Merge splits: {merge_splits}"
                 ) from exc
@@ -296,7 +296,7 @@ def _run_full_zfisher_pipeline(
                 progress_callback=lambda p, t: _update(35 + int(p * 0.1), t)
             )
             if shift is None:
-                raise RuntimeError(
+                raise errors.RegistrationError(
                     "Registration failed: could not calculate a valid shift. "
                     "Check that both rounds have sufficient nuclear signal."
                 )
@@ -334,7 +334,7 @@ def _run_full_zfisher_pipeline(
                     r2_channel_names={r1_nuc_ch: r2_nuc_ch},
                 )
             except Exception as exc:
-                raise RuntimeError(
+                raise errors.RegistrationError(
                     f"Canvas generation (alignment + warping) failed: {exc}"
                 ) from exc
             del layer_lists
@@ -363,7 +363,7 @@ def _run_full_zfisher_pipeline(
             merged_mask = io.read_label_tif(consensus_file)
         else:
             if not (r1_aligned_mask.exists() and r2_warped_mask.exists()):
-                raise RuntimeError(
+                raise errors.RegistrationError(
                     "Consensus failed: aligned masks not found. "
                     "Canvas generation may have failed."
                 )
@@ -378,7 +378,7 @@ def _run_full_zfisher_pipeline(
                     progress_callback=lambda p, t: _update(60 + int(p * 0.1), t)
                 )
             except Exception as exc:
-                raise RuntimeError(
+                raise errors.DetectionError(
                     f"Consensus nuclei matching failed: {exc}"
                 ) from exc
             stages.record_stage("consensus", "", consensus_fp, consensus_params, upstream=[("canvas", "")],

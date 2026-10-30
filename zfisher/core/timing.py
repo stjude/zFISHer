@@ -513,8 +513,8 @@ def measure_write_speed(folder, nbytes=WRITE_PROBE_BYTES):
     finally:
         try:
             probe.unlink(missing_ok=True)
-        except OSError:
-            pass
+        except OSError as exc:            # a leftover probe file is harmless
+            logger.debug("Could not remove the write-speed probe %s: %s", probe, exc)
 
 
 def _cpu_model():
@@ -532,8 +532,8 @@ def _cpu_model():
             for line in f:
                 if line.startswith("model name"):
                     return line.split(":", 1)[1].strip()
-    except Exception:
-        pass
+    except Exception as exc:              # the CPU name is only for the ENV line
+        logger.debug("Could not read the CPU name: %s", exc)
     return platform.processor() or "unknown"
 
 
@@ -552,8 +552,8 @@ def _gpu_fields():
             mps = getattr(torch.backends, "mps", None)
             if mps is not None and mps.is_available():
                 fields["torch_mps"] = "True"
-        except Exception:
-            pass
+        except Exception as exc:          # the GPU fields are only for the ENV line
+            logger.debug("Could not ask torch about the GPU: %s", exc)
     if shutil.which("nvidia-smi"):
         try:
             out = subprocess.run(
@@ -563,8 +563,8 @@ def _gpu_fields():
             name, mem_mib = [s.strip() for s in first.split(",")]
             fields["gpu"] = name
             fields["vram_gb"] = f"{float(mem_mib) / 1024:.0f}"
-        except Exception:
-            pass
+        except Exception as exc:          # the GPU fields are only for the ENV line
+            logger.debug("Could not read nvidia-smi: %s", exc)
     return fields
 
 
@@ -585,8 +585,8 @@ def environment_fields(output_dir):
     }
     try:
         fields["ram_gb"] = f"{psutil.virtual_memory().total / 1024**3:.0f}"
-    except Exception:
-        pass
+    except Exception as exc:              # the RAM size is only for the ENV line
+        logger.debug("Could not read the RAM size: %s", exc)
     fields.update(_gpu_fields())
     fields["python"] = platform.python_version()
     fields["napari"] = _package_version("napari")

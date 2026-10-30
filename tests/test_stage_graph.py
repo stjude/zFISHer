@@ -110,7 +110,8 @@ def test_a_folder_no_pipeline_run_made_is_refused(copy):
     session.clear_session()
     session.update_data("output_dir", str(out))                      # a session made by hand, in the GUI
     session.clear_session()
-    with pytest.raises(RuntimeError, match="not made by a pipeline run that can be resumed"):
+    from zfisher.core import errors
+    with pytest.raises(errors.SessionError, match="not made by a pipeline run that can be resumed"):
         _run(copy, out)
 
 

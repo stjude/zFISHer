@@ -102,8 +102,10 @@ def test_untimed_block_is_reported_as_untracked_with_view_fields(_qapp, records)
 
 def test_error_handler_writes_a_timed_action(_qapp, records, monkeypatch):
     import napari
-    from zfisher.ui.decorators import error_handler
+    from zfisher.ui import decorators
+    from zfisher.ui.decorators import FAILED, error_handler
     monkeypatch.setattr(napari, "current_viewer", lambda: None)
+    monkeypatch.setattr(decorators, "RAISE_ERRORS", False)
 
     @error_handler("Registration Failed")
     def ok():
@@ -114,7 +116,7 @@ def test_error_handler_writes_a_timed_action(_qapp, records, monkeypatch):
         raise ValueError("bad")
 
     assert ok() == 5
-    assert fails() is None  # still swallowed, as before
+    assert fails() is FAILED  # reported, not raised
     first, second = records("ACTION")
     assert (first["action"], first["status"]) == ("widget:registration", "ok")
     assert (second["action"], second["status"], second["error"]) == (

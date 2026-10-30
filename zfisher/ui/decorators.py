@@ -1,4 +1,5 @@
 import logging
+import os
 from functools import wraps
 import napari
 from ..core import session, timing
@@ -29,12 +30,26 @@ def require_active_session(message="Please start or load a session first."):
         return wrapper
     return decorator
 
+FAILED = object()
+"""What a function wrapped by ``error_handler`` returns when it failed."""
+
+RAISE_ERRORS = os.environ.get("ZFISHER_RAISE_ERRORS", "") not in ("", "0")
+"""Set (``ZFISHER_RAISE_ERRORS=1``, or this flag in a test) to have
+``error_handler`` raise the error again after reporting it, so a test can
+assert the failure instead of finding a pop-up that nobody saw."""
+
+
 def error_handler(title="An Error Occurred"):
     """
     A decorator to catch exceptions in widget functions and show an error popup.
 
     The call is timed as one ``ACTION`` line in the session log, named after
     ``title`` without its "Failed" suffix (``widget:registration``).
+
+    An error zFISHer raises on purpose (``core.errors.ZFisherError``) is shown
+    with its message and logged without a traceback; anything else is a bug
+    and is logged with one. The wrapped function then returns ``FAILED``, and
+    raises the error again when ``RAISE_ERRORS`` is set.
     """
     action = "widget:" + title.removesuffix(" Failed").strip().lower().replace(" ", "_")
 
@@ -46,7 +61,11 @@ def error_handler(title="An Error Occurred"):
                 with timing.action_timer(action):
                     return func(*args, **kwargs)
             except Exception as e:
-                logger.error("Error in %s: %s", func.__name__, e, exc_info=True)
+                from ..core.errors import ZFisherError
+                if isinstance(e, ZFisherError):
+                    logger.error("%s: %s", title, e)
+                else:
+                    logger.error("Error in %s: %s", func.__name__, e, exc_info=True)
                 try:
                     viewer = napari.current_viewer()
                     if viewer:
@@ -54,5 +73,8 @@ def error_handler(title="An Error Occurred"):
                         popups.show_error_popup(viewer.window._qt_window, title, str(e))
                 except Exception as popup_e:
                     logger.error("Could not show error popup: %s", popup_e)
+                if RAISE_ERRORS:
+                    raise
+                return FAILED
         return wrapper
     return decorator

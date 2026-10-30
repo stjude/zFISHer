@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .. import constants
+from .errors import SessionError
 from .log_config import attach_session_log, detach_session_log
 from .timing import timed_stage
 
@@ -511,7 +512,7 @@ def initialize_new_session(output_dir, r1_path, r2_path, progress_callback=None)
 
     return True
 
-class SessionSaveError(OSError):
+class SessionSaveError(SessionError, OSError):
     """The session file could not be written. The previous file is left as it
     was; the change is kept in memory and goes out with the next save."""
 

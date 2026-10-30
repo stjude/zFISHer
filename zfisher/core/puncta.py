@@ -5,12 +5,13 @@ from skimage.feature import peak_local_max, blob_log, blob_dog
 from skimage.filters import gaussian
 from skimage.morphology import white_tophat, disk
 from .. import constants
+from .errors import SchemaError
 from .timing import timed_stage, n_rows
 
 logger = logging.getLogger(__name__)
 
 
-class PunctaTableError(ValueError):
+class PunctaTableError(SchemaError):
     """A puncta table whose feature rows do not match its points one to one.
     Written, its values would sit on the wrong puncta, so it never is."""
 

@@ -98,8 +98,8 @@ def _stored(path):
     if out is not None:
         try:
             return path.resolve().relative_to(out.resolve()).as_posix()
-        except ValueError:
-            pass
+        except ValueError:                # outside the output folder: kept absolute
+            return str(path)
     return str(path)
 
 

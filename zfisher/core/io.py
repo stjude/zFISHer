@@ -10,6 +10,7 @@ import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from .. import constants
+from .errors import InputError
 from .timing import timed_stage
 
 logger = logging.getLogger(__name__)
@@ -455,7 +456,7 @@ def identity_differences(recorded, found):
     return out
 
 
-class RawImageNotFound(FileNotFoundError):
+class RawImageNotFound(InputError, FileNotFoundError):
     """A round's raw image could not be found and nobody was asked for it."""
 
 

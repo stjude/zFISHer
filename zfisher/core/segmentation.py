@@ -15,6 +15,7 @@ except ImportError:  # cellpose (+torch) is heavy and only needed for Cellpose s
 from pathlib import Path
 
 from .. import constants
+from .errors import DetectionError
 from . import io
 from .timing import timed_stage, add_stage_fields
 
@@ -119,7 +120,7 @@ def compute_min_volume_threshold(all_volumes):
     return max(1, int(med - 2 * mad))
 
 
-class NoNucleiFound(ValueError):
+class NoNucleiFound(DetectionError, ValueError):
     """Segmentation of a round found no nuclei."""
 
 
