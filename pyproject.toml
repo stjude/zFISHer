@@ -48,6 +48,8 @@ dependencies = [
     "Pillow==12.0.0",
     # Memory figures in the session log's STAGE and ENV lines.
     "psutil==7.2.2",
+    # The typed setting models (zfisher/core/params.py); napari needs pydantic 2 as well.
+    "pydantic>=2.4,<3",
 ]
 
 [project.optional-dependencies]

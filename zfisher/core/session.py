@@ -287,6 +287,8 @@ def initialize_new_session(output_dir, r1_path, r2_path, progress_callback=None)
     update_data("r1_path", str(r1_path))
     update_data("r2_path", str(r2_path))
     from .provenance import software_version
+    from .params import SCHEMA_VERSION
+    update_data("schema_version", SCHEMA_VERSION)
     update_data("created_with_zfisher", software_version())
     # What each round's image is, so a file pointed to later can be checked.
     from .io import record_raw_identity
@@ -393,6 +395,13 @@ def load_session_file(path):
     path = Path(path)
     with open(path, 'r') as f:
         data = json.load(f)
+    from .params import SCHEMA_VERSION
+    made_with = data.get("schema_version", 1)
+    if not isinstance(made_with, int) or made_with > SCHEMA_VERSION:
+        raise ValueError(
+            f"{path.name} was written by a newer zFISHer (session format {made_with}; this zFISHer reads "
+            f"up to {SCHEMA_VERSION}, {data.get('zfisher_version', 'unknown version')}). Open it with that "
+            f"version or later.")
 
     # When loading an existing session, create a new session JSON file (session_2, _3, etc.)
     # instead of overwriting the original. This preserves audit history and prevents
@@ -453,6 +462,8 @@ def load_session_file(path):
         _SESSION_DATA.setdefault("tri_colocalization_rules", [])
         _SESSION_DATA.setdefault("processed_files", {})
         _SESSION_DATA.setdefault("puncta_params", {})
+        # Sessions from before the field are format 1, the format this writes.
+        _SESSION_DATA.setdefault("schema_version", SCHEMA_VERSION)
         # Save immediately to create the new session file
         _save_session_unlocked()
 

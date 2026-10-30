@@ -1,0 +1,1145 @@
+{
+ "schema_version": 1,
+ "models": {
+  "DetectionParams": {
+   "$defs": {
+    "DetectionMethod": {
+     "enum": [
+      "Local Maxima",
+      "Laplacian of Gaussian",
+      "Difference of Gaussian",
+      "Radial Symmetry"
+     ],
+     "title": "DetectionMethod",
+     "type": "string"
+    }
+   },
+   "additionalProperties": false,
+   "description": "Settings of puncta detection on one channel.",
+   "properties": {
+    "method": {
+     "$ref": "#/$defs/DetectionMethod",
+     "default": "Local Maxima",
+     "description": "Detection algorithm: Local Maxima (fastest, well-separated puncta), Laplacian of Gaussian (blob-aware, crowded fields), Difference of Gaussian (fast blob approximation), Radial Symmetry (high-density fields).",
+     "label": "Algorithm"
+    },
+    "sensitivity": {
+     "default": 0.05,
+     "description": "Intensity threshold as a fraction (0-1) of the maximum. Lower values detect dimmer puncta but may increase false positives.",
+     "label": "Sensitivity (0-1)",
+     "maximum": 1.0,
+     "minimum": 0.01,
+     "step": 0.01,
+     "title": "Sensitivity",
+     "type": "number"
+    },
+    "min_distance": {
+     "default": 2,
+     "description": "Minimum separation between detected puncta in pixels. Prevents double-counting nearby puncta.",
+     "label": "Min Distance (px)",
+     "maximum": 20,
+     "minimum": 1,
+     "title": "Min Distance",
+     "type": "integer"
+    },
+    "sigma": {
+     "default": 0.0,
+     "description": "Gaussian sigma for detection in pixels. Match to the approximate radius of your puncta. 0 = no smoothing.",
+     "label": "Spot Radius, px (Sigma)",
+     "maximum": 5.0,
+     "minimum": 0.0,
+     "step": 0.1,
+     "title": "Sigma",
+     "type": "number"
+    },
+    "z_scale": {
+     "anyOf": [
+      {
+       "maximum": 20.0,
+       "minimum": 0.01,
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "Ratio of Z-step to XY pixel size. Corrects for non-cubic voxels. Auto-computed from image metadata when available.",
+     "gui_value": 1.0,
+     "label": "Z/XY Scale Ratio",
+     "step": 0.01,
+     "title": "Z Scale"
+    },
+    "use_tophat": {
+     "default": false,
+     "description": "Apply white top-hat filter to subtract uneven background before detection.",
+     "label": "Subtract Background (Top-hat)",
+     "title": "Use Tophat",
+     "type": "boolean"
+    },
+    "tophat_radius": {
+     "default": 15,
+     "description": "Radius of the top-hat structuring element in pixels. Should be larger than puncta diameter.",
+     "label": "Top-hat Radius (px)",
+     "maximum": 50,
+     "minimum": 1,
+     "title": "Tophat Radius",
+     "type": "integer"
+    },
+    "nuclei_only": {
+     "default": true,
+     "description": "Keep only puncta inside the nuclei mask. Uncheck to detect puncta everywhere.",
+     "label": "Nuclei Only (discard outside nuclei)",
+     "title": "Nuclei Only",
+     "type": "boolean"
+    }
+   },
+   "title": "DetectionParams",
+   "type": "object"
+  },
+  "SegmentationParams": {
+   "$defs": {
+    "SegMethod": {
+     "enum": [
+      "Classical",
+      "Cellpose"
+     ],
+     "title": "SegMethod",
+     "type": "string"
+    }
+   },
+   "additionalProperties": false,
+   "description": "Settings of nuclei segmentation for one round.",
+   "properties": {
+    "method": {
+     "$ref": "#/$defs/SegMethod",
+     "default": "Classical",
+     "description": "Classical: Fast, watershed-based. Cellpose: Deep learning, slower but more accurate.",
+     "label": "Method"
+    },
+    "merge_splits": {
+     "default": true,
+     "description": "Merge adjacent labels that one nucleus was split into.",
+     "label": "Merge Split Nuclei",
+     "title": "Merge Splits",
+     "type": "boolean"
+    }
+   },
+   "title": "SegmentationParams",
+   "type": "object"
+  },
+  "RegistrationParams": {
+   "additionalProperties": false,
+   "description": "Settings of the R1-R2 registration.",
+   "properties": {
+    "max_ransac_distance": {
+     "default": 0,
+     "description": "Maximum distance in micrometres for matching centroid pairs between rounds. 0 = auto-detect.",
+     "label": "Max RANSAC Distance, \u00b5m (0=auto)",
+     "maximum": 100,
+     "minimum": 0,
+     "title": "Max Ransac Distance",
+     "type": "integer"
+    },
+    "apply_warp": {
+     "default": true,
+     "description": "Apply elastic warping for better alignment (recommended). Disable for rigid rotation/translation only.",
+     "label": "Apply B-spline Warp",
+     "title": "Apply Warp",
+     "type": "boolean"
+    }
+   },
+   "title": "RegistrationParams",
+   "type": "object"
+  },
+  "ConsensusParams": {
+   "$defs": {
+    "OverlapMethod": {
+     "enum": [
+      "Intersection",
+      "Union"
+     ],
+     "title": "OverlapMethod",
+     "type": "string"
+    }
+   },
+   "additionalProperties": false,
+   "description": "Settings of the consensus nuclei mask.",
+   "properties": {
+    "overlap_method": {
+     "$ref": "#/$defs/OverlapMethod",
+     "default": "Intersection",
+     "description": "Intersection: Keep only overlapping pixels. Union: Keep all pixels from both rounds.",
+     "label": "Overlap Method"
+    },
+    "match_threshold": {
+     "default": 0,
+     "description": "Maximum centroid distance in pixels to match nuclei between rounds. 0 = auto-detect.",
+     "label": "Match Threshold, px (0=auto)",
+     "maximum": 100,
+     "minimum": 0,
+     "title": "Match Threshold",
+     "type": "integer"
+    },
+    "remove_extranuclear_puncta": {
+     "default": true,
+     "description": "Remove puncta located outside the merged nuclei mask after matching.",
+     "label": "Remove Extranuclear Puncta",
+     "title": "Remove Extranuclear Puncta",
+     "type": "boolean"
+    }
+   },
+   "title": "ConsensusParams",
+   "type": "object"
+  },
+  "ColocRule": {
+   "additionalProperties": false,
+   "description": "A pairwise colocalization rule: target puncta within ``cutoff_um`` of source puncta.",
+   "properties": {
+    "type": {
+     "const": "pairwise",
+     "default": "pairwise",
+     "title": "Type",
+     "type": "string"
+    },
+    "source": {
+     "title": "Source",
+     "type": "string"
+    },
+    "target": {
+     "title": "Target",
+     "type": "string"
+    },
+    "cutoff_um": {
+     "default": 1.0,
+     "description": "Maximum distance (in microns) for two puncta to count as colocalized (close together).",
+     "label": "Cutoff (um)",
+     "maximum": 10.0,
+     "minimum": 0.1,
+     "step": 0.1,
+     "title": "Cutoff Um",
+     "type": "number"
+    }
+   },
+   "required": [
+    "source",
+    "target"
+   ],
+   "title": "ColocRule",
+   "type": "object"
+  },
+  "TriColocRule": {
+   "additionalProperties": false,
+   "description": "A three-channel rule: anchor puncta within ``cutoff_um`` of both channel A and channel B.",
+   "properties": {
+    "type": {
+     "const": "tri",
+     "default": "tri",
+     "title": "Type",
+     "type": "string"
+    },
+    "anchor": {
+     "title": "Anchor",
+     "type": "string"
+    },
+    "channel_a": {
+     "title": "Channel A",
+     "type": "string"
+    },
+    "channel_b": {
+     "title": "Channel B",
+     "type": "string"
+    },
+    "cutoff_um": {
+     "default": 1.0,
+     "description": "Maximum distance in microns for tri-colocalization.",
+     "label": "Cutoff (um)",
+     "maximum": 10.0,
+     "minimum": 0.1,
+     "step": 0.1,
+     "title": "Cutoff Um",
+     "type": "number"
+    }
+   },
+   "required": [
+    "anchor",
+    "channel_a",
+    "channel_b"
+   ],
+   "title": "TriColocRule",
+   "type": "object"
+  },
+  "DatasetSpec": {
+   "$defs": {
+    "ConsensusParams": {
+     "additionalProperties": false,
+     "description": "Settings of the consensus nuclei mask.",
+     "properties": {
+      "overlap_method": {
+       "$ref": "#/$defs/OverlapMethod",
+       "default": "Intersection",
+       "description": "Intersection: Keep only overlapping pixels. Union: Keep all pixels from both rounds.",
+       "label": "Overlap Method"
+      },
+      "match_threshold": {
+       "default": 0,
+       "description": "Maximum centroid distance in pixels to match nuclei between rounds. 0 = auto-detect.",
+       "label": "Match Threshold, px (0=auto)",
+       "maximum": 100,
+       "minimum": 0,
+       "title": "Match Threshold",
+       "type": "integer"
+      },
+      "remove_extranuclear_puncta": {
+       "default": true,
+       "description": "Remove puncta located outside the merged nuclei mask after matching.",
+       "label": "Remove Extranuclear Puncta",
+       "title": "Remove Extranuclear Puncta",
+       "type": "boolean"
+      }
+     },
+     "title": "ConsensusParams",
+     "type": "object"
+    },
+    "OverlapMethod": {
+     "enum": [
+      "Intersection",
+      "Union"
+     ],
+     "title": "OverlapMethod",
+     "type": "string"
+    },
+    "RegistrationParams": {
+     "additionalProperties": false,
+     "description": "Settings of the R1-R2 registration.",
+     "properties": {
+      "max_ransac_distance": {
+       "default": 0,
+       "description": "Maximum distance in micrometres for matching centroid pairs between rounds. 0 = auto-detect.",
+       "label": "Max RANSAC Distance, \u00b5m (0=auto)",
+       "maximum": 100,
+       "minimum": 0,
+       "title": "Max Ransac Distance",
+       "type": "integer"
+      },
+      "apply_warp": {
+       "default": true,
+       "description": "Apply elastic warping for better alignment (recommended). Disable for rigid rotation/translation only.",
+       "label": "Apply B-spline Warp",
+       "title": "Apply Warp",
+       "type": "boolean"
+      }
+     },
+     "title": "RegistrationParams",
+     "type": "object"
+    },
+    "SegMethod": {
+     "enum": [
+      "Classical",
+      "Cellpose"
+     ],
+     "title": "SegMethod",
+     "type": "string"
+    },
+    "SegmentationParams": {
+     "additionalProperties": false,
+     "description": "Settings of nuclei segmentation for one round.",
+     "properties": {
+      "method": {
+       "$ref": "#/$defs/SegMethod",
+       "default": "Classical",
+       "description": "Classical: Fast, watershed-based. Cellpose: Deep learning, slower but more accurate.",
+       "label": "Method"
+      },
+      "merge_splits": {
+       "default": true,
+       "description": "Merge adjacent labels that one nucleus was split into.",
+       "label": "Merge Split Nuclei",
+       "title": "Merge Splits",
+       "type": "boolean"
+      }
+     },
+     "title": "SegmentationParams",
+     "type": "object"
+    }
+   },
+   "additionalProperties": false,
+   "description": "One row of the batch template's Datasets sheet.",
+   "properties": {
+    "name": {
+     "title": "Name",
+     "type": "string"
+    },
+    "r1": {
+     "format": "path",
+     "title": "R1",
+     "type": "string"
+    },
+    "r2": {
+     "format": "path",
+     "title": "R2",
+     "type": "string"
+    },
+    "output_dir": {
+     "anyOf": [
+      {
+       "format": "path",
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Output Dir"
+    },
+    "r1_nuclear_channel": {
+     "default": "DAPI",
+     "title": "R1 Nuclear Channel",
+     "type": "string"
+    },
+    "r2_nuclear_channel": {
+     "default": "DAPI",
+     "title": "R2 Nuclear Channel",
+     "type": "string"
+    },
+    "segmentation": {
+     "$ref": "#/$defs/SegmentationParams",
+     "default": {
+      "method": "Classical",
+      "merge_splits": true
+     }
+    },
+    "registration": {
+     "$ref": "#/$defs/RegistrationParams",
+     "default": {
+      "max_ransac_distance": 0,
+      "apply_warp": true
+     }
+    },
+    "consensus": {
+     "$ref": "#/$defs/ConsensusParams",
+     "default": {
+      "overlap_method": "Intersection",
+      "match_threshold": 0,
+      "remove_extranuclear_puncta": true
+     }
+    }
+   },
+   "required": [
+    "name",
+    "r1",
+    "r2"
+   ],
+   "title": "DatasetSpec",
+   "type": "object"
+  },
+  "PunctaRule": {
+   "$defs": {
+    "DetectionMethod": {
+     "enum": [
+      "Local Maxima",
+      "Laplacian of Gaussian",
+      "Difference of Gaussian",
+      "Radial Symmetry"
+     ],
+     "title": "DetectionMethod",
+     "type": "string"
+    },
+    "DetectionParams": {
+     "additionalProperties": false,
+     "description": "Settings of puncta detection on one channel.",
+     "properties": {
+      "method": {
+       "$ref": "#/$defs/DetectionMethod",
+       "default": "Local Maxima",
+       "description": "Detection algorithm: Local Maxima (fastest, well-separated puncta), Laplacian of Gaussian (blob-aware, crowded fields), Difference of Gaussian (fast blob approximation), Radial Symmetry (high-density fields).",
+       "label": "Algorithm"
+      },
+      "sensitivity": {
+       "default": 0.05,
+       "description": "Intensity threshold as a fraction (0-1) of the maximum. Lower values detect dimmer puncta but may increase false positives.",
+       "label": "Sensitivity (0-1)",
+       "maximum": 1.0,
+       "minimum": 0.01,
+       "step": 0.01,
+       "title": "Sensitivity",
+       "type": "number"
+      },
+      "min_distance": {
+       "default": 2,
+       "description": "Minimum separation between detected puncta in pixels. Prevents double-counting nearby puncta.",
+       "label": "Min Distance (px)",
+       "maximum": 20,
+       "minimum": 1,
+       "title": "Min Distance",
+       "type": "integer"
+      },
+      "sigma": {
+       "default": 0.0,
+       "description": "Gaussian sigma for detection in pixels. Match to the approximate radius of your puncta. 0 = no smoothing.",
+       "label": "Spot Radius, px (Sigma)",
+       "maximum": 5.0,
+       "minimum": 0.0,
+       "step": 0.1,
+       "title": "Sigma",
+       "type": "number"
+      },
+      "z_scale": {
+       "anyOf": [
+        {
+         "maximum": 20.0,
+         "minimum": 0.01,
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Ratio of Z-step to XY pixel size. Corrects for non-cubic voxels. Auto-computed from image metadata when available.",
+       "gui_value": 1.0,
+       "label": "Z/XY Scale Ratio",
+       "step": 0.01,
+       "title": "Z Scale"
+      },
+      "use_tophat": {
+       "default": false,
+       "description": "Apply white top-hat filter to subtract uneven background before detection.",
+       "label": "Subtract Background (Top-hat)",
+       "title": "Use Tophat",
+       "type": "boolean"
+      },
+      "tophat_radius": {
+       "default": 15,
+       "description": "Radius of the top-hat structuring element in pixels. Should be larger than puncta diameter.",
+       "label": "Top-hat Radius (px)",
+       "maximum": 50,
+       "minimum": 1,
+       "title": "Tophat Radius",
+       "type": "integer"
+      },
+      "nuclei_only": {
+       "default": true,
+       "description": "Keep only puncta inside the nuclei mask. Uncheck to detect puncta everywhere.",
+       "label": "Nuclei Only (discard outside nuclei)",
+       "title": "Nuclei Only",
+       "type": "boolean"
+      }
+     },
+     "title": "DetectionParams",
+     "type": "object"
+    }
+   },
+   "additionalProperties": false,
+   "description": "One row of the Puncta sheet: detection settings for a channel, in every\ndataset (``dataset='ALL'``) or one, in both rounds or one.",
+   "properties": {
+    "dataset": {
+     "default": "ALL",
+     "title": "Dataset",
+     "type": "string"
+    },
+    "channel": {
+     "title": "Channel",
+     "type": "string"
+    },
+    "round": {
+     "default": "Both",
+     "enum": [
+      "Both",
+      "R1",
+      "R2"
+     ],
+     "title": "Round",
+     "type": "string"
+    },
+    "params": {
+     "$ref": "#/$defs/DetectionParams",
+     "default": {
+      "method": "Local Maxima",
+      "sensitivity": 0.05,
+      "min_distance": 2,
+      "sigma": 0.0,
+      "z_scale": null,
+      "use_tophat": false,
+      "tophat_radius": 15,
+      "nuclei_only": true
+     }
+    }
+   },
+   "required": [
+    "channel"
+   ],
+   "title": "PunctaRule",
+   "type": "object"
+  },
+  "ColocRuleRow": {
+   "$defs": {
+    "ColocRule": {
+     "additionalProperties": false,
+     "description": "A pairwise colocalization rule: target puncta within ``cutoff_um`` of source puncta.",
+     "properties": {
+      "type": {
+       "const": "pairwise",
+       "default": "pairwise",
+       "title": "Type",
+       "type": "string"
+      },
+      "source": {
+       "title": "Source",
+       "type": "string"
+      },
+      "target": {
+       "title": "Target",
+       "type": "string"
+      },
+      "cutoff_um": {
+       "default": 1.0,
+       "description": "Maximum distance (in microns) for two puncta to count as colocalized (close together).",
+       "label": "Cutoff (um)",
+       "maximum": 10.0,
+       "minimum": 0.1,
+       "step": 0.1,
+       "title": "Cutoff Um",
+       "type": "number"
+      }
+     },
+     "required": [
+      "source",
+      "target"
+     ],
+     "title": "ColocRule",
+     "type": "object"
+    },
+    "TriColocRule": {
+     "additionalProperties": false,
+     "description": "A three-channel rule: anchor puncta within ``cutoff_um`` of both channel A and channel B.",
+     "properties": {
+      "type": {
+       "const": "tri",
+       "default": "tri",
+       "title": "Type",
+       "type": "string"
+      },
+      "anchor": {
+       "title": "Anchor",
+       "type": "string"
+      },
+      "channel_a": {
+       "title": "Channel A",
+       "type": "string"
+      },
+      "channel_b": {
+       "title": "Channel B",
+       "type": "string"
+      },
+      "cutoff_um": {
+       "default": 1.0,
+       "description": "Maximum distance in microns for tri-colocalization.",
+       "label": "Cutoff (um)",
+       "maximum": 10.0,
+       "minimum": 0.1,
+       "step": 0.1,
+       "title": "Cutoff Um",
+       "type": "number"
+      }
+     },
+     "required": [
+      "anchor",
+      "channel_a",
+      "channel_b"
+     ],
+     "title": "TriColocRule",
+     "type": "object"
+    }
+   },
+   "additionalProperties": false,
+   "description": "One row of the Colocalization sheet, for every dataset or one.",
+   "properties": {
+    "dataset": {
+     "default": "ALL",
+     "title": "Dataset",
+     "type": "string"
+    },
+    "rule": {
+     "discriminator": {
+      "mapping": {
+       "pairwise": "#/$defs/ColocRule",
+       "tri": "#/$defs/TriColocRule"
+      },
+      "propertyName": "type"
+     },
+     "oneOf": [
+      {
+       "$ref": "#/$defs/ColocRule"
+      },
+      {
+       "$ref": "#/$defs/TriColocRule"
+      }
+     ],
+     "title": "Rule"
+    }
+   },
+   "required": [
+    "rule"
+   ],
+   "title": "ColocRuleRow",
+   "type": "object"
+  },
+  "BatchConfig": {
+   "$defs": {
+    "ColocRule": {
+     "additionalProperties": false,
+     "description": "A pairwise colocalization rule: target puncta within ``cutoff_um`` of source puncta.",
+     "properties": {
+      "type": {
+       "const": "pairwise",
+       "default": "pairwise",
+       "title": "Type",
+       "type": "string"
+      },
+      "source": {
+       "title": "Source",
+       "type": "string"
+      },
+      "target": {
+       "title": "Target",
+       "type": "string"
+      },
+      "cutoff_um": {
+       "default": 1.0,
+       "description": "Maximum distance (in microns) for two puncta to count as colocalized (close together).",
+       "label": "Cutoff (um)",
+       "maximum": 10.0,
+       "minimum": 0.1,
+       "step": 0.1,
+       "title": "Cutoff Um",
+       "type": "number"
+      }
+     },
+     "required": [
+      "source",
+      "target"
+     ],
+     "title": "ColocRule",
+     "type": "object"
+    },
+    "ColocRuleRow": {
+     "additionalProperties": false,
+     "description": "One row of the Colocalization sheet, for every dataset or one.",
+     "properties": {
+      "dataset": {
+       "default": "ALL",
+       "title": "Dataset",
+       "type": "string"
+      },
+      "rule": {
+       "discriminator": {
+        "mapping": {
+         "pairwise": "#/$defs/ColocRule",
+         "tri": "#/$defs/TriColocRule"
+        },
+        "propertyName": "type"
+       },
+       "oneOf": [
+        {
+         "$ref": "#/$defs/ColocRule"
+        },
+        {
+         "$ref": "#/$defs/TriColocRule"
+        }
+       ],
+       "title": "Rule"
+      }
+     },
+     "required": [
+      "rule"
+     ],
+     "title": "ColocRuleRow",
+     "type": "object"
+    },
+    "ConsensusParams": {
+     "additionalProperties": false,
+     "description": "Settings of the consensus nuclei mask.",
+     "properties": {
+      "overlap_method": {
+       "$ref": "#/$defs/OverlapMethod",
+       "default": "Intersection",
+       "description": "Intersection: Keep only overlapping pixels. Union: Keep all pixels from both rounds.",
+       "label": "Overlap Method"
+      },
+      "match_threshold": {
+       "default": 0,
+       "description": "Maximum centroid distance in pixels to match nuclei between rounds. 0 = auto-detect.",
+       "label": "Match Threshold, px (0=auto)",
+       "maximum": 100,
+       "minimum": 0,
+       "title": "Match Threshold",
+       "type": "integer"
+      },
+      "remove_extranuclear_puncta": {
+       "default": true,
+       "description": "Remove puncta located outside the merged nuclei mask after matching.",
+       "label": "Remove Extranuclear Puncta",
+       "title": "Remove Extranuclear Puncta",
+       "type": "boolean"
+      }
+     },
+     "title": "ConsensusParams",
+     "type": "object"
+    },
+    "DatasetSpec": {
+     "additionalProperties": false,
+     "description": "One row of the batch template's Datasets sheet.",
+     "properties": {
+      "name": {
+       "title": "Name",
+       "type": "string"
+      },
+      "r1": {
+       "format": "path",
+       "title": "R1",
+       "type": "string"
+      },
+      "r2": {
+       "format": "path",
+       "title": "R2",
+       "type": "string"
+      },
+      "output_dir": {
+       "anyOf": [
+        {
+         "format": "path",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Output Dir"
+      },
+      "r1_nuclear_channel": {
+       "default": "DAPI",
+       "title": "R1 Nuclear Channel",
+       "type": "string"
+      },
+      "r2_nuclear_channel": {
+       "default": "DAPI",
+       "title": "R2 Nuclear Channel",
+       "type": "string"
+      },
+      "segmentation": {
+       "$ref": "#/$defs/SegmentationParams",
+       "default": {
+        "method": "Classical",
+        "merge_splits": true
+       }
+      },
+      "registration": {
+       "$ref": "#/$defs/RegistrationParams",
+       "default": {
+        "max_ransac_distance": 0,
+        "apply_warp": true
+       }
+      },
+      "consensus": {
+       "$ref": "#/$defs/ConsensusParams",
+       "default": {
+        "overlap_method": "Intersection",
+        "match_threshold": 0,
+        "remove_extranuclear_puncta": true
+       }
+      }
+     },
+     "required": [
+      "name",
+      "r1",
+      "r2"
+     ],
+     "title": "DatasetSpec",
+     "type": "object"
+    },
+    "DetectionMethod": {
+     "enum": [
+      "Local Maxima",
+      "Laplacian of Gaussian",
+      "Difference of Gaussian",
+      "Radial Symmetry"
+     ],
+     "title": "DetectionMethod",
+     "type": "string"
+    },
+    "DetectionParams": {
+     "additionalProperties": false,
+     "description": "Settings of puncta detection on one channel.",
+     "properties": {
+      "method": {
+       "$ref": "#/$defs/DetectionMethod",
+       "default": "Local Maxima",
+       "description": "Detection algorithm: Local Maxima (fastest, well-separated puncta), Laplacian of Gaussian (blob-aware, crowded fields), Difference of Gaussian (fast blob approximation), Radial Symmetry (high-density fields).",
+       "label": "Algorithm"
+      },
+      "sensitivity": {
+       "default": 0.05,
+       "description": "Intensity threshold as a fraction (0-1) of the maximum. Lower values detect dimmer puncta but may increase false positives.",
+       "label": "Sensitivity (0-1)",
+       "maximum": 1.0,
+       "minimum": 0.01,
+       "step": 0.01,
+       "title": "Sensitivity",
+       "type": "number"
+      },
+      "min_distance": {
+       "default": 2,
+       "description": "Minimum separation between detected puncta in pixels. Prevents double-counting nearby puncta.",
+       "label": "Min Distance (px)",
+       "maximum": 20,
+       "minimum": 1,
+       "title": "Min Distance",
+       "type": "integer"
+      },
+      "sigma": {
+       "default": 0.0,
+       "description": "Gaussian sigma for detection in pixels. Match to the approximate radius of your puncta. 0 = no smoothing.",
+       "label": "Spot Radius, px (Sigma)",
+       "maximum": 5.0,
+       "minimum": 0.0,
+       "step": 0.1,
+       "title": "Sigma",
+       "type": "number"
+      },
+      "z_scale": {
+       "anyOf": [
+        {
+         "maximum": 20.0,
+         "minimum": 0.01,
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Ratio of Z-step to XY pixel size. Corrects for non-cubic voxels. Auto-computed from image metadata when available.",
+       "gui_value": 1.0,
+       "label": "Z/XY Scale Ratio",
+       "step": 0.01,
+       "title": "Z Scale"
+      },
+      "use_tophat": {
+       "default": false,
+       "description": "Apply white top-hat filter to subtract uneven background before detection.",
+       "label": "Subtract Background (Top-hat)",
+       "title": "Use Tophat",
+       "type": "boolean"
+      },
+      "tophat_radius": {
+       "default": 15,
+       "description": "Radius of the top-hat structuring element in pixels. Should be larger than puncta diameter.",
+       "label": "Top-hat Radius (px)",
+       "maximum": 50,
+       "minimum": 1,
+       "title": "Tophat Radius",
+       "type": "integer"
+      },
+      "nuclei_only": {
+       "default": true,
+       "description": "Keep only puncta inside the nuclei mask. Uncheck to detect puncta everywhere.",
+       "label": "Nuclei Only (discard outside nuclei)",
+       "title": "Nuclei Only",
+       "type": "boolean"
+      }
+     },
+     "title": "DetectionParams",
+     "type": "object"
+    },
+    "OverlapMethod": {
+     "enum": [
+      "Intersection",
+      "Union"
+     ],
+     "title": "OverlapMethod",
+     "type": "string"
+    },
+    "PunctaRule": {
+     "additionalProperties": false,
+     "description": "One row of the Puncta sheet: detection settings for a channel, in every\ndataset (``dataset='ALL'``) or one, in both rounds or one.",
+     "properties": {
+      "dataset": {
+       "default": "ALL",
+       "title": "Dataset",
+       "type": "string"
+      },
+      "channel": {
+       "title": "Channel",
+       "type": "string"
+      },
+      "round": {
+       "default": "Both",
+       "enum": [
+        "Both",
+        "R1",
+        "R2"
+       ],
+       "title": "Round",
+       "type": "string"
+      },
+      "params": {
+       "$ref": "#/$defs/DetectionParams",
+       "default": {
+        "method": "Local Maxima",
+        "sensitivity": 0.05,
+        "min_distance": 2,
+        "sigma": 0.0,
+        "z_scale": null,
+        "use_tophat": false,
+        "tophat_radius": 15,
+        "nuclei_only": true
+       }
+      }
+     },
+     "required": [
+      "channel"
+     ],
+     "title": "PunctaRule",
+     "type": "object"
+    },
+    "RegistrationParams": {
+     "additionalProperties": false,
+     "description": "Settings of the R1-R2 registration.",
+     "properties": {
+      "max_ransac_distance": {
+       "default": 0,
+       "description": "Maximum distance in micrometres for matching centroid pairs between rounds. 0 = auto-detect.",
+       "label": "Max RANSAC Distance, \u00b5m (0=auto)",
+       "maximum": 100,
+       "minimum": 0,
+       "title": "Max Ransac Distance",
+       "type": "integer"
+      },
+      "apply_warp": {
+       "default": true,
+       "description": "Apply elastic warping for better alignment (recommended). Disable for rigid rotation/translation only.",
+       "label": "Apply B-spline Warp",
+       "title": "Apply Warp",
+       "type": "boolean"
+      }
+     },
+     "title": "RegistrationParams",
+     "type": "object"
+    },
+    "SegMethod": {
+     "enum": [
+      "Classical",
+      "Cellpose"
+     ],
+     "title": "SegMethod",
+     "type": "string"
+    },
+    "SegmentationParams": {
+     "additionalProperties": false,
+     "description": "Settings of nuclei segmentation for one round.",
+     "properties": {
+      "method": {
+       "$ref": "#/$defs/SegMethod",
+       "default": "Classical",
+       "description": "Classical: Fast, watershed-based. Cellpose: Deep learning, slower but more accurate.",
+       "label": "Method"
+      },
+      "merge_splits": {
+       "default": true,
+       "description": "Merge adjacent labels that one nucleus was split into.",
+       "label": "Merge Split Nuclei",
+       "title": "Merge Splits",
+       "type": "boolean"
+      }
+     },
+     "title": "SegmentationParams",
+     "type": "object"
+    },
+    "TriColocRule": {
+     "additionalProperties": false,
+     "description": "A three-channel rule: anchor puncta within ``cutoff_um`` of both channel A and channel B.",
+     "properties": {
+      "type": {
+       "const": "tri",
+       "default": "tri",
+       "title": "Type",
+       "type": "string"
+      },
+      "anchor": {
+       "title": "Anchor",
+       "type": "string"
+      },
+      "channel_a": {
+       "title": "Channel A",
+       "type": "string"
+      },
+      "channel_b": {
+       "title": "Channel B",
+       "type": "string"
+      },
+      "cutoff_um": {
+       "default": 1.0,
+       "description": "Maximum distance in microns for tri-colocalization.",
+       "label": "Cutoff (um)",
+       "maximum": 10.0,
+       "minimum": 0.1,
+       "step": 0.1,
+       "title": "Cutoff Um",
+       "type": "number"
+      }
+     },
+     "required": [
+      "anchor",
+      "channel_a",
+      "channel_b"
+     ],
+     "title": "TriColocRule",
+     "type": "object"
+    }
+   },
+   "additionalProperties": false,
+   "description": "A parsed batch template.",
+   "properties": {
+    "datasets": {
+     "items": {
+      "$ref": "#/$defs/DatasetSpec"
+     },
+     "title": "Datasets",
+     "type": "array"
+    },
+    "puncta_rules": {
+     "default": [],
+     "items": {
+      "$ref": "#/$defs/PunctaRule"
+     },
+     "title": "Puncta Rules",
+     "type": "array"
+    },
+    "coloc_rules": {
+     "default": [],
+     "items": {
+      "$ref": "#/$defs/ColocRuleRow"
+     },
+     "title": "Coloc Rules",
+     "type": "array"
+    },
+    "warnings": {
+     "default": [],
+     "items": {
+      "type": "string"
+     },
+     "title": "Warnings",
+     "type": "array"
+    }
+   },
+   "required": [
+    "datasets"
+   ],
+   "title": "BatchConfig",
+   "type": "object"
+  }
+ }
+}

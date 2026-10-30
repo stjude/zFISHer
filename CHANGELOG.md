@@ -86,6 +86,15 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Development
 
+- Every setting a person or a batch template chooses (detection, segmentation,
+  registration, consensus, colocalization) is described once, in
+  `zfisher/core/params.py`, with its default, range, choices, label and
+  tooltip. Tests hold each GUI control to its field, and the models' JSON
+  schema to a snapshot in `tests/snapshots/`. `pydantic` is now a declared
+  dependency.
+- Session files record their format, `schema_version: 1`. A session written by
+  a later zFISHer in a format this one cannot read is refused with a message
+  saying so, instead of being half read.
 - The tests find the checkout and each other through pytest's `pythonpath`
   setting instead of editing `sys.path` in every file.
 - `ruff check .` runs in CI for the errors pyflakes finds (unused and
