@@ -335,6 +335,10 @@ def align_centroids_ransac(fixed_points, moving_points, max_distance=None, voxel
     details["n_inliers"] = int(np.count_nonzero(inliers))
     details["inlier_fraction"] = details["n_inliers"] / len(src)
     rmsd = _calculate_rmsd(src, dst, model, inliers)
+    if voxels is not None and np.any(inliers):
+        # The same residuals in micrometres: the pixel RMSD mixes Z and XY pixel sizes.
+        residuals = (model(src[inliers]) - dst[inliers]) * np.asarray(voxels, dtype=float)
+        details["rmsd_um"] = float(np.sqrt(np.mean(np.sum(residuals ** 2, axis=1))))
     refined_shift = model.translation
     
     # Safety: RANSAC can produce NaN shifts if the point set is degenerate

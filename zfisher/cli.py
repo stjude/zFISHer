@@ -214,6 +214,32 @@ def export(folder: Path = typer.Argument(..., help="A session's output folder or
         print(f"  {name}: {rows} rows")
 
 
+@app.command()
+def metrics(folder: Path = typer.Argument(..., help="A session's output folder or session file."),
+            saturation: bool = typer.Option(False, help="Also measure saturated voxels (reads every aligned image)."),
+            as_json: bool = typer.Option(False, "--json", help="Print JSON instead of text.")):
+    """Quality-control numbers of a session, from its files. Reads only."""
+    from .core import api
+    m = api.get_metrics(_open(folder), include_saturation=saturation)
+    if as_json:
+        print(json.dumps(m.model_dump(), indent=1))
+        return
+    reg = m.registration
+    rmsd = f"{reg['rmsd_um']:.2f} µm" if reg.get("rmsd_um") is not None else "not recorded in µm"
+    print(f"{m.dataset}: registration {reg.get('method') or 'unknown'}, RMSD {rmsd}, "
+          f"{reg.get('n_inliers')} of {reg.get('n_pairs')} pairs inliers")
+    vol = m.nuclei.get("volume_um3", {})
+    print(f"  nuclei: {m.nuclei['n_nuclei']}" + (f", median volume {vol['p50']:.0f} µm³" if vol else ""))
+    for key, c in m.channels.items():
+        snr = c["snr"].get("p50")
+        print(f"  {key}: {c['n_puncta']} puncta, median SNR {snr:.1f}" if snr is not None else f"  {key}: {c['n_puncta']} puncta",
+              f"| low SNR {100 * c['low_snr_fraction']:.0f}%, outside nuclei {100 * c['extranuclear_fraction']:.0f}%,"
+              f" by hand {100 * c['manual_fraction']:.0f}%, detected on {c['detected_on'] or 'unknown'}")
+    if m.saturation:
+        for name, fraction in m.saturation.items():
+            print(f"  {name}: {100 * fraction:.3f}% saturated")
+
+
 @app.command("query-distances")
 def query_distances(folder: Path = typer.Argument(..., help="A session's output folder or session file."),
                     source: str = typer.Argument(..., help='Source channel: "R1 - FITC", a layer name, or a channel one round has.'),

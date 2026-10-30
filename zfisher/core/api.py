@@ -104,6 +104,15 @@ class DistanceQuery(_Result):
     semantics: str
 
 
+class Metrics(_Result):
+    dataset: str
+    registration: dict               # method, fallback, rmsd_um, pairs, inliers, shift
+    channels: dict[str, dict]        # per "R1 - FITC": counts, SNR quantiles, fractions, detected_on
+    nuclei: dict                     # n_nuclei, volume_um3 quantiles
+    saturation: Optional[dict] = None
+    detection_mix: dict[str, int]
+
+
 class CellsResult(_Result):
     folder: str
     n_cells: int
@@ -255,6 +264,13 @@ def query_distances(s, source, target, max_um, bin_um=None):
                                                     stages.resolve_layer(target, names), max_um, bin_um))
 
 
+def get_metrics(s, include_saturation=False):
+    """Quality-control numbers of ``s`` from its files (``metrics.compute_metrics``)."""
+    from . import metrics
+    with _session.use(s):
+        return Metrics(**metrics.compute_metrics(include_saturation=include_saturation))
+
+
 def check_nucleus_ids(s):
     """How well each aligned puncta CSV's ``Nucleus_ID`` agrees with the saved
     consensus mask (``puncta.check_nucleus_ids``); reads only."""
@@ -344,6 +360,6 @@ def get_decisions(s, name=None):
 
 def schema():
     """The JSON schema of every result model, by name."""
-    models = (SessionInfo, ArtifactState, StageState, DistanceQuery, Parameters, NucleusIdCheck, DetectionResult, TransformResult,
+    models = (SessionInfo, ArtifactState, StageState, DistanceQuery, Metrics, Parameters, NucleusIdCheck, DetectionResult, TransformResult,
               ReportResult, CellsResult, PipelineResult)
     return {m.__name__: m.model_json_schema() for m in models}

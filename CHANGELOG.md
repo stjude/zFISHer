@@ -123,6 +123,14 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   of the Export section and in a new, optional Distribution_Bins column of the
   batch template, as the lower edge of each bin: `0, 1, 2, 3, 11`, the default,
   gives the columns the sheet always had.
+- **`zfisher-cli metrics <folder>`** gives a session's quality-control numbers,
+  read from its files: how the rounds registered (method, RMSD in µm, pairs
+  and inliers), per channel the puncta count, SNR quantiles and the fractions
+  at low SNR (below 2), outside nuclei and placed by hand, puncta per nucleus,
+  how the channel was detected, the nuclei's count and volume quantiles in
+  µm³, and with `--saturation` the share of saturated voxels in each aligned
+  image. Registration now records its RMSD in µm as well; the RMSD it already
+  recorded mixes Z and XY pixel sizes.
 - Each export also writes the report's tables as CSV files beside it:
   `reports/distances.csv` and one file per sheet under `reports/report_sheets/`,
   which scripts and the queries read instead of the workbook.
