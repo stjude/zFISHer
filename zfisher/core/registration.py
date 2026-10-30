@@ -33,6 +33,7 @@ import warnings
 import gc
 from dataclasses import dataclass
 import tifffile
+import contextvars
 from concurrent.futures import ThreadPoolExecutor
 from .session import set_processed_file
 
@@ -935,8 +936,8 @@ def _process_channel_pair(channel_name, pair_data, transform, output_dir):
     # Save both layers in parallel (zlib compression is CPU-bound)
     with ThreadPoolExecutor(max_workers=2) as save_executor:
         saves = [
-            save_executor.submit(_save_aligned_layer, r1_data, constants.ALIGNED_PREFIX, "R1", channel_name, output_dir, is_label),
-            save_executor.submit(_save_aligned_layer, final_r2, r2_prefix, "R2", r2_channel, output_dir, is_label),
+            save_executor.submit(contextvars.copy_context().run, _save_aligned_layer, r1_data, constants.ALIGNED_PREFIX, "R1", channel_name, output_dir, is_label),
+            save_executor.submit(contextvars.copy_context().run, _save_aligned_layer, final_r2, r2_prefix, "R2", r2_channel, output_dir, is_label),
         ]
     # An exception raised inside a submitted task stays in its future until it
     # is read. Unread, a failed write (full disk, permissions) would vanish and

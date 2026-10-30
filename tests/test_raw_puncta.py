@@ -122,9 +122,14 @@ def batch():
     write_rounds(root)
     out = root / "out"
     run_batch(root, out)
+    # The batch ran on a session of its own; what it registered is in its file,
+    # and the folder is opened the way Load Session opens it.
+    first = out / constants.SESSIONS_DIR / constants.SESSION_FILENAME
+    saved = json.loads(first.read_text())
+    session.load_session_file(first)
     yield types.SimpleNamespace(root=root, out=out, reports=out / constants.REPORTS_DIR,
-                                processed=dict(session.get_data("processed_files", default={})),
-                                hashes=dict(session.get_data("file_hashes", default={})),
+                                processed=saved.get("processed_files", {}),
+                                hashes=saved.get("file_hashes", {}),
                                 session=session)
     session.clear_session()
     shutil.rmtree(root, ignore_errors=True)

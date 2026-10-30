@@ -14,10 +14,23 @@ from .timing import timed_stage
 logger = logging.getLogger(__name__)
 
 
+def run_full_zfisher_pipeline(*args, **kwargs):
+    """Run the whole pipeline on one R1/R2 pair, on a session of its own.
+
+    Takes the arguments of ``_run_full_zfisher_pipeline``, documented there.
+    The run makes and saves its own ``session.Session`` in ``output_dir``; the
+    default session, the one a GUI has open, is left as it was, and the
+    session log that was attached before the run is attached again after it.
+    """
+    from .log_config import restoring_session_log
+    with session.use(session.Session()), restoring_session_log():
+        return _run_full_zfisher_pipeline(*args, **kwargs)
+
+
 @timed_stage("pipeline_total",
              fields=lambda a: {"dataset": Path(a["output_dir"]).name, "seg_method": a["seg_method"],
                                "apply_warp": a["apply_warp"]})
-def run_full_zfisher_pipeline(
+def _run_full_zfisher_pipeline(
     r1_path, r2_path, output_dir,
     seg_method="Classical", merge_splits=True,
     r1_nuclear_channel=None, r2_nuclear_channel=None,

@@ -101,3 +101,45 @@ def test_a_second_session_loads_a_file_without_touching_the_default(tmp_path):
     assert data["session_filename"] == "zfisher_session_2.json" and other.nuclear_channel() == "Hoechst"
     assert other.output_dir == tmp_path and session.get_data("shift") == [9, 9, 9]
     assert session.get_data("nuclear_channel") is None
+
+
+def test_a_bound_session_reaches_threads_only_with_their_context(tmp_path):
+    import contextvars
+    import threading
+    mine, seen = Session(), {}
+    with session.use(mine):
+        assert session.current() is mine
+        session.update_data("shift", [1, 1, 1])                   # acts on mine, not the default
+        plain = threading.Thread(target=lambda: seen.update(plain=session.current()))
+        ctx = contextvars.copy_context()
+        given = threading.Thread(target=lambda: ctx.run(lambda: seen.update(given=session.current())))
+        plain.start(), given.start(), plain.join(), given.join()
+    assert seen == {"plain": session.current(), "given": mine} and session.current() is not mine
+    assert mine.get("shift") == [1, 1, 1] and session.get_data("shift") is None
+
+
+def test_a_pipeline_run_leaves_the_open_session_and_its_log_alone(tmp_path):
+    import logging
+    from zfisher.core import log_config
+    from synthetic_rounds import run_batch, write_rounds
+    gui = tmp_path / "gui"
+    session.update_data("output_dir", str(gui))
+    session.update_data("nuclear_channel", "Hoechst")
+    log_config.attach_session_log(gui, session_filename=constants.SESSION_FILENAME)
+    before = (gui / constants.SESSIONS_DIR / constants.SESSION_FILENAME).read_bytes()
+    root = tmp_path / "rounds"
+    root.mkdir()
+    write_rounds(root)
+    levels = {n: logging.getLogger(n).level for n in ("zfisher", "stdout", "stderr")}
+    try:
+        run_batch(root, tmp_path / "out")
+        assert session.get_data("output_dir") == str(gui) and session.get_data("nuclear_channel") == "Hoechst"
+        assert (gui / constants.SESSIONS_DIR / constants.SESSION_FILENAME).read_bytes() == before
+        assert log_config.attached_session_log() == (gui, constants.SESSION_FILENAME)
+        run_log = "".join(p.read_text() for p in (tmp_path / "out" / constants.LOGS_DIR).glob("*.log"))
+        gui_log = "".join(p.read_text() for p in (gui / constants.LOGS_DIR).glob("*.log"))
+        assert "stage=pipeline_total" in run_log and "stage=pipeline_total" not in gui_log
+    finally:
+        log_config.detach_session_log()
+        for name, level in levels.items():
+            logging.getLogger(name).setLevel(level)

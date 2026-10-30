@@ -6,6 +6,13 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Fixes
 
+- **Batch Process leaves the session you have open alone.** Each dataset of a
+  batch was run on the GUI's own session, so after a batch the window still
+  showed your session while zFISHer's memory held the last dataset's: an edit
+  made then was saved into that dataset's folder, and the session log
+  continued in it. Every pipeline run, from the GUI, the CLI or a script, now
+  runs on a session of its own, and the session log that was open before is
+  opened again after it.
 - **The batch template accepts the ranges the GUI does.** Its Sensitivity
   floor was 0.0 where Puncta Detection's is 0.01; a 0.0 cell is now clamped to
   0.01 with a warning, like every other value outside its range. Defaults and
@@ -97,7 +104,9 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   act on one default instance, so nothing that called them changes, and the
   files written are byte for byte the same. Several sessions can live in one
   process, and `Session.batch_writes()` writes the file once for a run of
-  changes instead of after each one.
+  changes instead of after each one. `session.use(s)` makes `s` the session
+  the module functions act on for a block, per thread; the pipeline runs that
+  way, so no core function needed a new argument.
 - Every setting a person or a batch template chooses (detection, segmentation,
   registration, consensus, colocalization) is described once, in
   `zfisher/core/params.py`, with its default, range, choices, label and

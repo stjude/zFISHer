@@ -8,6 +8,7 @@ inside the session's ``logs/`` directory.
 """
 
 import logging
+from contextlib import contextmanager
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -55,6 +56,28 @@ class _StreamToLogger:
 
 
 _levels_before = {}   # logger levels attach_session_log changed, restored on detach
+_attached = None      # (output_dir, session_filename) of the attached session log
+
+
+def attached_session_log():
+    """``(output_dir, session_filename)`` of the session log being written, or None."""
+    return _attached
+
+
+@contextmanager
+def restoring_session_log():
+    """Run a block that may attach session logs of its own (a pipeline run),
+    then put back the log that was attached before it, if any: a new file in
+    that session's ``logs/`` folder, so the GUI session's later lines do not
+    land in the last batch dataset's log."""
+    before = _attached
+    try:
+        yield
+    finally:
+        if before is not None:
+            attach_session_log(*before)
+        else:
+            detach_session_log()
 
 
 def attach_session_log(output_dir, session_filename=None):
@@ -63,11 +86,12 @@ def attach_session_log(output_dir, session_filename=None):
     Safe to call multiple times — detaches any previous handler first.
     """
     global _file_handler, _stdout_redirector, _stderr_redirector
-    global _original_stdout, _original_stderr
+    global _original_stdout, _original_stderr, _attached
 
     detach_session_log()
 
     output_dir = Path(output_dir)
+    _attached = (output_dir, session_filename)
     logs_dir = output_dir / constants.LOGS_DIR
     logs_dir.mkdir(parents=True, exist_ok=True)
     # A native crash leaves its Python stacks next to the session log.
@@ -117,9 +141,10 @@ def attach_session_log(output_dir, session_filename=None):
 
 def detach_session_log():
     """Remove the file handler and restore stdout/stderr."""
-    global _file_handler, _stdout_redirector, _stderr_redirector
+    global _file_handler, _stdout_redirector, _stderr_redirector, _attached
     global _original_stdout, _original_stderr
 
+    _attached = None
     if _file_handler:
         logger.info("=== zFISHer session log ended ===")
         # The session's crash log goes with it.

@@ -1,3 +1,4 @@
+import contextvars
 import copy
 import json
 import logging
@@ -333,11 +334,27 @@ _default = Session()
 # Older names for the default session's state, kept for code that used them.
 _SESSION_DATA = _default._data
 _lock = _default._lock
+_bound = contextvars.ContextVar("zfisher_session", default=None)
 
 
 def current():
-    """The default session: the one the GUI and the module-level functions use."""
-    return _default
+    """The session the module-level functions act on: the one bound with
+    ``use()`` in this thread or task, else the default session (the GUI's)."""
+    bound = _bound.get()
+    return bound if bound is not None else _default
+
+
+@contextmanager
+def use(session):
+    """Run a block on ``session``: every module-level function, and so every
+    core function that uses them, acts on it instead of the default session.
+    Bound per thread and per task; a thread started inside the block sees it
+    only if it is given the block's context (``contextvars.copy_context``)."""
+    token = _bound.set(session)
+    try:
+        yield session
+    finally:
+        _bound.reset(token)
 
 
 def get_data(key=None, default=None):
@@ -359,13 +376,13 @@ def get_data(key=None, default=None):
         The requested value or the entire session dictionary.
     """
     if key:
-        return _default.get(key, default)
-    return _default._data
+        return current().get(key, default)
+    return current()._data
 
 
 def update_data(key, value):
     """Updates a key-value pair in the session data and saves the session."""
-    _default.set(key, value)
+    current().set(key, value)
 
 
 def set_processed_file(layer_name, path, layer_type: str, metadata: dict = None):
@@ -383,13 +400,13 @@ def set_processed_file(layer_name, path, layer_type: str, metadata: dict = None)
     metadata : dict, optional
         An optional dictionary for additional metadata (e.g., subtype).
     """
-    _default.set_processed_file(layer_name, path, layer_type, metadata)
+    current().set_processed_file(layer_name, path, layer_type, metadata)
     logger.info("Saved processed file: %s (%s) -> %s", layer_name, layer_type, path)
 
 
 def remove_processed_file(layer_name):
     """Removes a layer's entry from the session's processed_files registry and saves."""
-    _default.remove_processed_file(layer_name)
+    current().remove_processed_file(layer_name)
 
 
 def get_nuclear_channel():
@@ -407,7 +424,7 @@ def clear_session():
     Resets the in-memory session data to its default, empty state.
     """
     detach_session_log()
-    _default.reset()
+    current().reset()
 
 @timed_stage("session_init")
 def initialize_new_session(output_dir, r1_path, r2_path, progress_callback=None):
@@ -494,7 +511,7 @@ def save_session():
     """
     Saves the current in-memory session state to a JSON file.
     """
-    _default.save()
+    current().save()
 
 
 def _read_session_file(path):
@@ -578,7 +595,7 @@ def load_session_file(path):
         The loaded session data.
     """
     path = Path(path)
-    data = _default.load_into(path)
+    data = current().load_into(path)
     new_name = data["session_filename"]
     attach_session_log(Path(data["output_dir"]), session_filename=new_name)
     logger.info("Session loaded from %s → new session file: %s", path.name, new_name)
