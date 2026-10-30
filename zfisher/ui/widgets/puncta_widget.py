@@ -87,6 +87,9 @@ def _puncta_widget(
     if on_original:
         _redetect_on_original(viewer, image_layer, params, _existing_action)
         return
+    if not aligned:
+        _detect_from_disk(viewer, image_layer, nuclei_layer, params, _existing_action)
+        return
 
     with popups.ProgressDialog(viewer.window._qt_window, f"Processing {image_layer.name}...") as dialog:
         _raw_puncta_name = f"{image_layer.name}{constants.PUNCTA_SUFFIX}"
@@ -110,7 +113,7 @@ def _puncta_widget(
                 _result_holder[0] = puncta.process_puncta_detection(
                     image_layer.data,
                     mask_data=nuclei_layer.data if nuclei_layer else None,
-                    voxels=getattr(image_layer, 'scale', (1,1,1)),
+                    voxels=tuple(image_layer.scale),
                     params=params,
                     # No CSV here: the layer's CSV is written once below, from
                     # the layer itself. Writing the detection alone first put
@@ -188,6 +191,87 @@ def _confirm_aligned_r2(viewer, image_layer):
         text += "\n\nTick \"Detect on original image, then warp\" to use batch's method instead."
     return popups.show_yes_no_popup(viewer.window._qt_window, "Detect on the aligned R2 image?",
                                     text + "\n\nDetect on the aligned image anyway?")
+
+
+def _run_with_progress(dialog, work):
+    """Run ``work(progress)`` on a worker thread while ``dialog`` keeps
+    animating; ``progress(p, text)`` calls are applied on this thread. Returns
+    what ``work`` returns and raises what it raises."""
+    import threading
+    from collections import deque
+    result, error, progress = [None], [None], deque()
+
+    def run():
+        try:
+            result[0] = work(lambda p, t: progress.append((p, t)))
+        except Exception as exc:
+            error[0] = exc
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    while thread.is_alive():
+        thread.join(timeout=0.05)
+        while progress:
+            dialog.update_progress(*progress.popleft())
+        QApplication.processEvents()
+    while progress:
+        dialog.update_progress(*progress.popleft())
+    if error[0]:
+        raise error[0]
+    return result[0]
+
+
+def _detect_from_disk(viewer, image_layer, nuclei_layer, params, existing_action):
+    """Detect the channel of the raw ``image_layer`` on its round's image file
+    and the round's nuclei mask file (``stages.detect_channel``), the way batch
+    does, and show the CSV it writes. Edits waiting to be saved, to the
+    channel's puncta and to the masks, are saved first, so the files are what
+    is on screen and the provenance record names what was read."""
+    import pandas as pd
+    from ...core import stages
+    from .. import events
+    from .mask_editor_widget import flush_pending_mask_saves
+
+    key = puncta.channel_key(image_layer.name)
+    if not key or not key.startswith(("R1 - ", "R2 - ")):
+        raise ValueError(f"Cannot tell which round and channel '{image_layer.name}' is; "
+                         f"raw image layers are named like 'R1 - FITC'.")
+    round_id, channel = key.split(" - ", 1)
+    name = stages.raw_puncta_name(round_id, channel)
+    parent = viewer.window._qt_window
+    # On this thread: finding a moved image can ask the user.
+    image_path = popups.resolve_raw_path(parent, round_id)
+    if image_path is None:
+        viewer.status = f"{round_id} {channel} was not detected: its original image was not found."
+        return
+    if name in viewer.layers:
+        events.save_puncta_layer(viewer.layers[name])
+    flush_pending_mask_saves()
+
+    with popups.ProgressDialog(parent, f"Processing {image_layer.name}...") as dialog:
+        dialog.update_progress(0, f"Reading {round_id} {channel}...")
+        csv = _run_with_progress(dialog, lambda progress: stages.detect_channel(
+            round_id, channel, params, existing=existing_action or "replace", image_path=image_path,
+            run_by="gui", progress_callback=progress))
+        if csv is None:
+            viewer.status = f"Found no spots in {image_layer.name}."
+            return
+        dialog.freeze_canvas()
+        from .. import viewer as _viewer_mod
+        _viewer_mod._suppress_custom_controls = True
+        try:
+            viewer_helpers.show_puncta_csv(viewer, name, csv, image_layer)
+        finally:
+            _viewer_mod._suppress_custom_controls = False
+            viewer.layers.selection.events.changed(added=set(), removed=set())
+
+    status = f"Found {len(pd.read_csv(csv))} spots in {image_layer.name}."
+    own_mask = (nuclei_layer is not None and nuclei_layer.name.startswith(f"{round_id} - ")
+                and nuclei_layer.name.endswith(constants.MASKS_SUFFIX))
+    if params.get("nuclei_only", True) and nuclei_layer is not None and not own_mask:
+        # Batch's rule: a round's puncta are kept inside that round's own nuclei.
+        status += f" Kept inside {round_id}'s own nuclei mask, not {nuclei_layer.name}."
+    viewer.status = status
 
 
 def _redetect_on_original(viewer, image_layer, params, existing_action):

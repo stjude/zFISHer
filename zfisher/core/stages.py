@@ -70,9 +70,11 @@ def round_mask_path(round_id):
     """The raw-space nuclei mask of ``round_id`` registered in the session
     (``'R2 - DAPI_masks'``), or None. Looked up by registration rather than by
     name, because the mask carries the nuclear channel of the round it was
-    saved under."""
+    saved under. A mask edited in the GUI is registered again as
+    ``'edited_mask'`` and counts too."""
     for name, info in (session.get_data("processed_files", default={}) or {}).items():
-        if (isinstance(info, dict) and info.get("subtype") == "mask" and name.startswith(f"{round_id} - ")
+        if (isinstance(info, dict) and info.get("subtype") in ("mask", "edited_mask")
+                and name.startswith(f"{round_id} - ")
                 and name.endswith(constants.MASKS_SUFFIX)):
             path = _in_output_folder(constants.SEGMENTATION_DIR, info.get("path"))
             if path is not None:

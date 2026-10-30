@@ -6,6 +6,18 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Fixes
 
+- **Detect Puncta on a raw image reads the files, as batch does.** It
+  detected on the image and mask arrays in the window, so the provenance
+  record named files the detection had not read, and GUI and batch could give
+  different puncta for the same settings. It now reads the round's image file
+  and the round's own nuclei mask file, through the same function as batch and
+  re-detection, after saving any puncta or mask edits still waiting to be
+  written. If the mask chosen in the widget is not the round's own, the status
+  bar says which mask was used. Detecting on an aligned image is unchanged.
+- **A round's nuclei mask edited in the GUI still counts as that round's
+  mask.** Saving an edit registered it under a different kind, so re-detecting
+  a channel on its original image would then have stopped with "no nuclei
+  mask".
 - **The session file is written whole or not at all.** It was overwritten in
   place, so a crash, a full disk or a killed process during a save left a
   truncated session file, which then would not open. It is now written beside
