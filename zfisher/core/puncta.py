@@ -781,11 +781,20 @@ def record_detection_settings(layer_name, settings):
     detection used to key by image layer (``'Warped R2 - FITC'``). One channel
     then has one row in the report's Parameters sheet."""
     from . import session
+    from . import decisions
     key = channel_key(layer_name) or str(layer_name)
-    params = {k: v for k, v in (session.get_data("puncta_params", default={}) or {}).items()
-              if (channel_key(k) or k) != key}
+    stored = session.get_data("puncta_params", default={}) or {}
+    old = next((dict(v) for k, v in reversed(list(stored.items())) if (channel_key(k) or k) == key), None)
+    params = {k: v for k, v in stored.items() if (channel_key(k) or k) != key}
     params[key] = dict(settings)
     session.update_data("puncta_params", params)
+    # Who chose these settings, beside what they produced.
+    outcome = ("num_puncta", "detected_in")
+    round_id, _, channel = key.partition(" - ")
+    decisions.record("detection", {k: v for k, v in settings.items() if k not in outcome},
+                     old={k: v for k, v in old.items() if k not in outcome} if old else None,
+                     scope={"round": round_id, "channel": channel} if channel else {"layer": key},
+                     metrics_after={k: settings[k] for k in outcome if k in settings})
 
 
 def detection_settings_row(params, n_puncta, detected_in):

@@ -54,6 +54,8 @@ def _main(verbose: bool = typer.Option(False, "-v", "--verbose", help="Enable de
     # zFISHer's loggers do not propagate to the root logger (see
     # zfisher/__init__.py), so the level has to be set on them as well.
     logging.getLogger("zfisher").setLevel(level)
+    from .core import decisions
+    decisions.set_process_actor(decisions.HUMAN)   # a person typed the command
 
 
 @app.command()

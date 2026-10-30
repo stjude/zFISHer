@@ -254,6 +254,14 @@ def run_pipeline(dataset, output_dir, puncta_config=None, pairwise_rules=None, t
                           report=report.get("path") if isinstance(report, dict) else None)
 
 
+def get_decisions(s, name=None):
+    """Who set which parameter of ``s``, oldest first (``decisions.jsonl``);
+    only the decisions about ``name`` if given."""
+    from . import decisions
+    with _session.use(s):
+        return decisions.records(name)
+
+
 def schema():
     """The JSON schema of every result model, by name."""
     models = (SessionInfo, ArtifactState, Parameters, NucleusIdCheck, DetectionResult, TransformResult,

@@ -55,8 +55,11 @@ def _rule_builder(
             viewer.status = f"Rule already exists: {rule['source']} -> {rule['target']} (<= {rule['threshold']} um)"
             return
 
+    old_rules = list(rules)
     rules.append(rule)
     session.update_data("colocalization_rules", rules)
+    from ...core import decisions
+    decisions.record("colocalization_rules", list(rules), old=old_rules, scope={"stage": "report"})
 
     logger.info("Added pairwise rule: %s -> %s (<= %s um)", rule['source'], rule['target'], rule['threshold'])
     _update_rules_display(rules)
@@ -80,7 +83,10 @@ def _update_rules_display(rules):
 def _on_clear_rules():
     """Resets the rule list."""
     logger.info("Cleared all pairwise colocalization rules")
+    old_rules = list(session.get_data("colocalization_rules", default=[]) or [])
     session.update_data("colocalization_rules", [])
+    from ...core import decisions
+    decisions.record("colocalization_rules", [], old=old_rules, scope={"stage": "report"})
     _update_rules_display([])
     napari.current_viewer().status = "All analysis rules cleared."
 
@@ -131,8 +137,11 @@ def _tri_rule_builder(
             viewer.status = f"Tri-coloc rule already exists: {rule['anchor']} + {rule['channel_a']} + {rule['channel_b']}"
             return
 
+    old_rules = list(tri_rules)
     tri_rules.append(rule)
     session.update_data("tri_colocalization_rules", tri_rules)
+    from ...core import decisions
+    decisions.record("tri_colocalization_rules", list(tri_rules), old=old_rules, scope={"stage": "report"})
 
     logger.info("Added tri-coloc rule: %s + %s + %s (<= %s um)", rule['anchor'], rule['channel_a'], rule['channel_b'], rule['threshold'])
     _update_tri_rules_display(tri_rules)
@@ -159,7 +168,10 @@ def _update_tri_rules_display(tri_rules):
 def _on_clear_tri_rules():
     """Resets the tri-colocalization rule list."""
     logger.info("Cleared all tri-colocalization rules")
+    old_rules = list(session.get_data("tri_colocalization_rules", default=[]) or [])
     session.update_data("tri_colocalization_rules", [])
+    from ...core import decisions
+    decisions.record("tri_colocalization_rules", [], old=old_rules, scope={"stage": "report"})
     _update_tri_rules_display([])
     napari.current_viewer().status = "All tri-colocalization rules cleared."
 

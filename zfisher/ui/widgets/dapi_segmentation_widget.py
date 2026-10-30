@@ -251,6 +251,14 @@ class DapiSegmentationWidget(Container):
                 masks, centroids = filter_small_labels(masks, min_vol)
                 filtered_results.append((layer, masks.astype(np.uint32), centroids))
 
+            from ...core import decisions
+            for layer, masks, centroids in filtered_results:
+                if masks is not None:
+                    round_id, _, channel = layer.name.partition(" - ")
+                    decisions.record("segmentation", {"method": method_key, "merge_splits": bool(merge_splits)},
+                                     scope={"round": round_id, "channel": channel},
+                                     metrics_after={"nuclei": int(len(centroids))})
+
             dialog.freeze_canvas()
 
             # Suppress custom layer control callbacks during batch layer creation

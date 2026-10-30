@@ -89,6 +89,17 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   system can slow an idle app's timers. `-o profile.md` writes it to a file.
   It only reads.
 
+### Decisions log
+
+- **Each session keeps `decisions.jsonl`**, beside `provenance.jsonl`: one
+  line per parameter choice or stage run, saying who made it (`human` for the
+  window and the CLI, `default` for settings nobody chose, such as a batch
+  channel without a Puncta row), which login ran it, what it applied to (round
+  and channel), the old and new settings and what they produced (puncta and
+  nuclei found, the registration's shift and error). Detection, segmentation,
+  registration, the canvas, the consensus mask and colocalization rules are
+  recorded, from the GUI, batch and scripts alike.
+
 ### Installation
 
 - **The `zfisher` command works after `pip install`.** It pointed at a

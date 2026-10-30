@@ -254,6 +254,8 @@ def _patch_vispy_arcball():
         pass
 
 def launch_zfisher():
+    from ..core import decisions
+    decisions.set_process_actor(decisions.HUMAN)   # settings chosen in the window are a person's
     # A native crash (Qt, OpenGL) leaves a Python stack; the session log takes
     # it over when a session opens.
     from ..core import crash_log

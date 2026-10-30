@@ -83,6 +83,10 @@ def process_consensus_nuclei(mask1, mask2, output_dir, threshold=None, method="U
             metadata={'subtype': 'structured_ids'}
         )
 
+    from . import decisions
+    decisions.record("consensus", {"method": method, "match_threshold": threshold or 0},
+                     scope={"stage": "consensus"},
+                     metrics_after={"nuclei": int(len(np.unique(merged_mask)) - 1) if merged_mask is not None else 0})
     return merged_mask, final_pts
 
 def get_label_volumes(labels):
@@ -762,6 +766,10 @@ def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callba
             cent_path = seg_dir / f"{centroid_layer_name}.npy"
             np.save(cent_path, centroids)
             session.set_processed_file(centroid_layer_name, str(cent_path), layer_type='points', metadata={'subtype': 'centroids'})
+            from . import decisions
+            decisions.record("segmentation", {"method": method, "merge_splits": bool(merge_splits)},
+                             scope={"round": prefix, "channel": channel},
+                             metrics_after={"nuclei": int(len(centroids))})
 
     if progress_callback: progress_callback(100, "Done.")
     return results

@@ -1,3 +1,4 @@
+import contextlib
 import numpy as np
 import tifffile
 from pathlib import Path
@@ -6,7 +7,7 @@ import logging
 
 import pandas as pd
 
-from . import io, registration, segmentation, analysis, session, stages
+from . import io, registration, segmentation, analysis, session, stages, decisions
 from .. import constants
 from .params import DetectionParams, default
 from .timing import timed_stage
@@ -209,7 +210,8 @@ def _run_full_zfisher_pipeline(
         for rnd, rnd_mask, sess_obj, raw_path in [("R1", r1_mask, r1_sess, r1_path), ("R2", r2_mask, r2_sess, r2_path)]:
             for ch in puncta_channels:
                 # Build params for this channel
-                if puncta_config and ch in puncta_config:
+                chosen = bool(puncta_config and ch in puncta_config)
+                if chosen:
                     ch_params = dict(puncta_config[ch])
                     # Skip this channel if it's restricted to the other round
                     ch_round = ch_params.pop("round", "Both")
@@ -235,12 +237,16 @@ def _run_full_zfisher_pipeline(
                 # raw-space puncta, records them, and stores the channel's
                 # settings for the report; the aligned rows share their puncta_id.
                 try:
-                    raw_csv = stages.detect_channel(
-                        rnd, ch, params=dict(ch_params, nuclei_only=nuclei_only), run_by="batch",
-                        image=sess_obj.data[:, ch_idx, :, :], image_path=raw_path, voxels=sess_obj.voxels,
-                        mask=rnd_mask,
-                        progress_callback=lambda p, t, _b=job_base: _update(_b + int(p / 100 * 2), f"{rnd} {ch}: {t}"),
-                    )
+                    # Settings from a Puncta row were chosen by a person; the
+                    # built-in ones, for a channel without a row, by nobody.
+                    with (contextlib.nullcontext() if chosen else decisions.use_actor(decisions.DEFAULT)):
+                        raw_csv = stages.detect_channel(
+                            rnd, ch, params=dict(ch_params, nuclei_only=nuclei_only), run_by="batch",
+                            image=sess_obj.data[:, ch_idx, :, :], image_path=raw_path, voxels=sess_obj.voxels,
+                            mask=rnd_mask,
+                            progress_callback=lambda p, t, _b=job_base: _update(_b + int(p / 100 * 2),
+                                                                                f"{rnd} {ch}: {t}"),
+                        )
                 except Exception as exc:
                     logger.error("Puncta detection failed for %s %s: %s", rnd, ch, exc, exc_info=True)
                     _update(job_base, f"Puncta detection failed for {rnd} {ch}: {exc}")

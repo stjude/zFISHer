@@ -83,6 +83,9 @@ def calculate_session_registration(r1_centroids, r2_centroids, voxels=None, max_
         "max_distance": max_distance, "voxels": None if voxels is None else list(map(float, voxels)),
     }})
 
+    from . import decisions
+    decisions.record("registration", {"max_distance_um": max_distance or 0}, scope={"stage": "registration"},
+                     metrics_after={"shift": np.asarray(shift, dtype=float).tolist(), "rmsd": float(rmsd)})
     return shift, rmsd
 
 def _find_rough_shift_vector_voting(fixed_points, moving_points, n_limit=constants.RANSAC_N_LIMIT, bin_size=constants.RANSAC_BIN_SIZE):
@@ -816,6 +819,9 @@ def generate_global_canvas(r1_layers_data, r2_layers_data, shift, output_dir, ap
             gc.collect()
 
     update(100, "Canvas generation complete.")
+    from . import decisions
+    decisions.record("canvas", {"apply_warp": bool(apply_warp)}, scope={"stage": "canvas"},
+                     metrics_after={"bspline": transform is not None})
     return results, transform, final_canvas_offset
 
 def _save_registration(shift, canvas_offset, canvas_shape, round_shapes, transform, aligned_dir):

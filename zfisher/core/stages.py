@@ -658,6 +658,7 @@ def export_report(rules=None, tri_rules=None, filename=None):
     if len(layers) < 2:
         raise ValueError(f"The report needs at least two aligned puncta channels; the session has {len(layers)}.")
     names = [layer["name"] for layer in layers]
+    given_rules = rules is not None or tri_rules is not None
     rules = session.get_data("colocalization_rules", default=[]) if rules is None else rules
     tri_rules = session.get_data("tri_colocalization_rules", default=[]) if tri_rules is None else tri_rules
     pairwise = [{"source": resolve_layer(r["source"], names), "target": resolve_layer(r["target"], names),
@@ -667,6 +668,9 @@ def export_report(rules=None, tri_rules=None, filename=None):
            for r in tri_rules]
     labels = np.unique(mask)
     labels = labels[labels > 0]
+    if given_rules:
+        from . import decisions
+        decisions.record("report_rules", {"pairwise": pairwise, "tri": tri}, scope={"stage": "report"})
     path = analysis.run_colocalization_analysis(
         layers_data=layers, rules=pairwise, tri_rules=tri or None,
         filename=filename or f"{REPORT_NAME}{constants.EXCEL_SUFFIX}",
