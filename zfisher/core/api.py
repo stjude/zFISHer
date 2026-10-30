@@ -53,6 +53,13 @@ class ArtifactState(_Result):
     channel: Optional[str] = None
 
 
+class StageState(_Result):
+    stage: str
+    key: str = ""
+    state: str                       # fresh, stale, edited or missing
+    time: Optional[str] = None
+
+
 class Parameters(_Result):
     detection: dict[str, dict]       # per channel key, as the report's Parameters sheet lists them
     colocalization_rules: list[dict]
@@ -156,6 +163,25 @@ def get_status(s):
         return [ArtifactState(kind=a.kind, name=a.name, path=str(a.path) if a.path else None, state=a.state,
                               edited=a.edited, reasons=list(a.reasons), round=a.round, channel=a.channel)
                 for a in stages.status()]
+
+
+def get_stage_status(s):
+    """Every pipeline stage recorded in ``s``: fresh, stale, edited or missing."""
+    from . import stages
+    with _session.use(s):
+        return [StageState(**st) for st in stages.stage_status()]
+
+
+def update(s, progress_callback=None):
+    """Run again, on ``s``'s folder and with the settings its pipeline run
+    stored, the stages that are not up to date (and what depends on them).
+    Returns the stages that ran; none when everything was fresh."""
+    from . import pipeline
+    settings = s.get("pipeline_settings")
+    if not settings:
+        raise LookupError("This session was not made by a pipeline run, so there is nothing to update from.")
+    return pipeline.run_full_zfisher_pipeline(s.get("r1_path"), s.get("r2_path"), s.get("output_dir"),
+                                              progress_callback=progress_callback, **settings)
 
 
 def get_parameters(s):
@@ -264,6 +290,6 @@ def get_decisions(s, name=None):
 
 def schema():
     """The JSON schema of every result model, by name."""
-    models = (SessionInfo, ArtifactState, Parameters, NucleusIdCheck, DetectionResult, TransformResult,
+    models = (SessionInfo, ArtifactState, StageState, Parameters, NucleusIdCheck, DetectionResult, TransformResult,
               ReportResult, PipelineResult)
     return {m.__name__: m.model_json_schema() for m in models}

@@ -112,3 +112,24 @@ def test_a_folder_no_pipeline_run_made_is_refused(copy):
     session.clear_session()
     with pytest.raises(RuntimeError, match="not made by a pipeline run that can be resumed"):
         _run(copy, out)
+
+
+def test_update_reruns_only_what_is_stale_and_the_cli_lists_stages(copy, capsys):
+    from zfisher import cli
+    out = copy / "out"
+    s = api.open_session(out)
+    assert all(st.state == stages.FRESH for st in api.get_stage_status(s))
+    assert cli.main(["status", str(out)]) == 0
+    assert "Pipeline stages:" in capsys.readouterr().out
+    factory = logging.getLogRecordFactory()
+    logging.setLogRecordFactory(logging.LogRecord)
+    try:
+        assert api.update(s) == []
+        csv = out / constants.REPORTS_DIR / f"Aligned_R1_-_{CHANNEL}_puncta.csv"
+        csv.unlink()                                               # a file gone
+        assert {st.stage: st.state for st in api.get_stage_status(api.open_session(out))
+                if st.key == f"R1 - {CHANNEL}"}["transform"] == stages.MISSING
+        assert cli.main(["update", str(out)]) == 0
+        assert csv.exists() and "transform R1 - FITC" in capsys.readouterr().out
+    finally:
+        logging.setLogRecordFactory(factory)

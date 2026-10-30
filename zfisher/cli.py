@@ -8,6 +8,7 @@ without a napari viewer:
     zfisher-cli batch template.xlsx -o ./batch_output
     zfisher-cli template ./my_template.xlsx
     zfisher-cli status ./output [--json]
+    zfisher-cli update ./output
     zfisher-cli export ./output [--rule "R1 - FITC,R2 - Cy5,1.0"]
     zfisher-cli nucleus-ids ./output [--write]
     zfisher-cli profile D:/zFISHer_runs -o profile.md
@@ -165,7 +166,8 @@ def status(folder: Path = typer.Argument(..., help="A session's output folder or
     s = _open(folder)
     info, states = api.session_info(s), api.get_status(s)
     if as_json:
-        print(json.dumps({"session": info.model_dump(), "status": [a.model_dump() for a in states]}, indent=1))
+        print(json.dumps({"session": info.model_dump(), "status": [a.model_dump() for a in states],
+                          "stages": [st.model_dump() for st in api.get_stage_status(s)]}, indent=1))
         return
     print(f"Session {info.session_file} in {info.output_dir}")
     print(f"  made with zFISHer {info.created_with_zfisher or 'unknown'}, last saved by {info.zfisher_version or 'unknown'}")
@@ -175,6 +177,11 @@ def status(folder: Path = typer.Argument(..., help="A session's output folder or
     for a in states:
         line = f"  {a.name}: {a.state}" + (" (edited by hand)" if a.edited else "")
         print(line + (f" - {'; '.join(a.reasons)}" if a.reasons else ""))
+    stage_states = api.get_stage_status(s)
+    if stage_states:
+        print("Pipeline stages:")
+        for st in stage_states:
+            print(f"  {st.stage}{' ' + st.key if st.key else ''}: {st.state}")
 
 
 @app.command()
@@ -203,6 +210,19 @@ def export(folder: Path = typer.Argument(..., help="A session's output folder or
     print(f"Report written to: {result.path}")
     for name, rows in result.sheets.items():
         print(f"  {name}: {rows} rows")
+
+
+@app.command()
+def update(folder: Path = typer.Argument(..., help="A folder a pipeline run made.")):
+    """Run again the pipeline stages of a folder that are not up to date."""
+    from .core import api
+    s = _open(folder)
+    try:
+        ran = api.update(s, progress_callback=_stdout_progress)
+    except (LookupError, RuntimeError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        raise typer.Exit(1)
+    print("Everything was up to date." if not ran else "Ran: " + ", ".join(ran))
 
 
 @app.command("nucleus-ids")

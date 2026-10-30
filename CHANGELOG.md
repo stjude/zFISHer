@@ -104,6 +104,9 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   a batch from before this version), so hand-made work there is not touched.
 - New sessions' ND2 images are converted to OME-TIFF once; batch converted
   them twice.
+- `zfisher-cli status <folder>` lists each pipeline stage as fresh, stale,
+  edited or missing, and `zfisher-cli update <folder>` runs again, with the
+  settings the folder was made with, the stages that are not fresh.
 
 ### Decisions log
 
