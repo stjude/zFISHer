@@ -550,7 +550,20 @@ _sweep_note.setWordWrap(True)
 _sweep_note.setMinimumWidth(0)
 _sweep_note.setStyleSheet("margin: 2px 2px 6px 2px; font-size: 12px;")
 _sweep_note.setVisible(False)
-_inner.insertWidget(_inner.indexOf(_puncta_widget.z_edge_exclude.native) + 1, _sweep_btn)
+def _row_index(widget):
+    """The position in the form's layout of the row holding ``widget``:
+    magicgui puts a labelled control inside a row widget, so the control
+    itself is not in the layout."""
+    w = widget
+    while w is not None and w.parentWidget() is not _puncta_widget.native:
+        w = w.parentWidget()
+    index = _inner.indexOf(w) if w is not None else -1
+    if index < 0:
+        raise RuntimeError(f"{widget!r} is not in the Puncta Detection form")
+    return index
+
+
+_inner.insertWidget(_row_index(_puncta_widget.z_edge_exclude.native) + 1, _sweep_btn)
 _inner.insertWidget(_inner.indexOf(_sweep_btn) + 1, _sweep_note)
 
 

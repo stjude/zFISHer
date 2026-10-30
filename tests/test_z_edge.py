@@ -71,6 +71,8 @@ def test_the_widget_has_the_control_and_its_sections_are_in_place():
     control = pw._puncta_widget.z_edge_exclude
     assert (control.value, control.min, control.max) == (0, 0, 20)
     layout = pw._puncta_widget.native.layout()
-    tophat = layout.indexOf(pw._puncta_widget.use_tophat.native)
+    tophat = pw._row_index(pw._puncta_widget.use_tophat.native)
     assert layout.indexOf(pw._bg_header) == tophat - 2 and layout.indexOf(pw._bg_desc) == tophat - 1
-    assert layout.indexOf(control.native) < layout.indexOf(pw._bg_header)    # with the detection settings
+    edge = pw._row_index(control.native)
+    assert pw._row_index(pw._puncta_widget.sigma.native) < edge < layout.indexOf(pw._bg_header)
+    assert layout.indexOf(pw._sweep_btn) == edge + 1 and layout.indexOf(pw._sweep_note) == edge + 2
