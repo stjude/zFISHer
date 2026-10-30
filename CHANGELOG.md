@@ -6,6 +6,15 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Fixes
 
+- **A puncta file is never written with its values on the wrong puncta.** A
+  puncta CSV joins each layer's table of values to its points row by row; a
+  table one row short or long put every following value, `Nucleus_ID`
+  included, on the wrong punctum, without a word. Such a table is now refused
+  and the file keeps its last good version, with the reason in the log and the
+  status bar. A save that failed for any reason used to write the coordinates
+  alone, dropping every punctum's `Nucleus_ID`, `puncta_id` and `Source`; it
+  now writes nothing. A `puncta_id` carried by more than one punctum, which
+  sessions from before 2.1 can hold, is logged.
 - **The report states the sigma detection used.** A batch channel with no
   row on the Puncta sheet, and every channel of `zfisher-cli run`, is detected
   without a sigma, and the detectors then smooth with sigma 1.0. The Parameters

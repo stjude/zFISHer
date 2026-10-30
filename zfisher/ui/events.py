@@ -1,6 +1,5 @@
 import logging
 import napari
-import numpy as np
 from pathlib import Path
 from qtpy.QtCore import QTimer
 from ..core import session, timing
@@ -82,9 +81,14 @@ def reset_events_state():
 
 
 @timing.timed_action("puncta_save", fields=lambda a: {"layer": a["layer"].name, "n": len(a["layer"].data)})
-def save_puncta_layer(layer):
+def save_puncta_layer(layer, report=True):
     """Write a puncta layer's current data + features to its canonical CSV and
-    register it in the session.
+    register it in the session. Returns True when the CSV was written.
+
+    A table that cannot be written whole (feature rows that do not match the
+    points, a disk error) is not written at all. With ``report`` the failure is
+    logged as an error and shown in the status bar; without it, only noted at
+    debug level, for a caller that will try again.
 
     Exposed so callers can persist explicitly after a manual add: the napari
     ``data`` event can fire while a freshly added point still carries
@@ -94,20 +98,34 @@ def save_puncta_layer(layer):
     """
     out_dir = session.get_data("output_dir")
     if not out_dir:
-        return
+        return True                       # no session folder: nothing to save to
     reports_dir = Path(out_dir) / constants.REPORTS_DIR
     reports_dir.mkdir(exist_ok=True, parents=True)
     # Read the live layer name (not a name captured earlier) so a renamed layer
     # still writes/registers under one canonical path.
     live_name = layer.name
     csv_path = constants.puncta_csv_path(reports_dir, live_name)
+    features = layer.features if hasattr(layer, 'features') and not layer.features.empty else None
     try:
-        features = layer.features if hasattr(layer, 'features') and not layer.features.empty else None
         _puncta.write_puncta_csv(csv_path, layer.data, features)
     except Exception as e:
-        # Fallback: save coordinates only
-        logger.warning("Could not save full puncta CSV for '%s': %s. Saving coordinates only.", live_name, e)
-        np.savetxt(csv_path, layer.data, delimiter=',', header='Z,Y,X', comments='')
+        # Never fall back to writing less: a coordinates-only file would drop
+        # every punctum's Nucleus_ID, puncta_id and Source. The file keeps its
+        # last good save.
+        if not report:
+            logger.debug("Puncta of '%s' not saved yet: %s", live_name, e)
+            return False
+        logger.error("Puncta of '%s' were not saved: %s. %s keeps its last saved version.",
+                     live_name, e, csv_path.name)
+        viewer = napari.current_viewer()
+        if viewer is not None:
+            viewer.status = (f"The puncta of {live_name} were not saved: {e}. Its file keeps the "
+                             f"last saved version.")
+        return False
+    repeated = _puncta.repeated_puncta_ids(features)
+    if repeated and report:
+        logger.warning("'%s' has puncta_id values carried by more than one punctum: %s",
+                       live_name, repeated[:10])
     # Keep what the registration already says about the file: a raw-space CSV
     # must stay marked raw, or a reload draws it over the aligned images.
     existing = (session.get_data("processed_files", default={}) or {}).get(live_name) or {}
@@ -119,6 +137,7 @@ def save_puncta_layer(layer):
         # Runs from napari's data event, where a raised error is only logged:
         # say it in the status bar. The CSV itself is written.
         show_session_save_error(exc)
+    return True
 
 
 def show_session_save_error(exc):
@@ -137,7 +156,11 @@ def attach_puncta_listener(layer, name):
         return
 
     def sync_data(event=None):
-        save_puncta_layer(layer)
+        # The data event can fire while napari is still adding the new rows'
+        # features; if the table is not whole yet, try once more after the
+        # handlers that complete it have run, and report a failure then.
+        if not save_puncta_layer(layer, report=False):
+            QTimer.singleShot(0, lambda: save_puncta_layer(layer))
 
     _sync_color_guard = {'active': False}
 

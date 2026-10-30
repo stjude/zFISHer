@@ -10,6 +10,20 @@ from .timing import timed_stage, n_rows
 logger = logging.getLogger(__name__)
 
 
+class PunctaTableError(ValueError):
+    """A puncta table whose feature rows do not match its points one to one.
+    Written, its values would sit on the wrong puncta, so it never is."""
+
+
+def repeated_puncta_ids(features):
+    """The ``puncta_id`` values that more than one row of ``features`` carries."""
+    import pandas as pd
+    if features is None or 'puncta_id' not in getattr(features, 'columns', ()):
+        return []
+    ids = pd.to_numeric(features['puncta_id'], errors='coerce')
+    return sorted({int(i) for i in ids[ids.notna() & ids.duplicated(keep=False)]})
+
+
 def puncta_table(coords, features=None):
     """The CSV table of a puncta layer: ``constants.PUNCTA_CSV_COLUMNS`` first,
     in that order, then any other feature columns.
@@ -17,10 +31,16 @@ def puncta_table(coords, features=None):
     ``coords`` is (N, 3) Z, Y, X; ``features`` a DataFrame with one row per
     point. A missing ``Source`` column, or a row without a value, is written as
     ``unknown``: nothing recorded how that punctum was made.
+
+    Raises ``PunctaTableError`` when ``features`` has a different number of
+    rows than there are points: the two are joined by position, so every value
+    after the first missing or extra row would land on the wrong punctum.
     """
     import pandas as pd
 
     coords_df = pd.DataFrame(np.asarray(coords, dtype=float).reshape(-1, 3), columns=['Z', 'Y', 'X'])
+    if features is not None and len(features.columns) and len(features) != len(coords_df):
+        raise PunctaTableError(f"{len(coords_df)} points but {len(features)} feature rows")
     if features is None or len(features.columns) == 0:
         features = pd.DataFrame(index=range(len(coords_df)))
     features = features.reset_index(drop=True).drop(columns=['Z', 'Y', 'X'], errors='ignore')
