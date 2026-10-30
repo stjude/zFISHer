@@ -907,3 +907,81 @@ def process_puncta_detection(image_data, mask_data=None, voxels=None, params=Non
 
     if progress_callback: progress_callback(100, f"Done. Found {len(final_data)} spots.")
     return final_data
+
+# --- Choosing the sensitivity: count puncta over a range of thresholds ----------
+
+def _keep_count(coords, image_shape, mask, params):
+    """How many of ``coords`` detection would keep: inside nuclei (with
+    ``nuclei_only`` and a ``mask``) and away from the Z edges."""
+    if len(coords) == 0:
+        return 0
+    keep = np.ones(len(coords), dtype=bool)
+    edge = int(params.get("z_edge_exclude") or 0)
+    if edge > 0:
+        keep &= (coords[:, 0] >= edge) & (coords[:, 0] <= image_shape[0] - 1 - edge)
+    if params.get("nuclei_only", True) and mask is not None:
+        idx = np.clip(coords.astype(int), 0, np.asarray(image_shape) - 1)
+        keep &= mask[tuple(idx.T)] > 0
+    return int(keep.sum())
+
+
+def threshold_sweep(image, mask=None, voxels=None, params=None, thresholds=None, progress_callback=None):
+    """Puncta detection would keep at each sensitivity of ``thresholds``
+    (default: 25 steps from 0.02 to 0.5), with the other settings of
+    ``params``: ``(thresholds, counts)``. For Local Maxima one detection at the
+    lowest threshold serves every step (the peaks at a higher threshold are
+    exactly those of the lowest above it); other methods detect once per step."""
+    from skimage.feature import peak_local_max
+    params = fill_detection_defaults(dict(params or {}), voxels)
+    thresholds = np.asarray(thresholds if thresholds is not None else np.linspace(0.02, 0.5, 25), dtype=float)
+    counts = []
+    if params["method"] == "Local Maxima":
+        data = image
+        if params["use_tophat"]:
+            data = preprocess_white_tophat(data, radius=params["tophat_radius"])
+        if params["sigma"] > 0:
+            from skimage.filters import gaussian
+            data = gaussian(data, sigma=params["sigma"], preserve_range=True)
+        peaks = peak_local_max(data, min_distance=params["min_distance"], threshold_rel=float(thresholds.min()),
+                               exclude_border=False)
+        values = data[tuple(peaks.T)] if len(peaks) else np.empty(0)
+        top = float(data.max())
+        for t in thresholds:
+            counts.append(_keep_count(peaks[values > t * top], image.shape, mask, params))
+    else:
+        for i, t in enumerate(thresholds):
+            if progress_callback:
+                progress_callback(int(100 * i / len(thresholds)), f"Sensitivity {t:.3f}...")
+            coords = detect_spots_3d(image, **dict(params, threshold_rel=float(t)))
+            counts.append(_keep_count(np.asarray(coords).reshape(-1, 3), image.shape, mask, params))
+    return thresholds, np.asarray(counts, dtype=int)
+
+
+def find_plateau(thresholds, counts, tolerance=0.1):
+    """The widest run of consecutive thresholds over which the count changes by
+    at most ``tolerance`` (a fraction) per step: ``{"start", "end", "width",
+    "suggested", "count"}``, ``suggested`` its middle threshold; None when no
+    step is that stable or every count is 0."""
+    thresholds, counts = np.asarray(thresholds, float), np.asarray(counts, float)
+    stable = []
+    for a, b in zip(counts[:-1], counts[1:]):
+        stable.append(max(a, b) > 0 and abs(a - b) <= tolerance * max(a, b))
+    best = None
+    i = 0
+    while i < len(stable):
+        if not stable[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < len(stable) and stable[j + 1]:
+            j += 1
+        width = thresholds[j + 1] - thresholds[i]
+        if best is None or width > best[2]:
+            best = (i, j + 1, width)
+        i = j + 1
+    if best is None:
+        return None
+    lo, hi, width = best
+    middle = (lo + hi) // 2
+    return {"start": float(thresholds[lo]), "end": float(thresholds[hi]), "width": float(width),
+            "suggested": float(thresholds[middle]), "count": int(counts[middle])}

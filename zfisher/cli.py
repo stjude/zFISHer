@@ -265,6 +265,31 @@ def flag_batch(batch_root: Path = typer.Argument(..., help="A batch output root 
         print(f"Report: {result.report}")
 
 
+@app.command()
+def sweep(folder: Path = typer.Argument(..., help="A session's output folder or session file."),
+          channel: str = typer.Argument(..., help='The channel, as "R1 - FITC".'),
+          as_json: bool = typer.Option(False, "--json", help="Print JSON instead of text.")):
+    """Count a channel's puncta over a range of sensitivities and suggest where the count levels off."""
+    from .core import api
+    if " - " not in channel:
+        print('Error: name the round and channel, as "R1 - FITC".', file=sys.stderr)
+        raise typer.Exit(1)
+    round_id, name = channel.split(" - ", 1)
+    try:
+        result = api.threshold_sweep(_open(folder, read_only=False), round_id, name)
+    except (FileNotFoundError, LookupError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        raise typer.Exit(1)
+    if as_json:
+        print(json.dumps(result.model_dump(), indent=1))
+        return
+    for t, c in zip(result.thresholds, result.counts):
+        print(f"  {t:.3f}: {c}")
+    p = result.plateau
+    print(f"Counts level off from {p['start']:.3f} to {p['end']:.3f} (width {p['width']:.3f}); suggested "
+          f"sensitivity {p['suggested']:.3f} ({p['count']} puncta)." if p else "The counts do not level off.")
+
+
 @app.command("query-distances")
 def query_distances(folder: Path = typer.Argument(..., help="A session's output folder or session file."),
                     source: str = typer.Argument(..., help='Source channel: "R1 - FITC", a layer name, or a channel one round has.'),

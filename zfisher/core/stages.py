@@ -224,6 +224,29 @@ def detect_channel(round_id, channel, params=None, existing="replace", chooser=N
     return csv
 
 
+def sweep_channel(round_id, channel, params=None, thresholds=None, image_path=None, progress_callback=None):
+    """``puncta.threshold_sweep`` on ``channel``'s raw image of ``round_id``
+    and the round's nuclei mask, read from disk as ``detect_channel`` reads
+    them, with the plateau (``puncta.find_plateau``). The result is stored in
+    the session under ``threshold_sweeps``, keyed ``'R1 - FITC'``, and returned."""
+    params = dict(params or recorded_detection_parameters(round_id, channel) or {})
+    params.pop("threshold_rel", None)
+    if image_path is None:
+        image_path = io.resolve_raw_path(round_id)
+    image = io.read_channel(image_path, channel)
+    voxels = io.image_identity(image_path)["voxels"]
+    mask = None
+    if params.get("nuclei_only", True):
+        mask_path = round_mask_path(round_id)
+        mask = io.read_label_tif(mask_path) if mask_path is not None else None
+    found, counts = puncta.threshold_sweep(image, mask, voxels, params, thresholds, progress_callback)
+    result = {"thresholds": [float(t) for t in found], "counts": [int(c) for c in counts],
+              "plateau": puncta.find_plateau(found, counts),
+              "params": {k: v for k, v in puncta.fill_detection_defaults(dict(params), voxels).items()}}
+    session.update_nested("threshold_sweeps", f"{round_id} - {channel}", result)
+    return result
+
+
 def _numeric(table, column, default):
     """``table[column]`` as floats, ``default`` where missing or not a number."""
     import pandas as pd

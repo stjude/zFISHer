@@ -120,6 +120,14 @@ class BatchQC(_Result):
     report: Optional[str] = None     # qc_report.md
 
 
+class ThresholdSweep(_Result):
+    channel: str
+    thresholds: list[float]
+    counts: list[int]
+    plateau: Optional[dict] = None   # start, end, width, suggested, count
+    params: dict
+
+
 class CellsResult(_Result):
     folder: str
     n_cells: int
@@ -292,6 +300,19 @@ def flag_batch(batch_root, thresholds=None, write_report=True, include_saturatio
                    report=str(report) if report else None)
 
 
+def threshold_sweep(s, round_id, channel, params=None, thresholds=None, progress_callback=None):
+    """Puncta counts over a range of sensitivities for ``channel`` and where they
+    level off (``stages.sweep_channel``); stored in ``s``. ``params`` (a
+    ``DetectionParams`` or dict) sets the other settings, else the recorded ones."""
+    from . import stages
+    if isinstance(params, dict):
+        params = DetectionParams.model_validate(params)
+    kwargs = params.detection_kwargs() if params is not None else None
+    with _session.use(s):
+        result = stages.sweep_channel(round_id, channel, kwargs, thresholds, progress_callback=progress_callback)
+    return ThresholdSweep(channel=f"{round_id} - {channel}", **result)
+
+
 def check_nucleus_ids(s):
     """How well each aligned puncta CSV's ``Nucleus_ID`` agrees with the saved
     consensus mask (``puncta.check_nucleus_ids``); reads only."""
@@ -381,6 +402,6 @@ def get_decisions(s, name=None):
 
 def schema():
     """The JSON schema of every result model, by name."""
-    models = (SessionInfo, ArtifactState, StageState, DistanceQuery, Metrics, BatchQC, Parameters, NucleusIdCheck, DetectionResult, TransformResult,
+    models = (SessionInfo, ArtifactState, StageState, DistanceQuery, Metrics, BatchQC, ThresholdSweep, Parameters, NucleusIdCheck, DetectionResult, TransformResult,
               ReportResult, CellsResult, PipelineResult)
     return {m.__name__: m.model_json_schema() for m in models}

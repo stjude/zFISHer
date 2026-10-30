@@ -540,6 +540,56 @@ _original_note.setVisible(False)
 _inner.insertWidget(_inner.indexOf(_detect_on_original) + 1, _original_note)
 
 
+# --- "Suggest Threshold": count puncta over a range of sensitivities -------------
+from qtpy.QtWidgets import QPushButton as _QPushButton
+_sweep_btn = _QPushButton("Suggest Sensitivity")
+_sweep_btn.setToolTip("Count the puncta this channel would give over a range of sensitivities, with the other "
+                      "settings above, and suggest the middle of the range where the count levels off.")
+_sweep_note = QLabel("")
+_sweep_note.setWordWrap(True)
+_sweep_note.setMinimumWidth(0)
+_sweep_note.setStyleSheet("margin: 2px 2px 6px 2px; font-size: 12px;")
+_sweep_note.setVisible(False)
+_inner.insertWidget(_inner.indexOf(_puncta_widget.z_edge_exclude.native) + 1, _sweep_btn)
+_inner.insertWidget(_inner.indexOf(_sweep_btn) + 1, _sweep_note)
+
+
+@require_active_session()
+@error_handler("Threshold Sweep Failed")
+def _suggest_sensitivity():
+    """Sweep the chosen raw channel (``api.threshold_sweep``), show where the
+    count levels off and put the suggested sensitivity in the field."""
+    from ...core import api
+    viewer = napari.current_viewer()
+    w = _puncta_widget
+    layer = w.image_layer.value
+    key = puncta.channel_key(layer.name) if layer is not None else None
+    if layer is None or not key or layer.name.startswith((constants.ALIGNED_PREFIX, constants.WARPED_PREFIX)):
+        _sweep_note.setText("Choose a channel's original (raw) image layer to sweep.")
+        _sweep_note.setVisible(True)
+        return
+    round_id, channel = key.split(" - ", 1)
+    settings = {"method": w.method.value, "min_distance": w.min_distance.value, "sigma": w.sigma.value,
+                "z_scale": w.z_scale.value, "use_tophat": w.use_tophat.value, "tophat_radius": w.tophat_radius.value,
+                "nuclei_only": w.nuclei_only.value, "z_edge_exclude": w.z_edge_exclude.value}
+    with popups.ProgressDialog(viewer.window._qt_window, f"Sweeping {layer.name}...") as dialog:
+        result = _run_with_progress(dialog, lambda progress: api.threshold_sweep(
+            session.current(), round_id, channel, settings, progress_callback=progress))
+    p = result.plateau
+    if p is None:
+        _sweep_note.setText(f"The counts do not level off between {result.thresholds[0]:.2f} and "
+                            f"{result.thresholds[-1]:.2f}; keep choosing by eye.")
+    else:
+        w.threshold.value = round(p["suggested"], 2)
+        _sweep_note.setText(f"Counts level off from {p['start']:.2f} to {p['end']:.2f} (width {p['width']:.2f}); "
+                            f"sensitivity set to {p['suggested']:.2f}, which gives {p['count']} puncta. "
+                            f"Press Detect Puncta to use it.")
+    _sweep_note.setVisible(True)
+
+
+_sweep_btn.clicked.connect(_suggest_sensitivity)
+
+
 def _update_detect_on_original(layer):
     """Show the tick box for aligned and warped image layers; enable it when
     the session has a saved registration to warp with."""

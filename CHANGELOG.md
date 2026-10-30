@@ -164,6 +164,16 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   puncta kept keep the ids detection gave them, and the setting is listed
   with the others in the report's Parameters sheet when it is used.
 
+### Choosing the sensitivity
+
+- **Suggest Sensitivity**, in Puncta Detection, counts the puncta a raw
+  channel would give over a range of sensitivities (0.02 to 0.5) with the
+  other settings in the widget, finds the widest stretch where the count
+  levels off, shows it and its width, and sets the sensitivity to its middle.
+  Press Detect Puncta to use it. `zfisher-cli sweep <folder> "R1 - FITC"`
+  prints the same curve. The curve is kept in the session file. For Local
+  Maxima the whole curve costs one detection.
+
 ### Per-nucleus export
 
 - **`zfisher-cli export-cells <folder or batch root>`** writes one OME-TIFF per
