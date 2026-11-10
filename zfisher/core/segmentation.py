@@ -142,10 +142,15 @@ def get_label_volumes(labels):
 
 def compute_min_volume_threshold(all_volumes):
     """
-    Compute a minimum volume threshold using median - 2*MAD.
+    Compute a minimum volume threshold: median - 2*MAD, but never above
+    half the median.
 
     Uses MAD (median absolute deviation) instead of std for robustness
-    against skewed distributions with many small fragments.
+    against skewed distributions with many small fragments. The cap keeps
+    every label at least half a typical nucleus: without it the threshold
+    sits near the 9th percentile of a population of whole nuclei, whatever
+    its spread, and at the median itself when most volumes are equal
+    (MAD 0), removing every nucleus a voxel smaller.
 
     Parameters
     ----------
@@ -161,7 +166,7 @@ def compute_min_volume_threshold(all_volumes):
         return 1
     med = np.median(all_volumes)
     mad = np.median(np.abs(all_volumes - med))
-    return max(1, int(med - 2 * mad))
+    return max(1, int(min(med - 2 * mad, 0.5 * med)))
 
 
 class NoNucleiFound(DetectionError, ValueError):

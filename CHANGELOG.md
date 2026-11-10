@@ -63,6 +63,23 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   (`api.open_session(..., read_only=False, new_file=False)` and
   `api.update(..., new_session_file=False)` save in place). Reports are still
   never overwritten.
+- **Segmentation no longer removes small whole nuclei as fragments. This
+  changes results: fewer nuclei are dropped.** After classical or Cellpose
+  segmentation, labels smaller than a threshold pooled over both rounds are
+  removed as fragments. The threshold was the median volume minus twice the
+  median absolute deviation, which removes the smallest ~9% of a population of
+  whole nuclei whatever its spread. When most volumes were equal it was the
+  median itself: on five identical synthetic nuclei per round it kept 1 of R2's
+  5, and registration fell back to the rough shift. The threshold is now at
+  most half the median, so nothing at least half a typical nucleus is removed;
+  fragments under a quarter of the median still are, but pieces of 50-70% of
+  the median that were removed are now kept. In simulation (110 pooled nuclei)
+  the share of whole nuclei removed falls from 9.0% to 0.0%, 0.6% and 4.7% for
+  normal populations of CV 10%, 20% and 30%, from 4.7% to 1.1% for a lognormal
+  one (sigma 0.3), and from 2.1% to 0.0% for a G1/G2 mix (70:30, G2 1.8 times
+  larger). The `segmentation_session` line of the session log gives the
+  threshold and, in `dropped_R1` and `dropped_R2`, how many labels it removed
+  in each run.
 - **The GUI's registration and warping write what batch writes.** Automated
   Registration & Warping and the manual Global Canvas step re-implemented the
   pipeline and differed from it: images were converted to 32-bit floats before

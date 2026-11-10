@@ -23,8 +23,56 @@ def test_min_volume_threshold_small_sample_returns_one():
 
 
 def test_min_volume_threshold_median_minus_2mad():
-    vols = np.array([5, 100, 110, 120])           # median 105, MAD 10
-    assert seg.compute_min_volume_threshold(vols) == 85   # max(1, int(105 - 2*10))
+    vols = np.array([30, 40, 100, 130, 140])      # median 100, MAD 40
+    assert seg.compute_min_volume_threshold(vols) == 20   # int(100 - 2*40), below half the median
+
+
+def test_min_volume_threshold_is_at_most_half_the_median():
+    vols = np.array([5, 100, 110, 120])           # median 105, MAD 10: 105 - 2*10 = 85
+    assert seg.compute_min_volume_threshold(vols) == 52   # int(105 / 2)
+    same = np.array([15472.0] * 6 + [15408, 15424, 15432, 15432])   # MAD 0, as in the S4 trial
+    assert seg.compute_min_volume_threshold(same) == 7736
+
+
+def _labels(volumes):
+    """A label array whose label ``i + 1`` has ``volumes[i]`` voxels."""
+    flat = np.repeat(np.arange(1, len(volumes) + 1, dtype=np.uint32), volumes)
+    return flat.reshape(1, 1, -1)
+
+
+def test_fragments_go_and_a_small_nucleus_stays():
+    r1 = _labels([1000, 1050, 950, 1100])
+    r2 = _labels([900, 1000, 600, 200])           # a nucleus at 60% of the median, a fragment at 20%
+    # Pooled median 975, MAD 75: median - 2*MAD = 825 would remove the 600-voxel nucleus too.
+    out = seg.filter_rounds_by_volume({"R1": (r1, None), "R2": (r2, None)})
+    assert sorted(seg.get_label_volumes(out["R1"][0])) == [950, 1000, 1050, 1100]
+    assert sorted(seg.get_label_volumes(out["R2"][0])) == [600, 900, 1000]
+
+
+def test_near_identical_nuclei_all_stay_and_registration_uses_them(tmp_path):
+    """The S4 rounds of the 4 Nov trial: five identical nuclei per round, R2
+    shifted by (-3, 2) px, so R2's labels come out a few voxels smaller than
+    R1's after downsampling. Six of the ten pooled volumes are equal (MAD 0);
+    R2 kept 1 nucleus and registration fell back to the rough shift."""
+    import pytest
+    pytest.importorskip("SimpleITK")
+    from zfisher import constants
+    from zfisher.core import api, io, session
+    from synthetic_rounds import run_batch, write_rounds
+    write_rounds(tmp_path, r2_shift=(-3, 2), seeds=(30, 31))
+    out = tmp_path / "out"
+    session.clear_session()
+    try:
+        run_batch(tmp_path, out)
+        seg_dir = out / constants.SEGMENTATION_DIR
+        for rnd in ("R1", "R2"):
+            mask = io.read_label_tif(io.find_mask(seg_dir, f"{rnd} - DAPI{constants.MASKS_SUFFIX}"))
+            assert len(np.unique(mask)) - 1 == 5, rnd
+        result = api.outcome(api.open_session(out))
+    finally:
+        session.clear_session()
+    assert result.registration["method"] == "ransac" and not result.registration["fallback_used"]
+    assert result.registration["n_pairs"] == 5 and result.n_nuclei == 5
 
 
 # --- merge_labeled_masks -----------------------------------------------------

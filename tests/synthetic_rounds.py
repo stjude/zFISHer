@@ -1,7 +1,8 @@
 """Small synthetic two-round datasets for tests that run the batch pipeline.
 
 Each round is a (Z, C, Y, X) OME-TIFF with a DAPI channel of five nuclei and a
-FITC channel of four spots per nucleus; R2 is R1 shifted by (3, -2) px in Y, X.
+FITC channel of four spots per nucleus; R2 is R1 shifted by (3, -2) px in Y, X
+unless ``write_rounds`` is given another shift.
 """
 import logging
 from pathlib import Path
@@ -9,13 +10,16 @@ from pathlib import Path
 import numpy as np
 
 
-def write_rounds(root):
-    """Write ``R1.ome.tif`` and ``R2.ome.tif`` into ``root``."""
+def write_rounds(root, r2_shift=(3, -2), seeds=None):
+    """Write ``R1.ome.tif`` and ``R2.ome.tif`` into ``root``. R2 is shifted
+    by ``r2_shift`` (Y, X) px. The noise of both rounds comes from one
+    generator seeded 0, unless ``seeds`` gives each round's own seed."""
     import tifffile
-    rng = np.random.default_rng(0)
+    shared = np.random.default_rng(0)
     Z, Y, X = 32, 192, 192
 
-    def make_round(shift):
+    def make_round(shift, seed):
+        rng = shared if seed is None else np.random.default_rng(seed)
         dapi = np.zeros((Z, Y, X), np.float32)
         fitc = np.zeros_like(dapi)
         zz, yy, xx = np.ogrid[:Z, :Y, :X]
@@ -30,8 +34,8 @@ def write_rounds(root):
         fitc += rng.normal(50, 5, fitc.shape)
         return np.stack([dapi, fitc], axis=1).clip(0).astype(np.uint16)
 
-    for name, shift in (("R1", (0, 0)), ("R2", (3, -2))):
-        tifffile.imwrite(root / f"{name}.ome.tif", make_round(shift), photometric="minisblack",
+    for (name, shift), seed in zip((("R1", (0, 0)), ("R2", tuple(r2_shift))), seeds or (None, None)):
+        tifffile.imwrite(root / f"{name}.ome.tif", make_round(shift, seed), photometric="minisblack",
                          metadata={"axes": "ZCYX", "Channel": {"Name": ["DAPI", "FITC"]},
                                    "PhysicalSizeX": 0.1, "PhysicalSizeY": 0.1, "PhysicalSizeZ": 0.3})
 
