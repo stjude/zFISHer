@@ -175,6 +175,80 @@ def test_pipeline_stage_lands_in_the_session_log(tmp_path):
     assert env["out_drive"] in ("local_fixed", "network", "removable", "ramdisk", "unknown")
 
 
+def test_every_fields_function_reads_arguments_of_the_function_it_times():
+    """A function added between a decorator and the one it was written for
+    takes the decorator, and its STAGE line, from it; the ``fields`` lambda
+    then fails on every call and the line loses its fields."""
+    import ast
+    from pathlib import Path
+    import zfisher
+    root = Path(zfisher.__file__).parent
+    wrong = []
+    for path in sorted(root.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            args = node.args
+            names = {a.arg for a in args.posonlyargs + args.args + args.kwonlyargs}
+            for dec in node.decorator_list:
+                func = getattr(dec, "func", None)
+                if getattr(func, "id", getattr(func, "attr", None)) not in ("timed_stage", "timed_action"):
+                    continue
+                for kw in dec.keywords:
+                    if kw.arg != "fields" or not isinstance(kw.value, ast.Lambda):
+                        continue
+                    bound = kw.value.args.args[0].arg
+                    for sub in ast.walk(kw.value.body):
+                        if (isinstance(sub, ast.Subscript) and isinstance(sub.value, ast.Name)
+                                and sub.value.id == bound and isinstance(sub.slice, ast.Constant)
+                                and sub.slice.value not in names):
+                            wrong.append(f"{path.relative_to(root)}:{node.lineno} {node.name}() "
+                                         f"has no argument {sub.slice.value!r}")
+    assert not wrong, wrong
+
+
+def _two_nuclei(z=32, size=96):
+    zz, yy, xx = np.ogrid[:z, :size, :size]
+    image = np.full((z, size, size), 50, np.uint16)
+    for cy, cx in ((24, 24), (72, 72)):
+        image[((zz - 16) / 8.0) ** 2 + ((yy - cy) / 16.0) ** 2 + ((xx - cx) / 16.0) ** 2 <= 1] = 1000
+    return image
+
+
+def test_segmentation_and_consensus_stages_carry_settings_and_counts(timing_log):
+    from zfisher.core import segmentation, session
+    session.clear_session()
+    try:
+        image = _two_nuclei()
+        results = segmentation.process_session_dapi(image, image, voxel_spacing=(0.3, 0.1, 0.1))
+        segmentation.process_consensus_nuclei(results["R1"][0], results["R2"][0], None, method="Intersection")
+    finally:
+        session.clear_session()
+    stages = {f["stage"]: f for f in _only(timing_log(), "STAGE")}
+    seg = stages["segmentation_session"]
+    assert seg["status"] == "ok" and seg["method"] == "classical" and seg["merge_splits"] == "True"
+    assert (seg["nuclei_R1"], seg["nuclei_R2"], seg["dropped_R1"], seg["dropped_R2"]) == ("2", "2", "0", "0")
+    assert int(seg["min_volume_voxels"]) > 0
+    consensus = stages["consensus_nuclei"]
+    assert consensus["status"] == "ok" and consensus["method"] == "Intersection"
+    assert consensus["n_nuclei"] == "2" and consensus["remove_border"] == "False"
+
+
+def test_volume_filter_says_what_it_dropped_on_the_open_stage(timing_log):
+    from zfisher.core import segmentation
+    mask = np.zeros((4, 40, 40), np.uint32)
+    for i in range(3):
+        mask[:, 2:12, 2 + 12 * i:12 + 12 * i] = i + 1      # three nuclei of 400 voxels
+    fragment = mask.copy()
+    fragment[1, 30:32, 30:32] = 4                            # and a 4-voxel fragment
+    with timing.stage_timer("outer"):
+        out = segmentation.filter_rounds_by_volume({"R1": (mask, None), "R2": (fragment, None)})
+    assert [len(c) for _, c in out.values()] == [3, 3]
+    (line,) = _only(timing_log(), "STAGE")             # the filter writes no line of its own
+    assert line["stage"] == "outer" and (line["dropped_R1"], line["dropped_R2"]) == ("0", "1")
+    assert 4 < int(line["min_volume_voxels"]) <= 400
+
+
 # --- ACTION ---------------------------------------------------------------------
 
 def test_action_line_parses(timing_log):

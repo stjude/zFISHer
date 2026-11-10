@@ -23,7 +23,6 @@ from .timing import timed_stage, add_stage_fields
 logger = logging.getLogger(__name__)
 
 
-@timed_stage("consensus_nuclei", fields=lambda a: {"method": a["method"]})
 def imaged_xy_box(canvas_record, canvas_shape):
     """``(start, end)``, in canvas Y, X voxels, of the region both rounds
     imaged: the intersection of their footprints on the canvas (from the
@@ -54,6 +53,8 @@ def border_nuclei(mask, box):
     return cut
 
 
+@timed_stage("consensus_nuclei", fields=lambda a: {"method": a["method"], "remove_border": a["remove_border"]},
+             result_fields=lambda r: {"n_nuclei": len(r[1])})
 def process_consensus_nuclei(mask1, mask2, output_dir, threshold=None, method="Union", progress_callback=None,
                              voxel_size=None, remove_border=False):
     """
@@ -85,6 +86,7 @@ def process_consensus_nuclei(mask1, mask2, output_dir, threshold=None, method="U
         if removed_at_border:
             merged_mask[np.isin(merged_mask, removed_at_border)] = 0
         logger.info("Removed %d nuclei cut by the edge of the imaged region", len(removed_at_border))
+        add_stage_fields(removed_at_border=len(removed_at_border))
 
     # CRITICAL FIX: Calculate centroids from the FINAL merged mask, not the original R1 mask.
     # This ensures the IDs displayed in napari correspond to the actual consensus objects.
@@ -738,14 +740,20 @@ def delete_label(mask_data, label_id):
     return new_data
 
 
-@timed_stage("segmentation_session", fields=lambda a: {"method": a["method"]})
 def filter_rounds_by_volume(raw_results):
     """Drop small labels from every round with one size threshold computed
     from the nuclei of all rounds together (``compute_min_volume_threshold``).
     ``raw_results`` maps a key (round, or layer) to ``(masks, centroids)``;
-    masks that are None stay None. GUI and batch segmentation both use this."""
-    volumes = [get_label_volumes(masks) for masks, _ in raw_results.values() if masks is not None]
-    min_vol = compute_min_volume_threshold(np.concatenate(volumes) if volumes else np.array([]))
+    masks that are None stay None. GUI and batch segmentation both use this.
+    The threshold and how many labels it dropped from each round go to the
+    log and to the open stage's line."""
+    volumes = {key: get_label_volumes(masks) for key, (masks, _) in raw_results.items() if masks is not None}
+    pooled = np.concatenate(list(volumes.values())) if volumes else np.array([])
+    min_vol = compute_min_volume_threshold(pooled)
+    dropped = {key: int(np.sum(v < min_vol)) for key, v in volumes.items()}
+    logger.info("Nucleus volume threshold: %d voxels from %d labels; dropped %s", min_vol, len(pooled),
+                ", ".join(f"{dropped[key]} of {len(v)} in {key}" for key, v in volumes.items()) or "none")
+    add_stage_fields(min_volume_voxels=min_vol, **{f"dropped_{key}": n for key, n in dropped.items()})
     results = {}
     for key, (masks, centroids) in raw_results.items():
         if masks is not None:
@@ -755,6 +763,8 @@ def filter_rounds_by_volume(raw_results):
     return results
 
 
+@timed_stage("segmentation_session", fields=lambda a: {"method": a["method"], "merge_splits": a["merge_splits"]},
+             result_fields=lambda r: {f"nuclei_{key}": len(centroids) for key, (_, centroids) in r.items()})
 def process_session_dapi(r1_data, r2_data=None, output_dir=None, progress_callback=None, method="classical", merge_splits=True, voxel_spacing=None,
                          nuclear_channels=None):
     """

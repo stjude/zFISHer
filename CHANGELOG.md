@@ -166,6 +166,13 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   Blocks while zFISHer was in the background are counted apart, since the
   system can slow an idle app's timers. `-o profile.md` writes it to a file.
   It only reads.
+- **The session log times segmentation and the consensus nuclei again, and
+  says what the nucleus size filter removed.** Their timing lines had been
+  moved onto helper functions, which logged an error at debug level on every
+  run. The `segmentation_session` line gives the method, the nuclei kept in
+  each round, the size threshold in voxels and how many labels it removed from
+  each round, which the log also states; the `consensus_nuclei` line gives the
+  method and the nuclei kept. Results do not change.
 
 ### Distances and report tables
 
