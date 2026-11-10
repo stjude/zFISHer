@@ -89,6 +89,8 @@ class ParamChange(_Result):
     old: Any = None                  # None: not set, the built-in value applies
     new: Any = None
     applied: bool                    # False for a dry run or a value that was already set
+    unchanged: bool = False          # the value was already set: nothing to change, nothing logged
+    rounds: list[str] = []           # detection: the rounds the channel is detected in, all set alike
     would_run: list[str]             # the stages ``update`` runs after the change
 
 
@@ -378,7 +380,9 @@ def set_param(s, scope, name, value, channel=None, justification=None, dry_run=F
     detection (with ``channel``) or report (``distribution_bins``). The change
     is stored in the session and logged in ``decisions.jsonl`` with
     ``justification``, unless ``dry_run``; either way the result says which
-    stages ``update`` would then run. Raises ``ValueError`` for a setting that
+    stages ``update`` would then run. A detection setting is the channel's in
+    every round it is detected in (``rounds``): a pipeline run detects a
+    channel with one set of settings. Raises ``ValueError`` for a setting that
     does not exist or a value outside its range, and ``LookupError`` for a
     session no pipeline run made."""
     from . import analysis, decisions, pipeline
@@ -387,6 +391,7 @@ def set_param(s, scope, name, value, channel=None, justification=None, dry_run=F
         raise LookupError("This session was not made by a pipeline run, so it has no settings to change.")
     new_settings = copy.deepcopy(settings)
     key = name
+    rounds = []
     if scope == "detection":
         if not channel:
             raise ValueError("A detection setting needs the channel it applies to.")
@@ -401,6 +406,8 @@ def set_param(s, scope, name, value, channel=None, justification=None, dry_run=F
             raise ValueError(f"No detection settings for channel '{channel}'; the channels are "
                              f"{', '.join(config) or 'none'}.")
         current = dict(config[channel])
+        detected_in = current.get("round", "Both")
+        rounds = list(ROUNDS) if detected_in == "Both" else [detected_in]
         old = current.get(key)
         checked = DetectionParams.model_validate({**{k: v for k, v in current.items() if k in fields}, key: value})
         new = checked.model_dump(mode="json")[key]
@@ -443,7 +450,15 @@ def set_param(s, scope, name, value, channel=None, justification=None, dry_run=F
             decisions.record(key, new, old=old, scope={"stage": scope, **({"channel": channel} if channel else {})},
                              justification=justification)
     return ParamChange(scope=scope, name=key, channel=channel, old=old, new=new, applied=applied,
-                       would_run=would_run)
+                       unchanged=unchanged, rounds=rounds, would_run=would_run)
+
+
+def session_file_path(s):
+    """The session file ``s`` saves to, or was read from when read-only (beside
+    ``sessions/`` for a folder from before it)."""
+    out, name = Path(s.get("output_dir")), s.get("session_filename")
+    path = out / constants.SESSIONS_DIR / name
+    return out / name if not path.exists() and (out / name).exists() else path
 
 
 def plan_operation(s, operation, round_id=None, channel=None):

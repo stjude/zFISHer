@@ -124,6 +124,7 @@ def test_dry_runs_say_what_would_happen_and_change_nothing(root):
                   channel=CHANNEL, justification="testing")
     assert change["dry_run"] and change["result"]["applied"] is False and change["result"]["new"] == 0.2
     assert change["would_run"] == [f"detect {R1}", f"detect {R2}", f"transform {R1}", f"transform {R2}"]
+    assert change["writes"] == ["a/sessions", "a/decisions.jsonl"] and change["result"]["rounds"] == ["R1", "R2"]
     assert call(server, "update", session="a") == {"dry_run": True, "writes": [], "makes_stale": [],
                                                    "would_run": [], "result": None}
     assert snapshot(root) == before
@@ -135,6 +136,13 @@ def test_a_setting_change_then_update_runs_what_was_said(root):
                   justification="nuclei are under-segmented", dry_run=False)
     assert change["result"]["applied"] and change["result"]["old"] == "Intersection"
     assert change["would_run"] == ["consensus", f"transform {R1}", f"transform {R2}"]
+    assert change["writes"][1] == "b/decisions.jsonl" and (root / change["writes"][0]).is_file()
+    assert change["writes"][0] == f"b/sessions/{api.session_files(root / 'b')[-1].name}"
+    assert call(server, "get_status", session="b")["update_would_run"] == change["would_run"]
+    files = api.session_files(root / "b")
+    again = call(server, "set_param", session="b", scope="consensus", name="overlap_method", value="Union",
+                 justification="already so", dry_run=False)
+    assert again["result"]["unchanged"] and again["writes"] == [] and api.session_files(root / "b") == files
     entry = api.get_decisions(api.open_session(root / "b"), "overlap_method")[-1]
     assert (entry["actor"], entry["via"], entry["justification"]) == (
         "agent:test", "mcp:pytest-client", "nuclei are under-segmented")
@@ -142,6 +150,7 @@ def test_a_setting_change_then_update_runs_what_was_said(root):
     ran = call(server, "update", session="b", dry_run=False)
     assert ran["result"]["stages_run"] == change["would_run"] and not ran["dry_run"]
     assert call(server, "update", session="b")["would_run"] == []
+    assert call(server, "get_status", session="b")["update_would_run"] == []
 
 
 def test_settings_outside_their_range_are_refused(root):

@@ -112,6 +112,7 @@ def test_a_dry_run_says_what_would_run_and_changes_nothing(run_folder):
     before = _files(out)
     change = api.set_param(api.open_session(out), "detection", "sensitivity", 0.2, channel=CHANNEL, dry_run=True)
     assert (change.name, change.old, change.new, change.applied) == ("threshold_rel", 0.05, 0.2, False)
+    assert change.rounds == ["R1", "R2"] and not change.unchanged      # one setting for both rounds
     assert change.would_run == [f"detect R1 - {CHANNEL}", f"detect R2 - {CHANNEL}",
                                 f"transform R1 - {CHANNEL}", f"transform R2 - {CHANNEL}"]
     assert _files(out) == before
@@ -151,7 +152,7 @@ def test_writing_back_the_built_in_detection_settings_changes_nothing(run_folder
     s = api.open_session(run_folder[0], read_only=False)
     for name, value in (("min_distance", 2), ("z_edge_exclude", 0)):
         change = api.set_param(s, "detection", name, value, channel=CHANNEL)
-        assert not change.applied and change.would_run == []
+        assert not change.applied and change.unchanged and change.would_run == []
     assert api.get_decisions(s, "z_edge_exclude") == []
 
 

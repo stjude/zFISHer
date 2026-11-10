@@ -25,6 +25,15 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   that the round's image has the channel (from its metadata) and planning a
   warp that the channel has raw-space puncta, so a plan is refused where the
   run would fail.
+- **The MCP server's `set_param` says what it wrote, and a pending change
+  shows in `get_status`.** `set_param` listed no files even when it had saved
+  a session file and logged the change; it now names them (the sessions
+  folder and `decisions.jsonl` for a dry run). A value already set changes
+  nothing and no longer saves a new numbered session file. The result says
+  which rounds a detection setting covers: a run detects a channel with one
+  set of settings in every round it detects it in. `get_status` judged
+  outputs only against their files, so after a setting change everything
+  still read fresh; it now also lists the stages an update would run.
 - **The GUI's registration and warping write what batch writes.** Automated
   Registration & Warping and the manual Global Canvas step re-implemented the
   pipeline and differed from it: images were converted to 32-bit floats before

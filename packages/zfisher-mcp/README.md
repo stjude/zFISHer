@@ -83,7 +83,7 @@ Every tool except `list_sessions` takes `session`, the session's path below the 
 |---|---|
 | `list_sessions(under, limit, offset)` | The sessions under the root, with the newest session file of each |
 | `get_session_info(session)` | Inputs, zFISHer version, nuclear channel, channels with puncta, what the session has made |
-| `get_status(session)` | Which outputs are fresh, stale, edited or missing, and why; the state of each pipeline stage |
+| `get_status(session)` | Which outputs are fresh, stale, edited or missing, and why; the state of each pipeline stage; what an update would run now |
 | `get_parameters(session, channel)` | Detection settings per channel, colocalization rules, the saved registration |
 | `get_metrics(session, include_saturation)` | Quality-control numbers: registration fit, puncta counts and SNR, extranuclear and hand-placed fractions, nucleus volumes |
 | `query_distances(session, source, target, max_um, bin_um)` | How many source puncta have their nearest target punctum within `max_um` µm, binned |
@@ -122,7 +122,7 @@ and changes nothing.
 
 | Tool | Does |
 |---|---|
-| `set_param(session, scope, name, value, justification, channel)` | Changes one pipeline setting for the next update; refuses a value outside the setting's range or choices |
+| `set_param(session, scope, name, value, justification, channel)` | Changes one pipeline setting for the next update; refuses a value outside the setting's range or choices; a detection setting is the channel's in every round it is detected in; a value already set writes nothing |
 | `update(session)` | Reruns the stages not up to date with the settings and files, and those after them |
 | `detect_channel(session, round, channel, params, existing)` | Detects a channel again on its raw image |
 | `transform_channel(session, round, channel)` | Warps a channel's puncta into aligned space with the saved registration |

@@ -22,6 +22,7 @@ from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
+from zfisher import constants
 from zfisher.core import api, decisions
 from zfisher.core.params import DetectionParams
 
@@ -153,20 +154,32 @@ class ActingTools:
                   value: Annotated[Any, Field(description="The new value, inside the setting's allowed range.")],
                   justification: Justification,
                   channel: Annotated[Optional[str], Field(description=(
-                      "The channel, for a detection setting: 'FITC', or 'R1 - FITC' as the read tools name it."))
+                      "The channel, for a detection setting: 'FITC', or 'R1 - FITC' as the read tools name it. "
+                      "Either way the setting is the channel's in every round it is detected in."))
                   ] = None,
                   dry_run: DryRun = True) -> Operation:
         """Change one pipeline setting of a session for its next update, refused outside the
-        setting's allowed range or choices. Says which stages update would then run."""
+        setting's allowed range or choices. Says which stages update would then run (get_status
+        lists them too until update runs them); the outputs stay as they are until then. A
+        detection setting is the channel's in every round it is detected in (rounds in the
+        result). A value already set changes and writes nothing (unchanged in the result)."""
         with self.answer():
             folder = self.folder(session)
             # Checked on a read-only open first, so a refused value writes no session file.
             change = api.set_param(self.host.session(folder), scope, name, value, channel=channel, dry_run=True)
+            log = str(folder / decisions.DECISIONS_FILE)
+            if change.unchanged:
+                return self.operation(dry_run, result=change, writes=[])
             if dry_run:
-                return self.operation(True, would_run=change.would_run, result=change, writes=[])
-            change = self.act(ctx, folder, f"set_param {scope}.{name}", lambda s: api.set_param(
-                s, scope, name, value, channel=channel, justification=justification))
-            return self.operation(False, would_run=change.would_run, result=change, writes=[])
+                return self.operation(True, would_run=change.would_run, result=change,
+                                      writes=[str(folder / constants.SESSIONS_DIR), log])
+            saved = []
+
+            def change_it(s):
+                saved.append(api.session_file_path(s))
+                return api.set_param(s, scope, name, value, channel=channel, justification=justification)
+            change = self.act(ctx, folder, f"set_param {scope}.{name}", change_it)
+            return self.operation(False, would_run=change.would_run, result=change, writes=[str(saved[0]), log])
 
     def update(self, ctx: Context, session: str, dry_run: DryRun = True) -> Operation:
         """Run again the pipeline stages of a session that are not up to date with its

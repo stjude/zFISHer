@@ -118,6 +118,7 @@ class SessionList(BaseModel):
 class SessionStatus(BaseModel):
     artifacts: list[api.ArtifactState]    # aligned puncta per channel, the report
     stages: list[api.StageState]          # every recorded pipeline stage
+    update_would_run: Optional[list[str]] = None   # what update would run now; None: cannot be said
 
 
 class RecordPage(BaseModel):
@@ -225,11 +226,19 @@ class _Tools(ActingTools):
 
     def get_status(self, session: str) -> SessionStatus:
         """Which outputs of a session are fresh, stale, edited or missing, with the reasons,
-        and the state of every recorded pipeline stage."""
+        and the state of every recorded pipeline stage. Outputs are judged against their
+        files; update_would_run lists the stages an update would run now, which includes those
+        a changed setting makes due (null when that cannot be said: a session no pipeline run
+        made, or raw images that cannot be read)."""
         with self.answer():
             s = self.open(session)
+            try:
+                due = api.plan_update(s)
+            except (LookupError, OSError, ValueError):
+                due = None
             return self.out(SessionStatus, {"artifacts": [a.model_dump() for a in api.get_status(s)],
-                                            "stages": [st.model_dump() for st in api.get_stage_status(s)]})
+                                            "stages": [st.model_dump() for st in api.get_stage_status(s)],
+                                            "update_would_run": due})
 
     def get_parameters(self, session: str, channel: Annotated[Optional[str], Field(
             description="'R1 - FITC', or a channel only one round has; omit for every channel.")] = None
