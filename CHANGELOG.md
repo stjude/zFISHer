@@ -34,6 +34,16 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   set of settings in every round it detects it in. `get_status` judged
   outputs only against their files, so after a setting change everything
   still read fresh; it now also lists the stages an update would run.
+- **An update or a batch run says what it made, not only that it finished.**
+  A batch dataset whose registration fell back to the rough shift, with one
+  nucleus and no puncta reaching aligned space in one round, was reported
+  `ok`. Each dataset of `api.run_batch` (and the MCP tool) now carries the
+  batch check's flags for it and `needs_look`, and the result says whether
+  the datasets could be compared; `ok` still means the run finished without
+  error. The MCP server's `update` returns, besides the stages it ran, what
+  the session then holds (`api.outcome`: registration, nuclei, each aligned
+  channel's count and median SNR, missing outputs, and what the batch
+  check's fixed limits find), and both tools name the files they write.
 - **The GUI's registration and warping write what batch writes.** Automated
   Registration & Warping and the manual Global Canvas step re-implemented the
   pipeline and differed from it: images were converted to 32-bit floats before

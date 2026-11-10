@@ -13,6 +13,7 @@ Operations that change files need a session opened with ``read_only=False``,
 which, as Load Session does, writes the next numbered session file.
 """
 import copy
+import logging
 from pathlib import Path
 from typing import Any, Optional
 
@@ -21,6 +22,8 @@ from pydantic import BaseModel, ConfigDict
 from .. import constants
 from . import session as _session
 from .params import DetectionParams
+
+logger = logging.getLogger(__name__)
 
 
 class _Result(BaseModel):
@@ -101,8 +104,20 @@ class BatchPlan(_Result):
 
 class BatchRun(_Result):
     output_base: str
-    datasets: list[dict]             # name, output_dir, ok, error, seconds, stages_run
+    datasets: list[dict]             # name, output_dir, ok, error, seconds, stages_run, flags, needs_look
     qc_report: Optional[str] = None
+    compared_with_batch: Optional[bool] = None   # as BatchQC; None when the batch check did not run
+    qc_note: Optional[str] = None
+
+
+class Outcome(_Result):
+    """What a session holds after a run, in brief: enough to tell a run that
+    worked from one that finished without error and made little."""
+    registration: dict               # method, fallback_used, fallback_reason, n_pairs, n_inliers, rmsd_um
+    n_nuclei: int                    # in the consensus mask
+    channels: dict[str, dict]        # per "R1 - FITC": n_puncta and median_snr of its aligned puncta
+    missing: list[str]               # outputs that are not there (an aligned channel, the report)
+    warnings: list[str]              # the batch check's fixed limits, for this dataset alone
 
 
 class ReviewItem(_Result):
@@ -663,6 +678,27 @@ def get_metrics(s, include_saturation=False):
         return Metrics(**metrics.compute_metrics(include_saturation=include_saturation))
 
 
+def outcome(s):
+    """What ``s`` holds, in brief (``Outcome``): its registration, nuclei, each
+    aligned channel's count and median SNR, what is missing, and what the batch
+    check's fixed limits find in it alone (a registration that fell back to
+    the rough shift, a channel with no puncta). Reads only."""
+    from . import metrics, qc, stages
+    with _session.use(s):
+        m = metrics.compute_metrics()
+        artifacts = stages.status()
+    reg = m["registration"]
+    flags = qc.flag_batch({m.get("dataset") or "dataset": m})
+    return Outcome(
+        registration={k: reg.get(k) for k in ("method", "fallback_used", "fallback_reason", "n_pairs", "n_inliers",
+                                              "rmsd_um")},
+        n_nuclei=int(m["nuclei"].get("n_nuclei") or 0),
+        channels={key: {"n_puncta": c["n_puncta"], "median_snr": (c.get("snr") or {}).get("p50")}
+                  for key, c in m["channels"].items()},
+        missing=[a.name for a in artifacts if a.state == stages.MISSING],
+        warnings=[f"{f.action}: {f.reason}" for f in flags])
+
+
 def flag_batch(batch_root, thresholds=None, write_report=True, include_saturation=False):
     """Which datasets under ``batch_root`` need a look (``qc.flag_batch``);
     writes ``qc_report.md`` there unless told not to. Reads the datasets only."""
@@ -813,18 +849,39 @@ def plan_batch(config, output_base):
 
 def run_batch(config, output_base, workers=1):
     """Run every dataset of ``config`` (a ``BatchConfig``, or a template's
-    path) into ``output_base`` (``batch.run_batch``), then write the batch's
-    ``qc_report.md``. A dataset that fails is reported, not raised."""
+    path) into ``output_base`` (``batch.run_batch``), then check the batch and
+    write its ``qc_report.md`` (``flag_batch``). A dataset that fails is
+    reported, not raised. ``ok`` says a dataset's run finished without error;
+    ``flags`` are the batch check's for it, and ``needs_look`` is set when it
+    failed or was flagged, since a run can finish and still have made little
+    (a registration that fell back, a channel no punctum survived in)."""
     from . import batch
     from .qc import QC_REPORT
     if not isinstance(config, BaseModel):
         config = read_batch_template(config)
-    results = batch.run_batch(config, output_base, workers=workers)
+    results = batch.run_batch(config, output_base, workers=workers, qc=False)
+    checked = None
+    if any(r.ok for r in results):
+        try:
+            checked = flag_batch(output_base, thresholds=config.qc)
+        except Exception as exc:                 # the batch itself finished; say so and go on
+            logger.error("Batch QC failed: %s", exc, exc_info=True)
+    by_dataset = {}
+    for f in (checked.flags if checked else []):
+        by_dataset.setdefault(f["dataset"], []).append(f)
+    base = Path(output_base).resolve()
+    datasets = []
+    for r in results:
+        folder = Path(r.output_dir).resolve()
+        flags = by_dataset.get(folder.name, []) if folder.parent == base else []
+        datasets.append({"name": r.name, "output_dir": r.output_dir, "ok": r.ok, "error": r.error,
+                         "seconds": round(r.seconds, 1), "stages_run": list(r.stages_run), "flags": flags,
+                         "needs_look": not r.ok or bool(flags)})
     report = Path(output_base) / QC_REPORT
-    return BatchRun(output_base=str(output_base),
-                    datasets=[{"name": r.name, "output_dir": r.output_dir, "ok": r.ok, "error": r.error,
-                               "seconds": round(r.seconds, 1), "stages_run": list(r.stages_run)} for r in results],
-                    qc_report=str(report) if report.exists() else None)
+    return BatchRun(output_base=str(output_base), datasets=datasets,
+                    qc_report=str(report) if report.exists() else None,
+                    compared_with_batch=checked.compared_with_batch if checked else None,
+                    qc_note=checked.note if checked else None)
 
 
 def get_decisions(s, name=None):

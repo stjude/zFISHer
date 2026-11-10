@@ -148,7 +148,9 @@ def test_a_setting_change_then_update_runs_what_was_said(root):
         "agent:test", "mcp:pytest-client", "nuclei are under-segmented")
     assert call(server, "update", session="b")["would_run"] == change["would_run"]
     ran = call(server, "update", session="b", dry_run=False)
-    assert ran["result"]["stages_run"] == change["would_run"] and not ran["dry_run"]
+    assert ran["result"]["stages_run"] == change["would_run"] and not ran["dry_run"] and ran["writes"] == ["b"]
+    held = ran["result"]["outcome"]
+    assert held["n_nuclei"] > 0 and set(held["channels"]) == {R1, R2} and held["warnings"] == []
     assert call(server, "update", session="b")["would_run"] == []
     assert call(server, "get_status", session="b")["update_would_run"] == []
 
@@ -215,12 +217,14 @@ def test_a_batch_runs_from_a_template_inside_the_root(root, tmp_path):
     _workbook(root / "batch.xlsx", [{"Name": "c", "R1": str(raw / "R1.ome.tif"), "R2": str(raw / "R2.ome.tif")}])
     server = server_for(root, max_workers=1)
     plan = call(server, "run_batch", template="batch.xlsx", output="runs", workers=4)
-    assert plan["dry_run"] and plan["writes"] == ["runs"] and not (root / "runs").exists()
+    assert plan["dry_run"] and plan["writes"] == ["runs", "runs/qc_report.md"] and not (root / "runs").exists()
     (dataset,) = plan["result"]["datasets"]
     assert dataset["new"] and dataset["output_dir"] == "runs/c" and dataset["r1"] == "raw/R1.ome.tif"
     done = call(server, "run_batch", template="batch.xlsx", output="runs", workers=4, dry_run=False)
     (result,) = done["result"]["datasets"]
     assert result["ok"] and result["stages_run"][0] == "segment" and done["result"]["qc_report"] == "runs/qc_report.md"
+    assert result["flags"] == [] and result["needs_look"] is False and done["writes"] == plan["writes"]
+    assert done["result"]["compared_with_batch"] is False and "at least 4" in done["result"]["qc_note"]
     again = call(server, "run_batch", template="batch.xlsx", output="runs")
     assert again["result"]["datasets"][0]["would_run"] == []
     shutil.copy(raw / "R1.ome.tif", tmp_path / "R1.ome.tif")

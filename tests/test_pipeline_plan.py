@@ -218,3 +218,18 @@ def test_proposals_wait_in_the_review_queue_until_a_person_answers(run_folder):
     assert dismissed["status"] == "dismissed" and api.review_queue(s) == []
     with pytest.raises(LookupError, match="No open proposal"):
         api.review_proposal(s, first["id"], accept=False)
+
+
+def test_the_outcome_of_a_run_in_brief(run_folder):
+    out = run_folder[0]
+    held = api.outcome(api.open_session(out))
+    assert held.n_nuclei > 0 and set(held.channels) == {f"R1 - {CHANNEL}", f"R2 - {CHANNEL}"}
+    assert all(c["n_puncta"] > 0 and c["median_snr"] > 1 for c in held.channels.values())
+    assert held.registration["method"] == "ransac" and held.warnings == []
+    assert held.missing == ["Master_Analysis_Report"]                   # this run had no colocalization rules
+    newest = api.session_files(out)[-1]
+    data = json.loads(newest.read_text())
+    data["registration"]["rigid"].update(method="rough_shift", fallback_used=True, fallback_reason="too_few_pairs")
+    newest.write_text(json.dumps(data))
+    held = api.outcome(api.open_session(out))
+    assert held.registration["fallback_used"] and any("rough shift" in w for w in held.warnings)

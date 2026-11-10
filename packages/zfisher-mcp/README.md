@@ -123,13 +123,13 @@ and changes nothing.
 | Tool | Does |
 |---|---|
 | `set_param(session, scope, name, value, justification, channel)` | Changes one pipeline setting for the next update; refuses a value outside the setting's range or choices; a detection setting is the channel's in every round it is detected in; a value already set writes nothing |
-| `update(session)` | Reruns the stages not up to date with the settings and files, and those after them |
+| `update(session)` | Reruns the stages not up to date with the settings and files, and those after them; says what the session then holds (registration, nuclei, each channel's count and median SNR, missing outputs, warnings) |
 | `detect_channel(session, round, channel, params, existing)` | Detects a channel again on its raw image |
 | `transform_channel(session, round, channel)` | Warps a channel's puncta into aligned space with the saved registration |
 | `export_report(session)` | Writes the report from the files, with the session's rules (a new numbered file; reports are never overwritten) |
 | `export_cells(session, ids, padding_um)` | Writes one OME-TIFF per nucleus |
 | `threshold_sweep(session, round, channel, params)` | Counts puncta over a range of sensitivities and suggests one |
-| `run_batch(template, output, workers)` | Runs a batch template; a dataset finished before runs only what is due |
+| `run_batch(template, output, workers)` | Runs a batch template, then checks the batch as `flag_batch` does and writes `qc_report.md`; a dataset finished before runs only what is due; each dataset's result carries its flags and `needs_look` |
 
 A channel is named as its image names it (`FITC`) or, as the read tools name it, with its round
 (`R1 - FITC`). A channel of the other round, or one the round's image does not have, is refused,

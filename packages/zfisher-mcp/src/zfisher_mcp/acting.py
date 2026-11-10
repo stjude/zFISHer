@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from zfisher import constants
 from zfisher.core import api, decisions
 from zfisher.core.params import DetectionParams
+from zfisher.core.qc import QC_REPORT
 
 logger = logging.getLogger(__name__)
 
@@ -183,14 +184,23 @@ class ActingTools:
 
     def update(self, ctx: Context, session: str, dry_run: DryRun = True) -> Operation:
         """Run again the pipeline stages of a session that are not up to date with its
-        settings and files (and the stages after them)."""
+        settings and files (and the stages after them). A real run says which stages ran and
+        what the session then holds (outcome: registration, nuclei, each channel's aligned
+        count and median SNR, missing outputs, warnings): a run can finish and make little."""
         with self.answer():
             folder = self.folder(session)
             planned = api.plan_update(self.host.session(folder))
+            writes = [str(folder)] if planned else []
             if dry_run:
-                return self.operation(True, would_run=planned, writes=[])
+                return self.operation(True, would_run=planned, writes=writes)
             ran = self.act(ctx, folder, "update", api.update, session="read")
-            return self.operation(False, would_run=planned, result={"stages_run": list(ran or [])}, writes=[])
+            try:
+                held = api.outcome(self.host.session(folder)).model_dump()
+            except (OSError, ValueError, LookupError, KeyError) as exc:
+                logger.warning("No outcome for %s: %s", self.roots.relative(folder), exc)
+                held = None
+            return self.operation(False, would_run=planned, writes=writes if ran else [],
+                                  result={"stages_run": list(ran or []), "outcome": held})
 
     def detect_channel(self, ctx: Context, session: str, round: Round, channel: Channel,
                        params: Annotated[Optional[dict[str, Any]], Field(description=(
@@ -272,8 +282,11 @@ class ActingTools:
                   workers: Annotated[int, Field(ge=1, description=(
                       "Datasets at once; the server caps it."))] = 1,
                   dry_run: DryRun = True) -> Operation:
-        """Run a batch template's datasets through the whole pipeline. A dry run lists each
-        dataset and the stages it would run; a dataset finished before runs only what is due."""
+        """Run a batch template's datasets through the whole pipeline, then check the batch
+        (as flag_batch) and write qc_report.md in the output folder. A dry run lists each dataset
+        and the stages it would run; a dataset finished before runs only what is due. In a real
+        run's result, ok means a dataset's run finished without error; its flags are the batch
+        check's, and needs_look is set when it failed or was flagged."""
         with self.answer():
             template_path, output_path = self.roots.resolve(template), self.roots.resolve(output)
             config = api.read_batch_template(template_path)
@@ -283,9 +296,10 @@ class ActingTools:
                     if self.roots.relative(Path(path).resolve()) is None:
                         raise ValueError(f"Dataset '{ds.name}': its {what} is outside the folders this server "
                                          "may use.")
+            writes = [str(output_path), str(output_path / QC_REPORT)]
             if dry_run:
-                return self.operation(True, result=api.plan_batch(config, output_path), writes=[str(output_path)])
+                return self.operation(True, result=api.plan_batch(config, output_path), writes=writes)
             workers = min(workers, self.config.max_workers)
             result = self.act(ctx, output_path, f"run_batch with {workers} worker(s)", lambda: api.run_batch(
                 config, output_path, workers=workers), session=None)
-            return self.operation(False, result=result, writes=[str(output_path)])
+            return self.operation(False, result=result, writes=writes if result.qc_report else writes[:1])
