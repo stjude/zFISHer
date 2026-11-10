@@ -169,6 +169,25 @@ def test_what_an_operation_would_write_and_leave_out_of_date(run_folder):
         api.plan_operation(s, "detect")
 
 
+def test_a_channel_may_name_its_round_and_must_exist_to_plan_it(run_folder):
+    s = api.open_session(run_folder[0])
+    assert api.plan_operation(s, "detect", "R1", f"R1 - {CHANNEL}") == api.plan_operation(s, "detect", "R1", CHANNEL)
+    assert api.plan_operation(s, "transform", "R2", f"R2 - {CHANNEL}").writes[0].endswith(
+        f"R2_-_{CHANNEL}_puncta.csv")
+    with pytest.raises(ValueError, match=f"'R2 - {CHANNEL}' is a channel of R2, not of R1"):
+        api.plan_operation(s, "detect", "R1", f"R2 - {CHANNEL}")
+    with pytest.raises(ValueError, match="R1's image has no channel 'Cy5'; its channels are DAPI, FITC"):
+        api.plan_operation(s, "detect", "R1", "Cy5")
+    with pytest.raises(FileNotFoundError, match="detect the channel first"):
+        api.plan_operation(s, "transform", "R1", "DAPI")
+    change = api.set_param(s, "detection", "sensitivity", 0.2, channel=f"R2 - {CHANNEL}", dry_run=True)
+    assert change.channel == CHANNEL and change.new == 0.2
+    with decisions.use_actor("agent:test", via="mcp:pytest"):
+        entry = api.propose(s, "threshold_rel", 0.08, scope={"channel": f"R2 - {CHANNEL}"}, justification="x")
+    assert entry["scope"] == {"channel": CHANNEL, "round": "R2"}
+    assert api.round_channel(None, f"R1 - {CHANNEL}") == api.round_channel("R1", CHANNEL) == CHANNEL
+
+
 def test_a_proposal_is_logged_without_changing_the_session(run_folder):
     out = run_folder[0]
     before = _session_files(out)

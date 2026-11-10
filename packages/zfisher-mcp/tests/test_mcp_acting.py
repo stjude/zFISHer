@@ -156,6 +156,10 @@ def test_settings_outside_their_range_are_refused(root):
     assert "less than or equal" in error(server, "detect_channel", session="a", round="R1", channel=CHANNEL,
                                          params={"threshold_rel": 5}, dry_run=False)
     assert "round" in error(server, "detect_channel", session="a", round="R3", channel=CHANNEL)
+    assert "its channels are DAPI, FITC" in error(server, "detect_channel", session="a", round="R1", channel="Cy5")
+    assert "channel of R2, not of R1" in error(server, "threshold_sweep", session="a", round="R1", channel=R2)
+    assert call(server, "detect_channel", session="a", round="R1", channel=R1)["writes"] == [
+        f"a/reports/R1_-_{CHANNEL}_puncta.csv"]
     assert "go up a folder" in error(server, "update", session="../a", dry_run=False)
     assert snapshot(root) == before
 

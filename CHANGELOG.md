@@ -15,6 +15,16 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   and, if not, why (`compared_with_batch` and `note`), and so do
   `qc_report.md`, `zfisher-cli flag-batch`, Batch Check on the Review Queue
   page and the MCP server's `flag_batch`.
+- **The core API's channel operations take a channel as the read operations
+  name it.** Re-detecting, warping and sweeping a channel, changing its
+  detection settings and proposing a change took only the bare channel
+  (`FITC`) beside the round, while the read operations and the report name
+  channels `R1 - FITC`; given that name, a dry run of re-detection said it
+  would write `R1_-_R1_-_FITC_puncta.csv`. Both forms are now accepted, a
+  channel of the other round is refused, and planning a re-detection checks
+  that the round's image has the channel (from its metadata) and planning a
+  warp that the channel has raw-space puncta, so a plan is refused where the
+  run would fail.
 - **The GUI's registration and warping write what batch writes.** Automated
   Registration & Warping and the manual Global Canvas step re-implemented the
   pipeline and differed from it: images were converted to 32-bit floats before

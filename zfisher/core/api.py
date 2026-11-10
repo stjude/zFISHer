@@ -319,6 +319,41 @@ def plan_update(s, settings=None):
                                                **(settings if settings is not None else stored))
 
 
+ROUNDS = ("R1", "R2")
+
+
+def round_channel(round_id, channel):
+    """``channel`` as the channel name of round ``round_id``'s image: a bare
+    name (``'FITC'``) as it is, and a layer key of that round (``'R1 - FITC'``,
+    as the read operations and reports name it) without its round. With
+    ``round_id`` None, a key of either round. Raises ``ValueError`` for a key
+    of the other round, so ``('R1', 'R2 - FITC')`` is not quietly taken as a
+    channel named ``'R2 - FITC'``."""
+    text = str(channel).strip()
+    for rnd in ROUNDS:
+        if text.startswith(f"{rnd} - "):
+            if round_id is not None and rnd != round_id:
+                raise ValueError(f"'{channel}' is a channel of {rnd}, not of {round_id}; name the channel "
+                                 f"('{text[len(rnd) + 3:]}') or the round it belongs to.")
+            return text[len(rnd) + 3:]
+    return text
+
+
+def _check_round_channel(s, round_id, channel):
+    """Raise ``ValueError`` when round ``round_id``'s raw image has no channel
+    ``channel``, reading only the image's metadata; the image itself missing
+    raises as detecting would (``io.RawImageNotFound``). An image whose channel
+    names cannot be read without its pixels is not checked."""
+    from . import io
+    if round_id not in ROUNDS:
+        raise ValueError(f"No round '{round_id}'; the rounds are {', '.join(ROUNDS)}.")
+    with _session.use(s):
+        path = io.resolve_raw_path(round_id)
+    names = io.peek_channel_names(path)
+    if names is not None and channel not in names:
+        raise ValueError(f"{round_id}'s image has no channel '{channel}'; its channels are {', '.join(names)}.")
+
+
 def _setting_scopes():
     """``{scope: (model, {model field: pipeline setting})}`` of the settings
     ``set_param`` changes, other than detection and report ones."""
@@ -355,6 +390,7 @@ def set_param(s, scope, name, value, channel=None, justification=None, dry_run=F
     if scope == "detection":
         if not channel:
             raise ValueError("A detection setting needs the channel it applies to.")
+        channel = round_channel(None, channel)      # settings are per channel, 'R1 - FITC' means FITC
         fields = DetectionParams.model_fields
         key = "threshold_rel" if name == "sensitivity" else name
         if key not in fields:
@@ -415,8 +451,16 @@ def plan_operation(s, operation, round_id=None, channel=None):
     running it: ``detect`` a channel (its raw-space CSV; its aligned CSV and
     the report go stale), ``transform`` it (its aligned CSV; the report goes
     stale), ``report`` (the report and its tables) or ``cells`` (the per-nucleus
-    folder)."""
+    folder). ``channel`` may name its round, as ``'R1 - FITC'``. The round's
+    image must have the channel to detect it, and its raw-space CSV must
+    exist to transform it, so a plan is refused where the run would fail."""
     from . import analysis, cells, stages
+    if operation in ("detect", "transform"):
+        if not (round_id and channel):
+            raise ValueError(f"Say which round and channel to {operation}.")
+        channel = round_channel(round_id, channel)
+        if operation == "detect":
+            _check_round_channel(s, round_id, channel)
     with _session.use(s):
         artifacts = stages.status()
         out = Path(s.get("output_dir"))
@@ -429,13 +473,14 @@ def plan_operation(s, operation, round_id=None, channel=None):
                           and a.channel == channel), None)
             return found.path if found is not None and found.path else None
 
-        if operation in ("detect", "transform"):
-            if not (round_id and channel):
-                raise ValueError(f"Say which round and channel to {operation}.")
         if operation == "detect":
             raw = constants.puncta_csv_path(reports, stages.raw_puncta_name(round_id, channel))
             writes, stale = [str(raw)], ([str(aligned())] if aligned() else []) + existing_report
         elif operation == "transform":
+            raw = constants.puncta_csv_path(reports, stages.raw_puncta_name(round_id, channel))
+            if not raw.exists():
+                raise FileNotFoundError(f"{round_id} - {channel} has no raw-space puncta to transform; "
+                                        "detect the channel first.")
             target = aligned()
             if target is None:
                 from . import registration
@@ -461,10 +506,17 @@ def propose(s, name, value, scope=None, justification=None):
     """Log a suggested change of setting ``name`` to ``value`` in ``s``'s
     ``decisions.jsonl`` with ``status: "proposed"``, for a person to accept or
     dismiss; nothing else changes. Works on a read-only session. Returns the
-    record."""
+    record. A ``channel`` in ``scope`` that names its round (``'R1 - FITC'``)
+    is logged as that round and channel."""
     from . import decisions
+    scope = dict(scope or {})
+    if scope.get("channel"):
+        named = next((r for r in ROUNDS if str(scope["channel"]).strip().startswith(f"{r} - ")), None)
+        scope["channel"] = round_channel(scope.get("round"), scope["channel"])
+        if named and not scope.get("round"):
+            scope["round"] = named
     with _session.use(s):
-        entry = decisions.record(name, value, scope=scope or {}, justification=justification, status="proposed",
+        entry = decisions.record(name, value, scope=scope, justification=justification, status="proposed",
                                  even_read_only=True)
     if entry is None:
         raise LookupError("The session has no folder to log the proposal in.")
@@ -614,8 +666,10 @@ def flag_batch(batch_root, thresholds=None, write_report=True, include_saturatio
 def threshold_sweep(s, round_id, channel, params=None, thresholds=None, progress_callback=None):
     """Puncta counts over a range of sensitivities for ``channel`` and where they
     level off (``stages.sweep_channel``); stored in ``s``. ``params`` (a
-    ``DetectionParams`` or dict) sets the other settings, else the recorded ones."""
+    ``DetectionParams`` or dict) sets the other settings, else the recorded ones.
+    ``channel`` may name its round, as ``'R1 - FITC'``."""
     from . import stages
+    channel = round_channel(round_id, channel)
     if isinstance(params, dict):
         params = DetectionParams.model_validate(params)
     kwargs = params.detection_kwargs() if params is not None else None
@@ -642,9 +696,11 @@ def check_nucleus_ids(s):
 def detect_channel(s, round_id, channel, params=None, existing="replace"):
     """Detect ``channel`` on round ``round_id``'s raw image (``stages.detect_channel``).
     ``params`` is a ``DetectionParams``, a dict of its fields, or None for the
-    settings recorded last time."""
+    settings recorded last time. ``channel`` may name its round, as
+    ``'R1 - FITC'``."""
     import pandas as pd
     from . import stages
+    channel = round_channel(round_id, channel)
     if isinstance(params, dict):
         params = DetectionParams.model_validate(params)
     kwargs = params.detection_kwargs() if params is not None else None
@@ -660,9 +716,11 @@ def detect_channel(s, round_id, channel, params=None, existing="replace"):
 
 
 def transform_channel(s, round_id, channel, remove_extranuclear=None):
-    """Warp ``channel``'s raw puncta into aligned space with the saved registration."""
+    """Warp ``channel``'s raw puncta into aligned space with the saved
+    registration. ``channel`` may name its round, as ``'R1 - FITC'``."""
     import pandas as pd
     from . import stages
+    channel = round_channel(round_id, channel)
     with _session.use(s):
         csv = stages.transform_channel(round_id, channel, remove_extranuclear=remove_extranuclear, run_by="api")
         return TransformResult(csv=str(csv) if csv else None, n_puncta=len(pd.read_csv(csv)) if csv else 0)

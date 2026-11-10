@@ -45,6 +45,8 @@ Scope = Literal["segmentation", "registration", "consensus", "detection", "repor
 DryRun = Annotated[bool, Field(description="True (the default): say what the call would do, and change nothing.")]
 Justification = Annotated[str, Field(min_length=1, description=(
     "Why: logged with the change for the person who reviews it."))]
+Channel = Annotated[str, Field(description=(
+    "The channel as the image names it ('FITC'), or with its round as the read tools name it ('R1 - FITC')."))]
 
 TRIAGE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False)
 SETS = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
@@ -150,7 +152,9 @@ class ActingTools:
                       "distribution_bins."))],
                   value: Annotated[Any, Field(description="The new value, inside the setting's allowed range.")],
                   justification: Justification,
-                  channel: Annotated[Optional[str], Field(description="The channel, for a detection setting.")] = None,
+                  channel: Annotated[Optional[str], Field(description=(
+                      "The channel, for a detection setting: 'FITC', or 'R1 - FITC' as the read tools name it."))
+                  ] = None,
                   dry_run: DryRun = True) -> Operation:
         """Change one pipeline setting of a session for its next update, refused outside the
         setting's allowed range or choices. Says which stages update would then run."""
@@ -175,7 +179,7 @@ class ActingTools:
             ran = self.act(ctx, folder, "update", api.update, session="read")
             return self.operation(False, would_run=planned, result={"stages_run": list(ran or [])}, writes=[])
 
-    def detect_channel(self, ctx: Context, session: str, round: Round, channel: str,
+    def detect_channel(self, ctx: Context, session: str, round: Round, channel: Channel,
                        params: Annotated[Optional[dict[str, Any]], Field(description=(
                            "Detection settings (method, threshold_rel, min_distance, sigma, ...); omit for the "
                            "channel's recorded settings."))] = None,
@@ -192,11 +196,11 @@ class ActingTools:
             plan = api.plan_operation(self.host.session(folder), "detect", round, channel)
             if dry_run:
                 return self.operation(True, plan)
-            result = self.act(ctx, folder, f"detect {round} - {channel}", lambda s: api.detect_channel(
+            result = self.act(ctx, folder, f"detect {round} - {api.round_channel(round, channel)}", lambda s: api.detect_channel(
                 s, round, channel, params, existing))
             return self.operation(False, plan, result=result)
 
-    def transform_channel(self, ctx: Context, session: str, round: Round, channel: str,
+    def transform_channel(self, ctx: Context, session: str, round: Round, channel: Channel,
                           dry_run: DryRun = True) -> Operation:
         """Warp a channel's raw-space puncta into aligned space with the saved registration,
         and assign them to nuclei. The report is out of date until exported again."""
@@ -205,7 +209,7 @@ class ActingTools:
             plan = api.plan_operation(self.host.session(folder), "transform", round, channel)
             if dry_run:
                 return self.operation(True, plan)
-            result = self.act(ctx, folder, f"transform {round} - {channel}", lambda s: api.transform_channel(
+            result = self.act(ctx, folder, f"transform {round} - {api.round_channel(round, channel)}", lambda s: api.transform_channel(
                 s, round, channel))
             return self.operation(False, plan, result=result)
 
@@ -235,7 +239,7 @@ class ActingTools:
                 s, ids=ids, padding_um=padding_um))
             return self.operation(False, plan, result=result)
 
-    def threshold_sweep(self, ctx: Context, session: str, round: Round, channel: str,
+    def threshold_sweep(self, ctx: Context, session: str, round: Round, channel: Channel,
                         params: Annotated[Optional[dict[str, Any]], Field(description=(
                             "The other detection settings; omit for the channel's recorded ones."))] = None
                         ) -> api.ThresholdSweep:
@@ -245,7 +249,7 @@ class ActingTools:
             if params is not None:
                 DetectionParams.model_validate(params)
             folder = self.folder(session)
-            result = self.act(ctx, folder, f"threshold_sweep {round} - {channel}", lambda s: api.threshold_sweep(
+            result = self.act(ctx, folder, f"threshold_sweep {round} - {api.round_channel(round, channel)}", lambda s: api.threshold_sweep(
                 s, round, channel, params))
             return self.out(api.ThresholdSweep, result)
 

@@ -131,6 +131,10 @@ and changes nothing.
 | `threshold_sweep(session, round, channel, params)` | Counts puncta over a range of sensitivities and suggests one |
 | `run_batch(template, output, workers)` | Runs a batch template; a dataset finished before runs only what is due |
 
+A channel is named as its image names it (`FITC`) or, as the read tools name it, with its round
+(`R1 - FITC`). A channel of the other round, or one the round's image does not have, is refused,
+in a dry run as well.
+
 A real run opens the session for writing, which saves it under the next session number as Load
 Session does. Every change is logged in the session's `decisions.jsonl` with the justification,
 the server's actor and the name of the client the call came from. Calls that write to one folder
