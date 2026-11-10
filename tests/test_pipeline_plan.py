@@ -233,3 +233,19 @@ def test_the_outcome_of_a_run_in_brief(run_folder):
     newest.write_text(json.dumps(data))
     held = api.outcome(api.open_session(out))
     assert held.registration["fallback_used"] and any("rough shift" in w for w in held.warnings)
+
+
+def test_a_detection_previewed_writes_nothing_and_matches_the_run(run_folder):
+    out = run_folder[0]
+    before = _files(out)
+    s = api.open_session(out)
+    same = api.preview_detection(s, "R1", f"R1 - {CHANNEL}")
+    assert same.channel == f"R1 - {CHANNEL}" and same.n_nuclei > 0
+    assert same.preview["n_puncta"] == same.current["n_puncta"] > 0          # the recorded settings, as run
+    assert same.preview["snr"] == pytest.approx(same.current["snr"]) and same.params["threshold_rel"] == 0.05
+    strict = api.preview_detection(s, "R1", CHANNEL, {"method": "Local Maxima", "threshold_rel": 0.9,
+                                                      "min_distance": 2})
+    assert strict.preview["n_puncta"] < same.preview["n_puncta"] and strict.current == same.current
+    assert _files(out) == before and s.read_only
+    with pytest.raises(ValueError, match="no channel 'Cy5'"):
+        api.preview_detection(s, "R1", "Cy5")

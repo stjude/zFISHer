@@ -38,7 +38,7 @@ READ = {"list_sessions", "get_session_info", "get_status", "get_parameters", "ge
         "query_report", "get_provenance", "get_decisions", "read_log"}
 TRIAGE = {"flag_batch", "propose"}
 OPERATE = {"set_param", "update", "detect_channel", "transform_channel", "export_report", "export_cells",
-           "threshold_sweep", "run_batch"}
+           "threshold_sweep", "preview_detection", "run_batch"}
 RULE = [{"source": R1, "target": R2, "threshold": 1.0}]
 
 
@@ -127,7 +127,15 @@ def test_dry_runs_say_what_would_happen_and_change_nothing(root):
     assert change["writes"] == ["a/sessions", "a/decisions.jsonl"] and change["result"]["rounds"] == ["R1", "R2"]
     assert call(server, "update", session="a") == {"dry_run": True, "writes": [], "makes_stale": [],
                                                    "would_run": [], "result": None}
+    preview = call(server, "preview_detection", session="a", round="R2", channel=R2,
+                   params={"method": "Local Maxima", "threshold_rel": 0.5, "min_distance": 2})
+    assert preview["channel"] == R2 and preview["current"]["n_puncta"] >= preview["preview"]["n_puncta"]
+    assert operate_tool(server, "preview_detection").annotations.read_only_hint
     assert snapshot(root) == before
+
+
+def operate_tool(server, name):
+    return {t.name: t for t in run(server, lambda c: c.list_tools()).tools}[name]
 
 
 def test_a_setting_change_then_update_runs_what_was_said(root):

@@ -76,6 +76,8 @@ Operate (this server may change files under its folders):
 - set_param changes one pipeline setting for the next update and refuses values outside the
   setting's range. update then reruns what is due. detect_channel, transform_channel and
   export_report rerun single steps.
+- preview_detection says what a detection setting would find (count, SNR), writing nothing:
+  try settings with it before changing one.
 - Every change is logged in the session's decisions log with your justification.
 - Work on copies of datasets made for the purpose, not on the only copy.
 """,
@@ -368,10 +370,12 @@ Tune puncta detection for channel "{channel}" of the zFISHer session "{session}"
    SNR and settings.
 2. Call threshold_sweep for the channel in each round it was detected in, and read where the
    counts level off.
-3. If the suggested sensitivity differs from the current one, call set_param as a dry run with
-   it, then for real with a justification that cites the sweep. Then call update as a dry run,
-   and for real.
-4. Call get_metrics again and report the counts and SNR before and after.
+3. Call preview_detection with the suggested sensitivity, and with any other setting you
+   consider, to see the count and SNR each would give; it writes nothing. A flat sweep means
+   the sensitivity is not what limits the count.
+4. For the setting you choose, call set_param as a dry run, then for real with a justification
+   that cites the sweep and the previews. Then call update as a dry run, and for real.
+5. Call get_metrics again and report the counts and SNR before and after.
 
 Work only on a session that is a copy made for tuning. Change one setting at a time."""
 

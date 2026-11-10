@@ -44,6 +44,15 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   the session then holds (`api.outcome`: registration, nuclei, each aligned
   channel's count and median SNR, missing outputs, and what the batch
   check's fixed limits find), and both tools name the files they write.
+- **A detection setting can be tried without writing anything.**
+  `api.preview_detection` (and the MCP tool `preview_detection`, in operate
+  mode) detects a channel on its raw image with the settings given and says
+  what it would keep (count, SNR quantiles, low-SNR fraction, puncta per
+  nucleus) beside the same numbers for what the channel has now. Trying a
+  setting took a change, an update and a read of the metrics before; the
+  threshold sweep gives counts only, and when its curve is flat (the
+  sensitivity is not what limits the count) its suggestion changes nothing.
+  The tuning prompt now uses it.
 - **The GUI's registration and warping write what batch writes.** Automated
   Registration & Warping and the manual Global Canvas step re-implemented the
   pipeline and differed from it: images were converted to 32-bit floats before

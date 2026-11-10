@@ -116,9 +116,10 @@ datasets are alike. `propose(session, name, value, justification, channel, round
 suggested change in the session's decisions log, for a person to accept or dismiss in zFISHer's
 Review Queue page; nothing else changes.
 
-**Operate tools.** Each takes `dry_run`, true unless the client sets it false. A dry run says
-what the call would write, what it would leave out of date and which pipeline stages would run,
-and changes nothing.
+**Operate tools.** Each that writes takes `dry_run`, true unless the client sets it false. A dry
+run says what the call would write, what it would leave out of date and which pipeline stages
+would run, and changes nothing. `preview_detection` writes nothing at all, and `threshold_sweep`
+only stores its curve in the session.
 
 | Tool | Does |
 |---|---|
@@ -129,6 +130,7 @@ and changes nothing.
 | `export_report(session)` | Writes the report from the files, with the session's rules (a new numbered file; reports are never overwritten) |
 | `export_cells(session, ids, padding_um)` | Writes one OME-TIFF per nucleus |
 | `threshold_sweep(session, round, channel, params)` | Counts puncta over a range of sensitivities and suggests one |
+| `preview_detection(session, round, channel, params)` | Says what detecting a channel again with the given settings would keep (count, SNR quantiles, low-SNR fraction, puncta per nucleus) beside what it has now; writes nothing |
 | `run_batch(template, output, workers)` | Runs a batch template, then checks the batch as `flag_batch` does and writes `qc_report.md`; a dataset finished before runs only what is due; each dataset's result carries its flags and `needs_look` |
 
 A channel is named as its image names it (`FITC`) or, as the read tools name it, with its round

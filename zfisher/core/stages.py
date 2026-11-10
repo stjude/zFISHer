@@ -224,6 +224,46 @@ def detect_channel(round_id, channel, params=None, existing="replace", chooser=N
     return csv
 
 
+def _puncta_summary(snr, n_nuclei):
+    """Count, SNR quantiles, low-SNR fraction and puncta per nucleus of a set of puncta."""
+    from . import metrics
+    snr = np.asarray(snr, dtype=float)
+    n = int(len(snr))
+    return {"n_puncta": n, "snr": metrics._quantiles(snr),
+            "low_snr_fraction": float(np.mean(snr < metrics.LOW_SNR)) if n else 0.0,
+            "puncta_per_nucleus": n / n_nuclei if n_nuclei else None}
+
+
+def preview_detection(round_id, channel, params=None):
+    """What detecting ``channel`` on round ``round_id``'s raw image with
+    ``params`` (else the recorded ones) would keep, written nowhere: the count,
+    SNR quantiles, low-SNR fraction and puncta per nucleus of the round's mask,
+    beside the same numbers for the channel's raw-space CSV now (all its rows,
+    those placed by hand too). Reads the image and mask as ``detect_channel``
+    does; changes no file and nothing in the session."""
+    import pandas as pd
+    params = dict(params or recorded_detection_parameters(round_id, channel) or {})
+    image_path = io.resolve_raw_path(round_id)
+    image = io.read_channel(image_path, channel)
+    voxels = io.image_identity(image_path)["voxels"]
+    mask_path = round_mask_path(round_id)
+    mask = io.read_label_tif(mask_path) if mask_path is not None else None
+    if params.get("nuclei_only", True) and mask is None:
+        raise FileNotFoundError(f"{round_id} has no nuclei mask, which detecting only inside nuclei needs.")
+    n_nuclei = int(np.count_nonzero(np.unique(mask))) if mask is not None else 0
+    found = puncta.process_puncta_detection(image, mask_data=mask if params.get("nuclei_only", True) else None,
+                                            voxels=voxels, params=params)
+    del image
+    csv = constants.puncta_csv_path(_reports_dir(), raw_puncta_name(round_id, channel))
+    current = None
+    if csv.exists():
+        table = pd.read_csv(csv)
+        current = _puncta_summary(pd.to_numeric(table.get("SNR", pd.Series(dtype=float)), errors="coerce"),
+                                  n_nuclei)
+    return {"preview": _puncta_summary(found[:, 5] if len(found) else [], n_nuclei), "current": current,
+            "n_nuclei": n_nuclei, "params": params}
+
+
 def sweep_channel(round_id, channel, params=None, thresholds=None, image_path=None, progress_callback=None):
     """``puncta.threshold_sweep`` on ``channel``'s raw image of ``round_id``
     and the round's nuclei mask, read from disk as ``detect_channel`` reads

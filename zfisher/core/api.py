@@ -148,6 +148,14 @@ class DetectionResult(_Result):
     parameters: dict
 
 
+class DetectionPreview(_Result):
+    channel: str                     # "R1 - FITC"
+    preview: dict                    # n_puncta, snr quantiles, low_snr_fraction, puncta_per_nucleus
+    current: Optional[dict] = None   # the same for the channel's raw-space CSV now; None without one
+    n_nuclei: int                    # in the round's own nuclei mask
+    params: dict                     # the detection settings used, defaults filled in
+
+
 class TransformResult(_Result):
     csv: Optional[str]
     n_puncta: int
@@ -729,6 +737,23 @@ def threshold_sweep(s, round_id, channel, params=None, thresholds=None, progress
     return ThresholdSweep(channel=f"{round_id} - {channel}", **result)
 
 
+def preview_detection(s, round_id, channel, params=None):
+    """What re-detecting ``channel`` of round ``round_id`` with ``params`` (a
+    ``DetectionParams``, a dict of its fields, or None for the recorded ones)
+    would keep, beside what the channel has now (``stages.preview_detection``).
+    Writes nothing, so it works on a read-only session; it reads the raw image,
+    so it is as slow as a detection. ``channel`` may name its round."""
+    from . import stages
+    channel = round_channel(round_id, channel)
+    _check_round_channel(s, round_id, channel)
+    if isinstance(params, dict):
+        params = DetectionParams.model_validate(params)
+    kwargs = params.detection_kwargs() if params is not None else None
+    with _session.use(s):
+        result = stages.preview_detection(round_id, channel, kwargs)
+    return DetectionPreview(channel=f"{round_id} - {channel}", **result)
+
+
 def check_nucleus_ids(s):
     """How well each aligned puncta CSV's ``Nucleus_ID`` agrees with the saved
     consensus mask (``puncta.check_nucleus_ids``); reads only."""
@@ -916,5 +941,5 @@ def read_log(s, kind=None):
 def schema():
     """The JSON schema of every result model, by name."""
     models = (SessionInfo, ArtifactState, StageState, DistanceQuery, Metrics, BatchQC, ThresholdSweep, Parameters, ReportPage, StagePlan, ParamChange, BatchPlan, BatchRun, ReviewItem, NucleusIdCheck, DetectionResult, TransformResult,
-              ReportResult, CellsResult, PipelineResult)
+              ReportResult, CellsResult, PipelineResult, Outcome, DetectionPreview)
     return {m.__name__: m.model_json_schema() for m in models}

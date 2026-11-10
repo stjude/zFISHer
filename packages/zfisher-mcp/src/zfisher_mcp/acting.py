@@ -51,6 +51,7 @@ Channel = Annotated[str, Field(description=(
     "The channel as the image names it ('FITC'), or with its round as the read tools name it ('R1 - FITC')."))]
 
 TRIAGE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False)
+LOOKS = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 SETS = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 WRITES = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=False)
 
@@ -74,7 +75,7 @@ class ActingTools:
     def operate_tools(self):
         return [(self.set_param, SETS), (self.update, WRITES), (self.detect_channel, WRITES),
                 (self.transform_channel, WRITES), (self.export_report, WRITES), (self.export_cells, WRITES),
-                (self.threshold_sweep, SETS), (self.run_batch, WRITES)]
+                (self.threshold_sweep, SETS), (self.preview_detection, LOOKS), (self.run_batch, WRITES)]
 
     # --- plumbing ---------------------------------------------------------------------
 
@@ -275,6 +276,21 @@ class ActingTools:
             result = self.act(ctx, folder, f"threshold_sweep {round} - {api.round_channel(round, channel)}", lambda s: api.threshold_sweep(
                 s, round, channel, params))
             return self.out(api.ThresholdSweep, result)
+
+    def preview_detection(self, session: str, round: Round, channel: Channel,
+                          params: Annotated[Optional[dict[str, Any]], Field(description=(
+                              "Detection settings to try (method, threshold_rel, min_distance, sigma, ...); omit "
+                              "for the channel's recorded ones."))] = None) -> api.DetectionPreview:
+        """What detecting a channel again with the given settings would find, beside what it
+        has now, without writing anything: the count of puncta kept, their SNR quantiles and
+        low-SNR fraction, and puncta per nucleus of the round's own nuclei. Raw-space numbers
+        of one round, before warping; as slow as a detection."""
+        with self.answer():
+            if params is not None:
+                DetectionParams.model_validate(params)
+            folder = self.folder(session)
+            return self.out(api.DetectionPreview, api.preview_detection(self.host.session(folder), round, channel,
+                                                                        params))
 
     def run_batch(self, ctx: Context,
                   template: Annotated[str, Field(description="The batch template (.xlsx), below the root.")],
