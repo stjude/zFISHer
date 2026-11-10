@@ -124,7 +124,8 @@ def test_dry_runs_say_what_would_happen_and_change_nothing(root):
                   channel=CHANNEL, justification="testing")
     assert change["dry_run"] and change["result"]["applied"] is False and change["result"]["new"] == 0.2
     assert change["would_run"] == [f"detect {R1}", f"detect {R2}", f"transform {R1}", f"transform {R2}"]
-    assert change["writes"] == ["a/sessions", "a/decisions.jsonl"] and change["result"]["rounds"] == ["R1", "R2"]
+    assert change["writes"] == [f"a/sessions/{api.session_files(root / 'a')[-1].name}", "a/decisions.jsonl"]
+    assert change["result"]["rounds"] == ["R1", "R2"]
     assert call(server, "update", session="a") == {"dry_run": True, "writes": [], "makes_stale": [],
                                                    "would_run": [], "result": None}
     preview = call(server, "preview_detection", session="a", round="R2", channel=R2,
@@ -140,14 +141,15 @@ def operate_tool(server, name):
 
 def test_a_setting_change_then_update_runs_what_was_said(root):
     server = server_for(root)
+    files = api.session_files(root / "b")
     change = call(server, "set_param", session="b", scope="consensus", name="overlap_method", value="Union",
                   justification="nuclei are under-segmented", dry_run=False)
     assert change["result"]["applied"] and change["result"]["old"] == "Intersection"
     assert change["would_run"] == ["consensus", f"transform {R1}", f"transform {R2}"]
     assert change["writes"][1] == "b/decisions.jsonl" and (root / change["writes"][0]).is_file()
-    assert change["writes"][0] == f"b/sessions/{api.session_files(root / 'b')[-1].name}"
+    assert change["writes"][0] == f"b/sessions/{files[-1].name}" and api.session_files(root / "b") == files
+    assert json.loads(files[-1].read_text())["pipeline_settings"]["overlap_method"] == "Union"   # saved in place
     assert call(server, "get_status", session="b")["update_would_run"] == change["would_run"]
-    files = api.session_files(root / "b")
     again = call(server, "set_param", session="b", scope="consensus", name="overlap_method", value="Union",
                  justification="already so", dry_run=False)
     assert again["result"]["unchanged"] and again["writes"] == [] and api.session_files(root / "b") == files
@@ -161,6 +163,7 @@ def test_a_setting_change_then_update_runs_what_was_said(root):
     assert held["n_nuclei"] > 0 and set(held["channels"]) == {R1, R2} and held["warnings"] == []
     assert call(server, "update", session="b")["would_run"] == []
     assert call(server, "get_status", session="b")["update_would_run"] == []
+    assert api.session_files(root / "b") == files                       # one session file throughout
 
 
 def test_settings_outside_their_range_are_refused(root):
@@ -185,6 +188,7 @@ def test_settings_outside_their_range_are_refused(root):
 
 def test_a_channel_detected_again_warped_and_reported(root):
     server = server_for(root)
+    files = api.session_files(root / "a")
     detect = call(server, "detect_channel", session="a", round="R1", channel=CHANNEL, dry_run=False,
                   params={"method": "Local Maxima", "threshold_rel": 0.05, "min_distance": 2})
     assert detect["result"]["n_puncta"] > 0 and detect["result"]["csv"] == detect["writes"][0]
@@ -196,6 +200,7 @@ def test_a_channel_detected_again_warped_and_reported(root):
     assert report["result"]["path"] == report["writes"][0] == "a/reports/Master_Analysis_Report_2.xlsx"
     assert report["result"]["sheets"]["Colocalization"] > 0
     assert all(a["state"] == "fresh" for a in call(server, "get_status", session="a")["artifacts"])
+    assert api.session_files(root / "a") == files                       # saved back into the newest file
     sweep = call(server, "threshold_sweep", session="a", round="R2", channel=CHANNEL)
     assert sweep["channel"] == R2 and len(sweep["counts"]) == len(sweep["thresholds"]) > 3
     cells = call(server, "export_cells", session="a", ids=[1], dry_run=False)

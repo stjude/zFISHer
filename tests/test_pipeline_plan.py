@@ -249,3 +249,18 @@ def test_a_detection_previewed_writes_nothing_and_matches_the_run(run_folder):
     assert _files(out) == before and s.read_only
     with pytest.raises(ValueError, match="no channel 'Cy5'"):
         api.preview_detection(s, "R1", "Cy5")
+
+
+def test_a_session_opened_to_write_in_place_keeps_one_file(run_folder):
+    out = run_folder[0]
+    files = api.session_files(out)
+    s = api.open_session(out, read_only=False, new_file=False)
+    assert api.session_files(out) == files                              # opening writes nothing
+    change = api.set_param(s, "registration", "max_ransac_distance", 7, justification="few inliers")
+    assert change.applied and api.session_files(out) == files
+    assert json.loads(files[-1].read_text())["pipeline_settings"]["max_ransac_distance"] == 7
+    assert api.update(s, new_session_file=False) == change.would_run
+    assert api.session_files(out) == files
+    assert json.loads(files[-1].read_text())["pipeline_settings"]["max_ransac_distance"] == 7
+    api.open_session(out, read_only=False)                              # as Load Session: the next number
+    assert len(api.session_files(out)) == len(files) + 1

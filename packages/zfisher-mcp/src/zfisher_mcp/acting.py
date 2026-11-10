@@ -5,9 +5,10 @@ batch.
 Every tool that changes files takes ``dry_run``, true unless the client says
 otherwise. A dry run says what the call would write, what it would leave out
 of date and which stages would run, and changes nothing. A real run opens the
-session for writing (zFISHer saves it under the next session number, as Load
-Session does), runs one ``zfisher.core.api`` operation, and stamps every
-decision it logs with the server's actor and the client the call came from.
+session for writing (saved back into its newest session file, not a new
+numbered one as Load Session makes), runs one ``zfisher.core.api``
+operation, and stamps every decision it logs with the server's actor and the
+client the call came from.
 Calls that write to one folder run one at a time. Sessions are reached, and
 changes run, through the server's host (``host``), so a GUI that runs the
 server can give it its own open session.
@@ -22,7 +23,6 @@ from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
-from zfisher import constants
 from zfisher.core import api, decisions
 from zfisher.core.params import DetectionParams
 from zfisher.core.qc import QC_REPORT
@@ -168,13 +168,14 @@ class ActingTools:
         with self.answer():
             folder = self.folder(session)
             # Checked on a read-only open first, so a refused value writes no session file.
-            change = api.set_param(self.host.session(folder), scope, name, value, channel=channel, dry_run=True)
+            current = self.host.session(folder)
+            change = api.set_param(current, scope, name, value, channel=channel, dry_run=True)
             log = str(folder / decisions.DECISIONS_FILE)
             if change.unchanged:
                 return self.operation(dry_run, result=change, writes=[])
             if dry_run:
                 return self.operation(True, would_run=change.would_run, result=change,
-                                      writes=[str(folder / constants.SESSIONS_DIR), log])
+                                      writes=[str(api.session_file_path(current)), log])
             saved = []
 
             def change_it(s):
@@ -194,7 +195,7 @@ class ActingTools:
             writes = [str(folder)] if planned else []
             if dry_run:
                 return self.operation(True, would_run=planned, writes=writes)
-            ran = self.act(ctx, folder, "update", api.update, session="read")
+            ran = self.act(ctx, folder, "update", lambda s: api.update(s, new_session_file=False), session="read")
             try:
                 held = api.outcome(self.host.session(folder)).model_dump()
             except (OSError, ValueError, LookupError, KeyError) as exc:

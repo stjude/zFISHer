@@ -103,6 +103,7 @@ def _run_full_zfisher_pipeline(
     distribution_bins=None,
     remove_border_nuclei=False,
     progress_callback=None,
+    new_session_file=True,
 ):
     """
     Runs the complete zFISHer automated pipeline without viewer interaction.
@@ -148,6 +149,10 @@ def _run_full_zfisher_pipeline(
         'channel_b', 'threshold'.
     progress_callback : callable, optional
         ``callback(value: int, text: str)`` called with 0-100 progress.
+    new_session_file : bool
+        Resuming a previous run saves the session under the next number,
+        as Load Session does (the default); False saves it back into the
+        newest session file. Not a setting of the run: not stored.
 
     Raises
     ------
@@ -164,7 +169,7 @@ def _run_full_zfisher_pipeline(
 
     # --- 1. Session: a new one, or the one a previous run left here -------------
     _update(2, "Initializing session...")
-    resumed = _open_previous_run(output_dir, r1_path, r2_path)
+    resumed = _open_previous_run(output_dir, r1_path, r2_path, in_place=not new_session_file)
     if not resumed and not session.initialize_new_session(output_dir, r1_path, r2_path):
         raise errors.SessionError(
             f"Session already exists in {output_dir} and was not made by a pipeline run that can be "
@@ -673,12 +678,13 @@ def _nuclear_channel(requested, channels, round_id):
     return found
 
 
-def _open_previous_run(output_dir, r1_path, r2_path, read_only=False):
+def _open_previous_run(output_dir, r1_path, r2_path, read_only=False, in_place=False):
     """Open the session a previous pipeline run left in ``output_dir``, for
     the same two images, so stages that are up to date are not run again.
     False when there is no session there, or one that no pipeline run with
     stage records made (a GUI session, a batch run of zFISHer before 3.0),
-    which is not touched. ``read_only`` opens it without writing anything."""
+    which is not touched. ``read_only`` opens it without writing anything;
+    ``in_place`` saves it back into its newest file instead of a new one."""
     folder = output_dir / constants.SESSIONS_DIR
     files = sorted(folder.glob("zfisher_session_*.json"), key=lambda p: int(p.stem.rsplit("_", 1)[-1])
                    if p.stem.rsplit("_", 1)[-1].isdigit() else -1) if folder.exists() else []
@@ -693,5 +699,5 @@ def _open_previous_run(output_dir, r1_path, r2_path, read_only=False):
     if read_only:
         session.current().load_into(files[-1], read_only=True)
     else:
-        session.load_session_file(files[-1])
+        session.load_session_file(files[-1], in_place=in_place)
     return True

@@ -10,7 +10,8 @@ never touches the GUI's session unless given it.
 Read-only use: ``open_session(path)`` reads a session without writing anything
 (``read_only=True`` is the default), and every query below works on it.
 Operations that change files need a session opened with ``read_only=False``,
-which, as Load Session does, writes the next numbered session file.
+which, as Load Session does, writes the next numbered session file; with
+``new_file=False`` too, changes are saved back into the file read instead.
 """
 import copy
 import logging
@@ -217,9 +218,13 @@ class PipelineResult(_Result):
 
 # --- Sessions -------------------------------------------------------------------------
 
-def open_session(path, read_only=True):
+def open_session(path, read_only=True, new_file=True):
     """The session in the session file ``path`` (``zfisher_session_<n>.json``)
-    or in the output folder ``path`` (its newest session file)."""
+    or in the output folder ``path`` (its newest session file). Opened for
+    writing (``read_only=False``), it is saved under the next session number,
+    as Load Session does, unless ``new_file`` is False: then changes are saved
+    back into the file read, so a client making many small changes leaves one
+    file rather than one per change."""
     path = Path(path)
     if path.is_dir():
         files = session_files(path)
@@ -227,7 +232,7 @@ def open_session(path, read_only=True):
             raise FileNotFoundError(f"No zfisher_session_*.json in {path} or its sessions/ folder.")
         path = files[-1]
     s = _session.Session()
-    s.load_into(path, read_only=read_only)
+    s.load_into(path, read_only=read_only, in_place=not read_only and not new_file)
     return s
 
 
@@ -320,16 +325,19 @@ def get_stage_status(s):
         return [StageState(**st) for st in stages.stage_status()]
 
 
-def update(s, progress_callback=None):
+def update(s, progress_callback=None, new_session_file=True):
     """Run again, on ``s``'s folder and with the settings its pipeline run
     stored, the stages that are not up to date (and what depends on them).
-    Returns the stages that ran; none when everything was fresh."""
+    Returns the stages that ran; none when everything was fresh. The run
+    saves the session under the next number, or with ``new_session_file``
+    False back into its newest file."""
     from . import pipeline
     settings = s.get("pipeline_settings")
     if not settings:
         raise LookupError("This session was not made by a pipeline run, so there is nothing to update from.")
     return pipeline.run_full_zfisher_pipeline(s.get("r1_path"), s.get("r2_path"), s.get("output_dir"),
-                                              progress_callback=progress_callback, **settings)
+                                              progress_callback=progress_callback,
+                                              new_session_file=new_session_file, **settings)
 
 
 def plan_update(s, settings=None):

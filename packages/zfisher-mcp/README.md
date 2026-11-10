@@ -137,10 +137,14 @@ A channel is named as its image names it (`FITC`) or, as the read tools name it,
 (`R1 - FITC`). A channel of the other round, or one the round's image does not have, is refused,
 in a dry run as well.
 
-A real run opens the session for writing, which saves it under the next session number as Load
-Session does. Every change is logged in the session's `decisions.jsonl` with the justification,
-the server's actor and the name of the client the call came from. Calls that write to one folder
-run one after another. A batch can take a long time; a client may need a longer timeout for
+A real run saves the session back into its newest session file (written whole or not at all),
+not under a new number as Load Session in zFISHer does, so a tuning loop of many small changes
+leaves one session file; what each change replaced is in the decisions log. `run_batch` over a
+folder run before still saves the next number, as a batch run from zFISHer does. Reports are
+never overwritten: each export, an update's included, writes a report under the next number,
+and the read tools use the newest. Every change is logged in the session's `decisions.jsonl`
+with the justification, the server's actor and the name of the client the call came from. Calls
+that write to one folder run one after another. A batch can take a long time; a client may need a longer timeout for
 `run_batch`.
 
 Prompts: `explain_status(session)` in every mode, `triage_batch(batch)` from triage up and

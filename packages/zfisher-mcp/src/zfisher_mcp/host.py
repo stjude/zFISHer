@@ -13,9 +13,10 @@ class DiskHost:
     """Sessions from disk; changes run where they are called."""
 
     def session(self, folder, writable=False):
-        """The session in ``folder``. ``writable`` opens it for writing, which
-        saves it under the next session number, as Load Session does."""
-        return api.open_session(folder, read_only=not writable)
+        """The session in ``folder``. ``writable`` opens it for writing; its
+        changes are saved back into its newest session file, not a new
+        numbered one, so a client's many small changes leave one file."""
+        return api.open_session(folder, read_only=not writable, new_file=False)
 
     def run_write(self, what, folder, fn):
         """Run ``fn``, a change described by ``what`` to the files in ``folder``,

@@ -318,17 +318,21 @@ class Session:
                 raise SessionSaveError(f"Could not save the session file {where}: {e}") from e
             self._dirty = False
 
-    def load_into(self, path, read_only=False):
+    def load_into(self, path, read_only=False, in_place=False):
         """Replace this session with the session file at ``path``, saved under
         the next free number (``zfisher_session_<n>.json``) so the file read
         is never overwritten. Returns the session's data. See
         ``load_session_file`` for how paths are re-anchored.
 
         With ``read_only`` nothing is written, now or later: the session keeps
-        the name of the file it was read from, and changes raise."""
+        the name of the file it was read from, and changes raise. With
+        ``in_place`` the session keeps that name too but is written: changes
+        are saved back into the file read (atomically, so a failed save
+        leaves it whole) instead of into a new numbered one, and nothing is
+        written until something changes."""
         data, new_name = _read_session_file(Path(path))
         from .params import SCHEMA_VERSION
-        if read_only:
+        if read_only or in_place:
             new_name = Path(path).name
         with self._lock:
             # Nothing of the previous session may survive into this one: a file
@@ -347,7 +351,7 @@ class Session:
             self._data.setdefault("schema_version", SCHEMA_VERSION)
             self._read_only = bool(read_only)
             self._dirty = False
-            if not read_only:
+            if not read_only and not in_place:
                 # Save immediately to create the new session file
                 logger.info("Creating new session file: %s", new_name)
                 self.save()
@@ -616,7 +620,7 @@ def _read_session_file(path):
     return data, new_name
 
 
-def load_session_file(path):
+def load_session_file(path, in_place=False):
     """
     Loads session data from a JSON file into memory, replacing the session
     that was there: nothing of the previous one is kept.
@@ -624,11 +628,15 @@ def load_session_file(path):
     When loading an existing session, creates a new numbered session file
     (e.g., ``session_2.json``) to avoid overwriting the original. This only
     applies when loading -- new sessions always start as ``session_1.json``.
+    With ``in_place`` the session is saved back into the file read instead
+    (``Session.load_into``).
 
     Parameters
     ----------
     path : str or Path
         The path to a ``zfisher_session*.json`` file.
+    in_place : bool
+        Save changes into ``path`` rather than a new numbered file.
 
     Returns
     -------
@@ -636,8 +644,11 @@ def load_session_file(path):
         The loaded session data.
     """
     path = Path(path)
-    data = current().load_into(path)
+    data = current().load_into(path, in_place=in_place)
     new_name = data["session_filename"]
     attach_session_log(Path(data["output_dir"]), session_filename=new_name)
-    logger.info("Session loaded from %s → new session file: %s", path.name, new_name)
+    if in_place:
+        logger.info("Session loaded from %s, saved back into it", path.name)
+    else:
+        logger.info("Session loaded from %s → new session file: %s", path.name, new_name)
     return data

@@ -53,6 +53,16 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
   threshold sweep gives counts only, and when its curve is flat (the
   sensitivity is not what limits the count) its suggestion changes nothing.
   The tuning prompt now uses it.
+- **Changes made through the MCP server keep one session file.** Every real
+  change opened the session for writing, which, as Load Session does, saved
+  it under the next number: one tuning run left 57 session files in one
+  dataset. The server's changes and updates now save the session back into
+  its newest file, written whole or not at all; what each change replaced is
+  in the decisions log. Load Session in zFISHer, batch runs and the core API
+  by default still save a new numbered file
+  (`api.open_session(..., read_only=False, new_file=False)` and
+  `api.update(..., new_session_file=False)` save in place). Reports are still
+  never overwritten.
 - **The GUI's registration and warping write what batch writes.** Automated
   Registration & Warping and the manual Global Canvas step re-implemented the
   pipeline and differed from it: images were converted to 32-bit floats before
