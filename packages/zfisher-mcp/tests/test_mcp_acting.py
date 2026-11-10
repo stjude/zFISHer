@@ -186,6 +186,7 @@ def test_triage_flags_and_proposes_without_changing_the_sessions(root):
     sessions_before = {p: snapshot(root / p) for p in ("a/sessions", "b/sessions")}
     flags = call(server, "flag_batch")
     assert flags["n_datasets"] == 2 and flags["report"] is None and not (root / "qc_report.md").exists()
+    assert flags["compared_with_batch"] is False and "at least 4" in flags["note"]
     written = call(server, "flag_batch", write_report=True)
     assert written["report"] == "qc_report.md" and (root / "qc_report.md").exists()
     proposal = call(server, "propose", session="a", name="threshold_rel", value=0.08, channel=CHANNEL,

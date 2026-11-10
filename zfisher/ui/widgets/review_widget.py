@@ -150,5 +150,6 @@ class ReviewQueueWidget(Container):
             text = f"{flag['dataset']}: {flag['action']}. {flag['reason']}"
             self._flags.addItem(QListWidgetItem(text))
         flagged = len({f["dataset"] for f in result.flags})
-        self._batch_note.value = (f"{flagged} of {result.n_datasets} dataset(s) need a look." if result.flags
-                                  else f"None of the {result.n_datasets} dataset(s) stands out.")
+        summary = (f"{flagged} of {result.n_datasets} dataset(s) need a look." if result.flags
+                   else f"None of the {result.n_datasets} dataset(s) stands out.")
+        self._batch_note.value = f"{summary} {result.note}" if result.note else summary

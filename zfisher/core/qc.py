@@ -85,6 +85,31 @@ def cohort_priors(cohort):
     return priors
 
 
+def readable(cohort):
+    """How many datasets of ``cohort`` could be read."""
+    return sum(1 for m in cohort.values() if "error" not in m)
+
+
+def compared_with_batch(cohort, thresholds=None):
+    """Whether ``cohort`` has enough readable datasets (``min_cohort``) for
+    their metrics to be compared with each other; with fewer, only the fixed
+    limits apply."""
+    return readable(cohort) >= (thresholds or QCThresholds()).min_cohort
+
+
+def small_batch_note(cohort, thresholds=None):
+    """Why the datasets of ``cohort`` were not compared with each other, or
+    None when they were: an empty list of flags then does not mean all is
+    well."""
+    if compared_with_batch(cohort, thresholds):
+        return None
+    t = thresholds or QCThresholds()
+    return (f"Only {readable(cohort)} dataset(s) could be read; at least {t.min_cohort} are needed to compare "
+            "their numbers with each other, so only the fixed limits were checked (a registration that fell "
+            "back to the rough shift, few agreeing centroid pairs, a channel with no puncta, saturation). "
+            "A dataset unlike the others is not flagged.")
+
+
 def robust_z(value, prior):
     median, sd, _ = prior
     if sd > 0:
@@ -107,6 +132,7 @@ def flag_batch(cohort, thresholds=None):
     ``thresholds`` (``params.QCThresholds``); see the module docstring."""
     t = thresholds or QCThresholds()
     priors = cohort_priors(cohort)
+    compare = compared_with_batch(cohort, t)
     flags = []
     for name, m in cohort.items():
         if "error" in m:
@@ -132,8 +158,7 @@ def flag_batch(cohort, thresholds=None):
                 flags.append(Flag(name, "Check the acquisition settings", f"{image} is saturated in "
                                   f"{100 * fraction:.2f}% of voxels", f"{image}.saturation", fraction,
                                   f"<= {t.max_saturated_fraction}"))
-        n_ok = sum(1 for other in cohort.values() if "error" not in other)
-        if n_ok < t.min_cohort:
+        if not compare:
             continue
         for key, value in _flat(m).items():
             prior = priors.get(key)
@@ -157,6 +182,9 @@ def write_qc_report(batch_root, cohort, flags, thresholds=None):
     lines = ["# zFISHer batch QC", "", f"{len(cohort)} datasets, {len({f.dataset for f in flags})} flagged. "
              f"Flagged when a metric is {t.z_threshold:g} robust standard deviations from the batch median "
              f"(with at least {t.min_cohort} datasets), or past an absolute limit.", ""]
+    note = small_batch_note(cohort, t)
+    if note:
+        lines += [f"**The datasets were not compared with each other.** {note}", ""]
     if flags:
         lines += ["## Flags", "", "| dataset | action | reason |", "|---|---|---|"]
         lines += [f"| {f.dataset} | {f.action} | {f.reason} |" for f in flags]

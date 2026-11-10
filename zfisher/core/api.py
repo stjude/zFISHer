@@ -165,6 +165,8 @@ class BatchQC(_Result):
     batch_root: str
     n_datasets: int
     flags: list[dict]                # dataset, action, reason, metric, value, expected
+    compared_with_batch: bool        # False: too few datasets, only the fixed limits were checked
+    note: Optional[str] = None       # why the datasets were not compared with each other
     report: Optional[str] = None     # qc_report.md
 
 
@@ -605,7 +607,8 @@ def flag_batch(batch_root, thresholds=None, write_report=True, include_saturatio
     flags = qc.flag_batch(cohort, thresholds)
     report = qc.write_qc_report(batch_root, cohort, flags, thresholds) if write_report and cohort else None
     return BatchQC(batch_root=str(batch_root), n_datasets=len(cohort), flags=qc.flags_as_dicts(flags),
-                   report=str(report) if report else None)
+                   compared_with_batch=qc.compared_with_batch(cohort, thresholds),
+                   note=qc.small_batch_note(cohort, thresholds), report=str(report) if report else None)
 
 
 def threshold_sweep(s, round_id, channel, params=None, thresholds=None, progress_callback=None):

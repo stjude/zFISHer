@@ -259,6 +259,8 @@ def flag_batch(batch_root: Path = typer.Argument(..., help="A batch output root 
         print(json.dumps(result.model_dump(), indent=1))
         return
     print(f"{result.n_datasets} datasets, {len({f['dataset'] for f in result.flags})} flagged.")
+    if result.note:
+        print(f"Not compared with each other: {result.note}")
     for f in result.flags:
         print(f"  {f['dataset']}: {f['action']} - {f['reason']}")
     if result.report:

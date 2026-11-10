@@ -341,7 +341,9 @@ Name channels as the session does ("R1 - FITC"). Do not guess at causes the tool
 TRIAGE_BATCH = """\
 Triage the zFISHer batch "{batch}" for the biologist who ran it.
 
-1. Call flag_batch for it.
+1. Call flag_batch for it. If it says the datasets were not compared with each other
+   (compared_with_batch false), say so first, then call get_metrics for each dataset and
+   compare their numbers yourself.
 2. For each dataset it flags, say in one line what is unusual, using the metric, its value and
    what the batch expected, and what the person should look at first.
 3. Where a setting change would plausibly help, call propose with the setting, the value and a

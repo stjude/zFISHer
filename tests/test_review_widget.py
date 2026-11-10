@@ -76,5 +76,6 @@ def test_the_batch_check_counts_the_datasets(page, tmp_path):
         shutil.copytree(page.out, batch / name)
     page.widget.check_batch(str(batch))
     assert "2 dataset(s)" in page.widget._batch_note.value
+    assert "only the fixed limits were checked" in page.widget._batch_note.value     # too few to compare
     assert page.widget._flags.count() == len(api.flag_batch(batch, write_report=False).flags)
     assert not (batch / "qc_report.md").exists()

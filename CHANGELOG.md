@@ -6,6 +6,15 @@ All notable changes to zFISHer. Versions follow [semantic versioning](https://se
 
 ### Fixes
 
+- **A batch check of too few datasets says it did not compare them.** With
+  fewer datasets than the QC sheet's `min_cohort` (4 by default), the batch
+  check applies only its fixed limits and does not compare each dataset's
+  numbers with the others, but it said nothing of this, so a batch whose one
+  dataset had thirty times the puncta of the rest came back with no flags, as
+  if all were alike. The result now says whether the datasets were compared
+  and, if not, why (`compared_with_batch` and `note`), and so do
+  `qc_report.md`, `zfisher-cli flag-batch`, Batch Check on the Review Queue
+  page and the MCP server's `flag_batch`.
 - **The GUI's registration and warping write what batch writes.** Automated
   Registration & Warping and the manual Global Canvas step re-implemented the
   pipeline and differed from it: images were converted to 32-bit floats before

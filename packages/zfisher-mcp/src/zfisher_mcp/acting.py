@@ -113,7 +113,9 @@ class ActingTools:
             write_report: Annotated[bool, Field(description=(
                 "Also write qc_report.md in the batch folder."))] = False) -> api.BatchQC:
         """Which datasets of a batch need a look, and why: each dataset's quality-control
-        numbers compared with the rest of the batch and with fixed floors."""
+        numbers compared with the rest of the batch and with fixed floors. A batch of fewer
+        than four datasets is checked against the fixed floors only (compared_with_batch
+        false, with a note), so no flags then does not mean every dataset is alike."""
         with self.answer():
             if under:
                 folder = self.roots.resolve(under)

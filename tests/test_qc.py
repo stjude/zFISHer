@@ -56,12 +56,19 @@ def test_only_the_planted_outliers_are_flagged(batch_root):
     assert "| ds2 |" in report and "| ds3 |" in report and "## Batch medians" in report
 
 
-def test_a_small_batch_is_not_compared(batch_root):
+def test_a_small_batch_is_not_compared_and_says_so(batch_root, capsys):
+    assert api.flag_batch(batch_root, write_report=False).compared_with_batch
+    assert api.flag_batch(batch_root, write_report=False).note is None
     for name in ("ds3", "ds4", "ds5"):
         shutil.rmtree(batch_root / name)
-    flags = api.flag_batch(batch_root, write_report=False).flags
-    assert {f["dataset"] for f in flags} == {"ds2"}                     # absolute rules still apply
+    result = api.flag_batch(batch_root, write_report=False)
+    assert {f["dataset"] for f in result.flags} == {"ds2"}              # absolute rules still apply
+    assert not result.compared_with_batch and "at least 4" in result.note and "Only 2 dataset" in result.note
     assert not (batch_root / "qc_report.md").exists()
+    api.flag_batch(batch_root)
+    assert "not compared with each other" in (batch_root / "qc_report.md").read_text()
+    assert cli.main(["flag-batch", str(batch_root)]) == 0
+    assert "Not compared with each other: Only 2 dataset(s)" in capsys.readouterr().out
 
 
 def test_thresholds_come_from_the_template_and_the_cli_reports(batch_root, capsys):
